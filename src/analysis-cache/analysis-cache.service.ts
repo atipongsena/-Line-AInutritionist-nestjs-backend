@@ -1,0 +1,81 @@
+import { Injectable, Logger } from '@nestjs/common'
+import { FoodAnalysisData } from '../line/flex.messages' // Assuming AiService returns data compatible with this
+
+interface CacheEntry {
+  data: FoodAnalysisData
+  expiryTime: number
+}
+
+const DEFAULT_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+@Injectable()
+export class AnalysisCacheService {
+  private readonly cache = new Map<string, CacheEntry>()
+  private readonly logger = new Logger(AnalysisCacheService.name)
+
+  set(
+    key: string,
+    value: FoodAnalysisData,
+    ttlMs: number = DEFAULT_TTL_MS,
+  ): void {
+    if (!key) {
+      this.logger.warn('Attempted to set cache with an empty key.')
+      return
+    }
+    const expiryTime = Date.now() + ttlMs
+    this.cache.set(key, { data: value, expiryTime })
+    this.logger.log(`Cached data for key: ${key}, TTL: ${ttlMs / 1000}s`)
+    this.cleanupExpiredEntries() // Optional: cleanup on set
+  }
+
+  get(key: string): FoodAnalysisData | undefined {
+    if (!key) {
+      this.logger.warn('Attempted to get cache with an empty key.')
+      return undefined
+    }
+    const entry = this.cache.get(key)
+    if (!entry) {
+      this.logger.log(`Cache miss for key: ${key}`)
+      return undefined
+    }
+
+    if (Date.now() > entry.expiryTime) {
+      this.logger.log(`Cache expired for key: ${key}`)
+      this.cache.delete(key)
+      return undefined
+    }
+
+    this.logger.log(`Cache hit for key: ${key}`)
+    return entry.data
+  }
+
+  delete(key: string): void {
+    if (!key) {
+      this.logger.warn('Attempted to delete cache with an empty key.')
+      return
+    }
+    const deleted = this.cache.delete(key)
+    if (deleted) {
+      this.logger.log(`Deleted cache for key: ${key}`)
+    }
+  }
+
+  private cleanupExpiredEntries(): void {
+    const now = Date.now()
+    let cleanedCount = 0
+    for (const [key, entry] of this.cache.entries()) {
+      if (now > entry.expiryTime) {
+        this.cache.delete(key)
+        cleanedCount++
+      }
+    }
+    if (cleanedCount > 0) {
+      this.logger.log(`Cleaned up ${cleanedCount} expired cache entries.`)
+    }
+  }
+
+  // Optional: run cleanup periodically if needed, e.g., with NestJS Schedule
+  // constructor() {
+  //   setInterval(() => this.cleanupExpiredEntries(), DEFAULT_TTL_MS); // Example: cleanup every 5 mins
+  // }
+}
