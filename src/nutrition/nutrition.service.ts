@@ -1,14 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { AiService } from '../ai/ai.service'
-import type {
+import {
+  AiService,
   FoodAnalysisToolResult,
   BarcodeAnalysisToolResult,
   WebSearchRequestToolResult,
-  UserProfileDto,
   NonFoodDescriptionResult,
 } from '../ai/ai.service'
+import { UserProfileDto } from '../user/user.interface'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
+// import { FoodAnalysisData, FoodComponentDetail } from '../line/flex.messages'
 // import { InjectModel } from '@nestjs/mongoose'
 // import { Model } from 'mongoose'
 // Import Mongoose models as needed, e.g.:

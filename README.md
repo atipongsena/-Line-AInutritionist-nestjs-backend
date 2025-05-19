@@ -12,7 +12,10 @@
 
 - **การวิเคราะห์อาหารจากรูปภาพ:** ผู้ใช้ส่งรูปภาพอาหาร แล้ว AI จะวิเคราะห์และให้ข้อมูลโภชนาการ, ประโยชน์ต่อสุขภาพ, และคำแนะนำ
 - **การวิเคราะห์อาหารจากข้อความ:** ผู้ใช้พิมพ์ชื่ออาหาร/รายการอาหาร แล้ว AI จะวิเคราะห์และให้ข้อมูลเช่นเดียวกับการวิเคราะห์รูปภาพ
-- **การวิเคราะห์บาร์โค้ด:** (ถ้ามี) ผู้ใช้ส่งรูปภาพบาร์โค้ดผลิตภัณฑ์อาหาร แล้ว AI จะค้นหาข้อมูลผลิตภัณฑ์และโภชนาการ
+- **การวิเคราะห์บาร์โค้ดผลิตภัณฑ์อาหาร:** ผู้ใช้สามารถส่งรูปภาพบาร์โค้ด หรือป้อนหมายเลขบาร์โค้ด เพื่อให้ AI ค้นหาข้อมูลผลิตภัณฑ์และโภชนาการ
+- **การคำนวณและตั้งค่าเป้าหมายโภชนาการส่วนบุคคล:** AI ช่วยกำหนดและติดตามเป้าหมายโภชนาการที่เหมาะสมกับแต่ละบุคคล
+- **การวิเคราะห์รูปแบบการบริโภคอาหาร (Eating Pattern Analysis):** AI ประเมินรูปแบบการกินจากประวัติการบันทึกอาหาร และให้คำแนะนำเพื่อการปรับปรุง
+- **การแนะนำมื้ออาหาร (Meal Recommendation):** AI สามารถแนะนำรายการอาหารหรือมื้ออาหารที่เหมาะสมตามความต้องการ, เป้าหมายโภชนาการ, หรือประเภทอาหารที่ผู้ใช้สนใจ
 - **การตอบคำถามทั่วไปเกี่ยวกับโภชนาการ:** AI สามารถตอบคำถามพื้นฐานเกี่ยวกับอาหารและสุขภาพได้
 - **การจัดการโปรไฟล์ผู้ใช้:** จัดเก็บข้อมูลพื้นฐานของผู้ใช้ (เช่น ภาษาที่ต้องการ, เป้าหมายทางโภชนาการเบื้องต้น)
 - **ประวัติการสนทนา:** จัดเก็บประวัติการสนทนาเพื่อประสบการณ์ที่ต่อเนื่อง
@@ -161,15 +164,18 @@ INTERNAL_API_KEY=YOUR_INTERNAL_API_KEY_IF_NEEDED
 
 ```
 ai-nutritionist-nestjs-backend/
+├── liff-profile-app/         # แอปพลิเคชัน LIFF (LINE Front-end Framework) สำหรับจัดการโปรไฟล์ผู้ใช้ หรือส่วนติดต่อผู้ใช้อื่นๆ
+├── packages/                 # Shared libraries ภายใน monorepo
+│   └── shared-types/         # แหล่งรวม TypeScript type definitions ที่ใช้ร่วมกันภายในโปรเจค
 ├── src/                      # Source files
-│   ├── ai/                   # AI logic, OpenAI integration, prompts
+│   ├── ai/                   # ตรรกะเกี่ยวกับ AI, การเชื่อมต่อ OpenAI, prompts, tool definitions, และ service handlers สำหรับ AI
 │   ├── analysis-cache/       # Caching for analysis results
 │   ├── conversation-history/ # Storing conversation logs
 │   ├── image/                # Image processing and storage (Azure Blob)
 │   ├── line/                 # LINE Messaging API integration, webhook handler
-│   ├── nutrition/            # Core nutrition logic, data transformation
-│   ├── openai/               # (Potentially more specific OpenAI client setup)
-│   ├── schemas/              # MongoDB Mongoose schemas
+│   ├── nutrition/            # ตรรกะหลักเกี่ยวกับโภชนาการ, การแปลงข้อมูล, และการคำนวณที่ไม่ใช่ AI
+│   ├── openai/               # Service สำหรับการตั้งค่า client และการติดต่อกับ Azure OpenAI API โดยตรง
+│   ├── schemas/              # คำจำกัดความของ Mongoose schema สำหรับ MongoDB และโมดูลที่เกี่ยวข้อง
 │   ├── user/                 # User profile management
 │   ├── app.module.ts         # Root application module
 │   └── main.ts               # Application entry point

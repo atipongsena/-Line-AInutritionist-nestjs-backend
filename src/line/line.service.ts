@@ -13,7 +13,8 @@ import {
   Message,
 } from '@line/bot-sdk'
 import { ImageService } from '../image/image.service'
-import { AiService, UserProfileDto } from '../ai/ai.service'
+import { AiService } from '../ai/ai.service'
+import { UserProfileDto } from '../user/user.interface'
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import type { FoodAnalysisToolResult } from '../ai/ai.service' // Import as type only
 import {
@@ -244,6 +245,8 @@ export class LineService {
       event.type !== 'follow'
     ) {
       try {
+        // Attempt to ensure user profile exists and potentially update last active time.
+        // Individual handlers (message, postback) will also attempt to fetch the profile if needed by them.
         await this.userService.getOrCreateUserProfile({
           lineUserId: userIdFromSource,
         })
@@ -252,10 +255,12 @@ export class LineService {
         )
       } catch (error) {
         this.logger.error(
-          `Critical error: Failed to get or create user profile for ${userIdFromSource} in preamble. Event: ${event.type}`,
+          `Error during initial attempt to get/create user profile for ${userIdFromSource} (Event: ${event.type}). Processing will continue, and subsequent handlers will attempt to fetch the profile again if needed.`,
           error,
         )
-        // Decide if we should stop processing or continue if user creation fails
+        // DECISION: Continue processing. Subsequent handlers (e.g., for messages, postbacks)
+        // are responsible for their own profile fetching and error handling if a profile is critical for their operation.
+        // This allows the main event handling flow to proceed to the switch statement.
       }
     }
 

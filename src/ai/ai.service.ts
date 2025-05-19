@@ -12,29 +12,13 @@ import {
 } from './ai.tools'
 import { ConversationHistoryService } from '../conversation-history/conversation-history.service'
 import { AnalysisCacheService } from '../analysis-cache/analysis-cache.service'
-import { FoodAnalysisData } from '../line/flex.messages' // Added import for FoodAnalysisData
+import { FoodAnalysisData } from '../line/flex.messages'
+import { UserProfileDto } from '../user/user.interface' // Import UserProfileDto
 
 // Define the new result type for non-food images
 export interface NonFoodDescriptionResult {
   type: 'non_food_description'
   description: string // Combined description and joke
-}
-
-// DTO for User Profile (can be moved to a dedicated types file)
-export interface UserProfileDto {
-  id?: string
-  goal?: string
-  gender?: string
-  age?: number
-  weight_kg?: number
-  height_cm?: number
-  activityLevel?: string // e.g., sedentary, light, moderate, active, very_active
-  dietType?: string // e.g., normal, keto, vegetarian
-  healthConditions?: string[]
-  foodAllergies?: string[]
-  foodRestrictions?: string[]
-  language?: string // Added language to userProfile for consistency
-  [key: string]: any
 }
 
 // --- FOOD LOG DTO for AiService ---
@@ -418,9 +402,9 @@ export class AiService {
       healthRelated = true
     }
     if (
-      userProfile.foodRestrictions &&
-      userProfile.foodRestrictions.length > 0 &&
-      !userProfile.foodRestrictions.some(
+      userProfile.foodAllergies &&
+      userProfile.foodAllergies.length > 0 &&
+      !userProfile.foodAllergies.some(
         (r) => r.toLowerCase() === 'none' || r.trim() === '',
       )
     ) {
@@ -538,18 +522,24 @@ export class AiService {
       goal,
       gender,
       age,
-      weight_kg,
-      height_cm,
+      weightKg,
+      heightCm,
       dietType,
       activityLevel,
       healthConditions,
       foodAllergies,
-      foodRestrictions,
+      pregnancyLactationStatus,
+      ethicalFoodConsiderations,
+      preferredCuisine,
+      preferredFlavorProfiles,
     } = userProfile
 
     let bmi = 'not specified'
-    if (weight_kg && height_cm) {
-      bmi = (weight_kg / (height_cm / 100) ** 2).toFixed(1)
+    if (userProfile.weightKg && userProfile.heightCm) {
+      // Changed
+      bmi = (userProfile.weightKg / (userProfile.heightCm / 100) ** 2).toFixed(
+        1,
+      )
     }
 
     // Helper for localized examples, not for main prompt structure
@@ -568,15 +558,18 @@ USER INFO (for your context, do not repeat in tool output unless specified by sc
 - Lang: ${lang}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'} years
-- Weight: ${weight_kg || 'not specified'} kg
-- Height: ${height_cm || 'not specified'} cm
+- Weight: ${weightKg || 'not specified'} kg
+- Height: ${heightCm || 'not specified'} cm
 - BMI: ${bmi}
 - Goal: ${goal || 'not specified'}
 - Diet Type: ${dietType || 'normal'}
 - Activity Level: ${activityLevel || 'moderate'}
-- Restrictions: ${foodRestrictions?.join(', ') || 'none'}
+- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'} 
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
+- Food Allergies: ${foodAllergies?.join(', ') || 'none'} 
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
-- Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 
 **TASK OVERVIEW:**
 Your main task is to analyze food based on user's text and/or image input. You MUST use the '${importedFoodAnalysisTool.function.name}' tool for this. If essential product information is missing for a *specific packaged product*, you may use the '${importedRequestProductInfoFromWebTool.function.name}' tool instead. If the image is not food, respond directly as instructed under NON-FOOD IMAGE HANDLING.
@@ -636,18 +629,25 @@ ALL textual fields within the arguments for the '${importedFoodAnalysisTool.func
     const {
       gender,
       age,
-      weight_kg,
-      height_cm,
+      weightKg,
+      heightCm,
       activityLevel,
       goal,
       dietType,
-      foodRestrictions,
       healthConditions,
+      foodAllergies,
+      pregnancyLactationStatus, // New
+      ethicalFoodConsiderations, // New
+      // preferredCuisine, // Potentially useful but not directly for goal calculation
+      // preferredFlavorProfiles, // Potentially useful but not directly for goal calculation
     } = userProfile
 
     let bmi = 'not specified'
-    if (weight_kg && height_cm) {
-      bmi = (weight_kg / (height_cm / 100) ** 2).toFixed(1)
+    if (userProfile.weightKg && userProfile.heightCm) {
+      // Changed
+      bmi = (userProfile.weightKg / (userProfile.heightCm / 100) ** 2).toFixed(
+        1,
+      )
     }
 
     return `You are an AI nutritionist. Calculate personalized nutrition goals for the user.
@@ -655,13 +655,15 @@ USER INFO:
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'} years
-- Weight: ${weight_kg || 'not specified'} kg
-- Height: ${height_cm || 'not specified'} cm
+- Weight: ${weightKg || 'not specified'} kg
+- Height: ${heightCm || 'not specified'} cm
 - BMI: ${bmi}
 - Activity Level: ${activityLevel || 'not specified'}
 - Goal: ${goal || 'not specified'}
 - Diet Type: ${dietType || 'normal'}
-- Restrictions: ${foodRestrictions?.join(', ') || 'none'}
+- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'} // New
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'} // New
+- Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
 TASK:
@@ -679,12 +681,25 @@ TASK:
     foodLogsSummary?: string,
     nutritionGoalSummary?: string,
   ): string {
-    const { gender, age, weight_kg, height_cm, goal, dietType, activityLevel } =
-      userProfile
+    const {
+      gender,
+      age,
+      weightKg,
+      heightCm,
+      goal,
+      dietType,
+      activityLevel,
+      pregnancyLactationStatus,
+      ethicalFoodConsiderations,
+      preferredCuisine,
+      preferredFlavorProfiles,
+      foodAllergies,
+      healthConditions,
+    } = userProfile
 
     let bmi = 'not specified'
-    if (weight_kg && height_cm) {
-      bmi = (weight_kg / (height_cm / 100) ** 2).toFixed(1)
+    if (weightKg && heightCm) {
+      bmi = (weightKg / (heightCm / 100) ** 2).toFixed(1)
     }
 
     return `You are an AI nutritionist specializing in analyzing eating patterns.
@@ -692,12 +707,18 @@ USER INFO:
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'} years
-- Weight: ${weight_kg || 'not specified'} kg
-- Height: ${height_cm || 'not specified'} cm
+- Weight: ${weightKg || 'not specified'} kg
+- Height: ${heightCm || 'not specified'} cm
 - BMI: ${bmi}
 - Goal: ${goal || 'not specified'}
 - Diet Type: ${dietType || 'normal'}
 - Activity Level: ${activityLevel || 'not specified'}
+- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'}
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
+- Food Allergies: ${foodAllergies?.join(', ') || 'none'}
+- Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
 TASK:
 1. Analyze the user's eating patterns (hypothetically, based on provided logs or general knowledge if logs are absent).
@@ -742,19 +763,22 @@ RECOMMENDATIONS:
     const {
       goal,
       dietType,
-      foodRestrictions,
       foodAllergies,
       healthConditions,
       gender,
       age,
-      weight_kg,
-      height_cm,
+      weightKg,
+      heightCm,
       activityLevel,
+      pregnancyLactationStatus, // New
+      ethicalFoodConsiderations, // New
+      preferredCuisine, // New
+      preferredFlavorProfiles, // New
     } = userProfile
 
     let bmi = 'not specified'
-    if (weight_kg && height_cm) {
-      bmi = (weight_kg / (height_cm / 100) ** 2).toFixed(1)
+    if (weightKg && heightCm) {
+      bmi = (weightKg / (heightCm / 100) ** 2).toFixed(1)
     }
 
     return `You are an AI nutritionist. Recommend suitable meals for "${mealContext}".
@@ -762,13 +786,16 @@ USER INFO:
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'}
-- Weight: ${weight_kg || 'not specified'} kg
-- Height: ${height_cm || 'not specified'} cm
+- Weight: ${weightKg || 'not specified'} kg
+- Height: ${heightCm || 'not specified'} cm
 - BMI: ${bmi}
 - Goal: ${goal || 'not specified'}
 - Diet Type: ${dietType || 'normal'}
 - Activity Level: ${activityLevel || 'moderate'}
-- Restrictions: ${foodRestrictions?.join(', ') || 'none'}
+- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'}
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
 - Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
@@ -795,18 +822,30 @@ MEAL RECOMMENDATIONS FOR THE TOOL SHOULD:
     const {
       goal,
       dietType,
-      foodRestrictions,
       foodAllergies,
       healthConditions,
+      // Add new fields for context, though they might not be directly used by AI for barcode part
+      gender, // For general context
+      age, // For general context
+      pregnancyLactationStatus,
+      ethicalFoodConsiderations,
+      preferredCuisine, // Less likely to be used here, but for completeness
+      preferredFlavorProfiles, // Less likely to be used here
     } = userProfile
     return `You are an AI nutritionist. Analyze product information (e.g., from a barcode or product image/text).
 USER INFO:
 - Lang: ${language}
 - Goal: ${goal || 'not specified'}
 - Diet Type: ${dietType || 'normal'}
-- Restrictions: ${foodRestrictions?.join(', ') || 'none'}
 - Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
+// Add new fields to prompt string for broader context
+- Gender: ${gender || 'not specified'}
+- Age: ${age || 'not specified'}
+- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'}
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
 
 TASK:
 1. Attempt to identify the product and its key nutritional info based on provided data (barcode, product name, image description) using the '${importedBarcodeAnalysisTool.function.name}' tool first.
@@ -825,7 +864,20 @@ FOCUS ON (for the tool call to '${importedBarcodeAnalysisTool.function.name}'):
     userProfile: UserProfileDto,
     language: string = 'th',
   ): string {
-    const { gender, age, goal, dietType, healthConditions } = userProfile
+    const {
+      gender,
+      age,
+      goal,
+      dietType,
+      healthConditions,
+      foodAllergies,
+      pregnancyLactationStatus,
+      ethicalFoodConsiderations,
+      preferredCuisine,
+      preferredFlavorProfiles,
+      weightKg,
+      heightCm,
+    } = userProfile
     this.logger.debug(
       `Creating general nutrition prompt for language: ${language}`,
     )
@@ -836,9 +888,16 @@ USER INFO:
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'} years
+- Weight: ${weightKg || 'not specified'} kg
+- Height: ${heightCm || 'not specified'} cm
 - Goal: ${goal || 'not specified'}
 - Diet Type: ${dietType || 'normal'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
+- Food Allergies: ${foodAllergies?.join(', ') || 'none'}
+- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'}
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
 
 TASK:
 1. Answer nutrition and food-related questions accurately.
@@ -1026,7 +1085,7 @@ RESPONSE STRUCTURE (for nutrition-related queries):
   ): Promise<NutritionGoalToolResult | { error: string } | null> {
     const lang = userProfile.language || language
     this.logger.log(
-      `Calculating nutrition goals for user ID: ${userProfile.id || 'Unknown'} with constraint: ${timeConstraint}, lang: ${lang}`,
+      `Calculating nutrition goals for user ID: ${userProfile.lineUserId || 'Unknown'} with constraint: ${timeConstraint}, lang: ${lang}`,
     )
     const systemPrompt = this.createNutritionGoalSystemPrompt(userProfile, lang)
     const userQueryForModelSelection = 'calculate nutrition goals'
@@ -1083,7 +1142,7 @@ RESPONSE STRUCTURE (for nutrition-related queries):
   ): Promise<EatingPatternToolResult | { error: string } | null> {
     const lang = userProfile.language || language
     this.logger.log(
-      `Analyzing eating pattern for user ID: ${userProfile.id || 'Unknown'} with constraint: ${timeConstraint}, lang: ${lang}. Logs count: ${foodLogs.length}, Goal set: ${!!nutritionGoal}`,
+      `Analyzing eating pattern for user ID: ${userProfile.lineUserId || 'Unknown'} with constraint: ${timeConstraint}, lang: ${lang}. Logs count: ${foodLogs.length}, Goal set: ${!!nutritionGoal}`,
     )
 
     let foodLogsSummary = 'No food logs provided or logs are empty.'
@@ -1170,7 +1229,7 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
   ): Promise<MealRecommendationToolResult | { error: string } | null> {
     this.logger.log(
-      `Recommending meals for context: "${mealContext}" for user ID: ${userProfile.id || 'Unknown'}, constraint: ${timeConstraint}`,
+      `Recommending meals for context: "${mealContext}" for user ID: ${userProfile.lineUserId || 'Unknown'}, constraint: ${timeConstraint}`,
     )
     const systemPrompt = this.createMealRecommendationSystemPrompt(
       userProfile,
@@ -1817,14 +1876,14 @@ RESPONSE STRUCTURE (for nutrition-related queries):
   ): Promise<FoodAnalysisToolResult> {
     // Added Promise<>
     this.logger.debug(
-      `Handling extract_food_analysis for lang '${language}' with args: ${JSON.stringify(args)} for user ${userProfile.id || 'unknown'}`,
+      `Handling extract_food_analysis for lang '${language}' with args: ${JSON.stringify(args)} for user ${userProfile.lineUserId || 'unknown'}`,
     )
     // The AI is expected to provide all data according to FOOD_ANALYSIS_SCHEMA.
     // This handler's job is primarily to validate and return it.
     // Basic validation (can be expanded):
     if (!args.food_name || typeof args.calories !== 'number') {
       this.logger.warn(
-        `Received incomplete or malformed FoodAnalysisToolResult from AI for user ${userProfile.id || 'unknown'}. Args: ${JSON.stringify(args)}`,
+        `Received incomplete or malformed FoodAnalysisToolResult from AI for user ${userProfile.lineUserId || 'unknown'}. Args: ${JSON.stringify(args)}`,
       )
       // Potentially return a modified args or throw an error if critical data is missing
       // For now, returning as is, but with a warning logged.
@@ -1868,43 +1927,104 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     language: string,
   ): NutritionGoalToolResult {
     this.logger.debug(
-      `Handling calculate_nutrition_goals for user ${userProfile.id || 'unknown'} with lang '${language}'. Args (should be empty): ${JSON.stringify(args)}`,
+      `Handling calculate_nutrition_goals for user ${userProfile.lineUserId || 'unknown'} with lang '${language}'. Args (should be empty): ${JSON.stringify(args)}`,
     )
     // TODO: Replace with actual BMR/TDEE calculation based on userProfile
-    const calculatedBMR = 1500
-    const calculatedTDEE = 2000
+    // These are placeholders and should be calculated using NutritionService or similar
+    const baseBMR = 1500
+    const baseTDEE = 2000
+
+    const calculatedBMR = baseBMR // Changed to const
+    let calculatedTDEE = baseTDEE // Base TDEE
+    let proteinModifier = 0 // g
+    let calorieModifier = 0 // kcal
+    const additionalHealthAdvice: string[] = [] // Changed to const, will push to it
+
+    if (userProfile.pregnancyLactationStatus === 'pregnant') {
+      calorieModifier += 300
+      proteinModifier += 15
+      additionalHealthAdvice.push(
+        language === 'th'
+          ? 'เนื่องจากกำลังตั้งครรภ์ โปรดปรึกษาแพทย์เกี่ยวกับความต้องการสารอาหารเฉพาะบุคคล'
+          : 'As you are pregnant, please consult your doctor for specific nutritional needs.',
+      )
+    } else if (userProfile.pregnancyLactationStatus === 'lactating') {
+      calorieModifier += 500
+      proteinModifier += 20
+      additionalHealthAdvice.push(
+        language === 'th'
+          ? 'เนื่องจากกำลังให้นมบุตร ความต้องการสารอาหารของคุณอาจเพิ่มขึ้น'
+          : 'As you are lactating, your nutritional needs may be increased.',
+      )
+    }
+
+    calculatedTDEE += calorieModifier
+
+    const initialProteinGoal =
+      Math.round((calculatedTDEE * 0.2) / 4) + proteinModifier
+
+    const isVegetarian =
+      userProfile.ethicalFoodConsiderations?.includes('vegetarian')
+    const isVegan = userProfile.ethicalFoodConsiderations?.includes('vegan')
+
+    if (isVegan) {
+      additionalHealthAdvice.push(
+        language === 'th'
+          ? 'สำหรับผู้ทานวีแกน ควรให้ความสำคัญกับแหล่งโปรตีนจากพืช เช่น ถั่ว เต้าหู้ และธัญพืช รวมถึงวิตามิน B12 และธาตุเหล็ก'
+          : 'For vegans, prioritize plant-based protein sources like legumes, tofu, and grains, and pay attention to Vitamin B12 and Iron intake.',
+      )
+    } else if (isVegetarian) {
+      additionalHealthAdvice.push(
+        language === 'th'
+          ? 'สำหรับผู้ทานมังสวิรัติ ควรให้ความสำคัญกับแหล่งโปรTีนจากพืชและไข่หรือนม (หากบริโภค)'
+          : 'For vegetarians, prioritize plant-based protein sources, eggs, or dairy (if consumed).',
+      )
+    }
+
+    const baseHealthAdvice =
+      language === 'th'
+        ? 'นี่คือเป้าหมายโภชนาการเบื้องต้นของคุณ ปรับเปลี่ยนตามความเหมาะสม'
+        : 'These are your initial nutrition goals. Adjust as needed.'
+
+    const finalHealthAdvice = [
+      baseHealthAdvice,
+      ...additionalHealthAdvice,
+    ].join(' \n')
 
     return {
-      bmr: calculatedBMR,
+      bmr: calculatedBMR, // This should ideally be recalculated if TDEE changes significantly due to modifiers.
       tdee: calculatedTDEE,
       daily_goals: {
         calories: calculatedTDEE,
-        protein: Math.round((calculatedTDEE * 0.2) / 4),
-        carbs: Math.round((calculatedTDEE * 0.5) / 4),
+        protein: initialProteinGoal,
+        carbs: Math.round((calculatedTDEE * 0.5) / 4), // Keep carbs/fat ratio for simplicity, adjust if needed
         fat: Math.round((calculatedTDEE * 0.3) / 9),
-        fiber: 25,
-        sugar_max: 25,
-        water: 2500,
+        fiber: 25, // Placeholder
+        sugar_max: 25, // Placeholder
+        water: 2500, // Placeholder
       },
       macro_distribution: {
-        protein_percent: 20,
-        carbs_percent: 50,
-        fat_percent: 30,
+        // This should be recalculated based on new daily_goals.grams
+        protein_percent: Math.round(
+          (initialProteinGoal * 4 * 100) / calculatedTDEE,
+        ),
+        carbs_percent: 50, // Placeholder, needs recalculation
+        fat_percent: 30, // Placeholder, needs recalculation
       },
       meal_recommendations: {
+        // Placeholder
         breakfast: Math.round(calculatedTDEE * 0.25),
         lunch: Math.round(calculatedTDEE * 0.35),
         dinner: Math.round(calculatedTDEE * 0.3),
         snacks: Math.round(calculatedTDEE * 0.1),
       },
-      health_advice:
-        language === 'th'
-          ? 'นี่คือเป้าหมายโภชนาการเบื้องต้นของคุณ ปรับเปลี่ยนตามความเหมาะสม'
-          : 'These are your initial nutrition goals. Adjust as needed.',
+      health_advice: finalHealthAdvice,
+      // Placeholder, could be tailored based on ethical considerations
       food_recommendations:
         language === 'th'
           ? ['ผักใบเขียว', 'โปรตีนไม่ติดมัน']
           : ['Leafy greens', 'Lean protein'],
+      // Placeholder
       foods_to_avoid:
         language === 'th'
           ? ['น้ำตาลแปรรูป', 'ไขมันทรานส์']
@@ -1920,7 +2040,7 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     nutritionGoal: NutritionGoalDtoForAI | null = null, // Provide default null if undefined
   ): EatingPatternToolResult {
     this.logger.debug(
-      `Handling analyze_eating_pattern for user ${userProfile.id || 'unknown'}, lang '${language}'. ` +
+      `Handling analyze_eating_pattern for user ${userProfile.lineUserId || 'unknown'}, lang '${language}'. ` +
         `Args: ${JSON.stringify(args)}. Food logs count: ${foodLogs.length}. Goal set: ${!!nutritionGoal}`,
     )
 
@@ -1958,26 +2078,152 @@ RESPONSE STRUCTURE (for nutrition-related queries):
   }
 
   private handleRecommendMeals(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _args: MealRecommendationArgs,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _userProfile: UserProfileDto,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _language: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _mealContext: string,
+    args: MealRecommendationArgs, // AI might send preferences here too
+    userProfile: UserProfileDto,
+    language: string,
+    mealContext: string, // e.g., "breakfast", "a high-protein snack"
   ): MealRecommendationToolResult {
-    // Implementation of handleRecommendMeals method
-    // This is a placeholder and should be replaced with the actual implementation
+    this.logger.debug(
+      `Handling recommend_meals for user ${userProfile.lineUserId || 'unknown'}, lang '${language}', context '${mealContext}'. Args: ${JSON.stringify(args)}`,
+    )
+
+    const recommendations: string[] = []
+    const alternatives: string[] = []
+    // Changed let to const for mealTypeForResponse
+    const mealTypeForResponse =
+      args.meal_type_preference && args.meal_type_preference !== 'any'
+        ? args.meal_type_preference
+        : mealContext.toLowerCase().includes('breakfast')
+          ? 'breakfast'
+          : mealContext.toLowerCase().includes('lunch')
+            ? 'lunch'
+            : mealContext.toLowerCase().includes('dinner')
+              ? 'dinner'
+              : mealContext.toLowerCase().includes('snack')
+                ? 'snack'
+                : 'general'
+
+    if (userProfile.preferredCuisine) {
+      recommendations.push(
+        language === 'th'
+          ? `เราจะพยายามหาอาหารประเภท ${userProfile.preferredCuisine.join(', ')} ที่เหมาะกับคุณ`
+          : `We will try to find ${userProfile.preferredCuisine.join(', ')} dishes suitable for you.`,
+      )
+    }
+
+    if (
+      userProfile.preferredFlavorProfiles &&
+      userProfile.preferredFlavorProfiles.length > 0
+    ) {
+      recommendations.push(
+        language === 'th'
+          ? `รสชาติที่คุณชอบคือ: ${userProfile.preferredFlavorProfiles.join(', ')}`
+          : `Your preferred flavors are: ${userProfile.preferredFlavorProfiles.join(', ')}`,
+      )
+    }
+
+    if (
+      userProfile.ethicalFoodConsiderations &&
+      userProfile.ethicalFoodConsiderations.length > 0
+    ) {
+      const considerations = userProfile.ethicalFoodConsiderations.join(', ')
+      recommendations.push(
+        language === 'th'
+          ? `เราจะคำนึงถึงข้อจำกัดด้านจริยธรรมของคุณ: ${considerations}`
+          : `We will consider your ethical food considerations: ${considerations}`,
+      )
+      // Corrected: push individual string messages to alternatives array
+      if (userProfile.ethicalFoodConsiderations.includes('vegan')) {
+        if (language === 'th') {
+          alternatives.push('ลองดูเมนูเต้าหู้ผัดผัก')
+          alternatives.push('แกงเขียวหวานเจก็น่าสนใจ')
+        } else {
+          alternatives.push('Consider tofu stir-fry.')
+          alternatives.push('Vegan green curry is another option.')
+        }
+      } else if (userProfile.ethicalFoodConsiderations.includes('vegetarian')) {
+        if (language === 'th') {
+          alternatives.push('ไข่เจียวทรงเครื่องก็ดีนะ')
+          alternatives.push('หรือจะลองยำสลัดผัก')
+        } else {
+          alternatives.push('Mushroom omelette could be a good choice.')
+          alternatives.push('A hearty vegetable salad is also an option.')
+        }
+      }
+    }
+
+    if (userProfile.pregnancyLactationStatus === 'pregnant') {
+      recommendations.push(
+        language === 'th'
+          ? 'สำหรับหญิงตั้งครรภ์ ควรเน้นอาหารที่มีโฟเลตและธาตุเหล็กสูง'
+          : 'For pregnant individuals, focusing on folate and iron-rich foods is beneficial.',
+      )
+      if (language === 'th') {
+        alternatives.push('เช่น ต้มเลือดหมู')
+        alternatives.push('หรือผัดผักบุ้งไฟแดง')
+      } else {
+        alternatives.push('For example, spinach soup.')
+        alternatives.push('Stir-fried water spinach is also good.')
+      }
+    } else if (userProfile.pregnancyLactationStatus === 'lactating') {
+      recommendations.push(
+        language === 'th'
+          ? 'สำหรับหญิงให้นมบุตร ควรเน้นอาหารที่ช่วยเพิ่มน้ำนมและมีประโยชน์'
+          : 'For lactating individuals, nutrient-dense foods that support milk production are recommended.',
+      )
+      if (language === 'th') {
+        alternatives.push('เช่น แกงเลียง')
+        alternatives.push('หรือไก่ผัดขิง')
+      } else {
+        alternatives.push(
+          'For example, Gaeng Liang (Thai spicy mixed vegetable soup).',
+        )
+        alternatives.push('Chicken stir-fried with ginger is also recommended.')
+      }
+    }
+
+    // Placeholder for actual meal recommendations based on args and full profile
+    const exampleFoods: MealRecommendationToolResult['foods'] = [
+      {
+        name:
+          language === 'th'
+            ? 'ข้าวกะเพราไก่ไข่ดาว (ตัวอย่าง)'
+            : 'Sample: Stir-fried Chicken with Basil and Fried Egg',
+        description:
+          language === 'th'
+            ? 'อาหารจานด่วนยอดนิยม ปรับให้ดีต่อสุขภาพได้'
+            : 'A popular quick meal, can be made healthier.',
+        calories: 550,
+        protein: 30,
+        carbs: 50,
+        fat: 25,
+        portion: language === 'th' ? '1 จาน' : '1 plate',
+        ingredients:
+          language === 'th'
+            ? ['ไก่', 'ข้าว', 'กะเพรา', 'ไข่']
+            : ['Chicken', 'Rice', 'Holy Basil', 'Egg'],
+      },
+    ]
+
     return {
-      meal_type: '',
-      foods: [],
-      total_calories: 0,
-      total_protein: 0,
-      total_carbs: 0,
-      total_fat: 0,
-      recommendations: '',
-      alternatives: [],
+      meal_type: mealTypeForResponse,
+      foods: exampleFoods,
+      total_calories: exampleFoods.reduce(
+        (sum, food) => sum + food.calories,
+        0,
+      ),
+      total_protein: exampleFoods.reduce((sum, food) => sum + food.protein, 0),
+      total_carbs: exampleFoods.reduce((sum, food) => sum + food.carbs, 0),
+      total_fat: exampleFoods.reduce((sum, food) => sum + food.fat, 0),
+      recommendations:
+        recommendations.join(' \n') ||
+        (language === 'th'
+          ? 'เลือกอาหารที่เหมาะสมกับคุณ'
+          : 'Choose meals suitable for you.'),
+      // Corrected: 'alternatives' field should be a string[]
+      // If the alternatives array is empty, it should remain an empty array.
+      // The AI or a subsequent step can decide how to present an empty list of alternatives.
+      alternatives: alternatives,
     }
   }
 

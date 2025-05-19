@@ -7,6 +7,12 @@ import {
   CreateUserProfileDto,
   UpdateUserProfileDto,
 } from './user.interface'
+import {
+  Gender,
+  ActivityLevel,
+  DietType,
+  PregnancyLactationStatus,
+} from '@ai-nutritionist/shared-types'
 
 @Injectable()
 export class UserService {
@@ -26,19 +32,23 @@ export class UserService {
       pictureUrl: userDoc.pictureUrl,
       language: userDoc.language,
       goal: userDoc.goal,
-      gender: userDoc.gender as UserProfileDto['gender'], // Cast to ensure type compatibility
+      gender: userDoc.gender as Gender,
       age: userDoc.age,
       weightKg: userDoc.weightKg,
       heightCm: userDoc.heightCm,
-      activityLevel: userDoc.activityLevel as UserProfileDto['activityLevel'], // Cast
-      dietType: userDoc.dietType as UserProfileDto['dietType'], // Cast
+      activityLevel: userDoc.activityLevel as ActivityLevel,
+      dietType: userDoc.dietType as DietType,
       healthConditions: userDoc.healthConditions,
       foodAllergies: userDoc.foodAllergies,
-      foodRestrictions: userDoc.foodRestrictions,
       isActive: userDoc.isActive,
       lastActiveAt: userDoc.lastActiveAt,
       createdAt: userDoc.createdAt!,
       updatedAt: userDoc.updatedAt!,
+      ethicalFoodConsiderations: userDoc.ethicalFoodConsiderations,
+      pregnancyLactationStatus:
+        userDoc.pregnancyLactationStatus as PregnancyLactationStatus,
+      preferredCuisine: userDoc.preferredCuisine,
+      preferredFlavorProfiles: userDoc.preferredFlavorProfiles,
     }
   }
 
@@ -53,18 +63,15 @@ export class UserService {
     if (user) {
       this.logger.log(`User ${lineUserId} found. Updating lastActiveAt.`)
       user.lastActiveAt = new Date()
-      // Optionally update display name and picture URL if they have changed
-      if (displayName && user.displayName !== displayName) {
+      if (displayName !== undefined && user.displayName !== displayName) {
         user.displayName = displayName
       }
-      if (pictureUrl && user.pictureUrl !== pictureUrl) {
+      if (pictureUrl !== undefined && user.pictureUrl !== pictureUrl) {
         user.pictureUrl = pictureUrl
       }
-      // If language is provided in DTO and different from stored, update it.
-      if (language && user.language !== language) {
+      if (language !== undefined && user.language !== language) {
         user.language = language
       }
-      // Ensure isActive is true for a user being fetched/created, unless specifically handled elsewhere
       if (!user.isActive) {
         user.isActive = true
       }
@@ -73,17 +80,16 @@ export class UserService {
     }
 
     this.logger.log(
-      `User ${lineUserId} not found. Creating new profile. DisplayName: ${createDto.displayName || 'N/A'}`,
+      `User ${lineUserId} not found. Creating new profile. DisplayName: ${displayName || 'N/A'}`,
     )
     const newUser = new this.userModel({
       lineUserId,
-      displayName: createDto.displayName || 'User', // Default display name if not provided
-      pictureUrl,
-      language: createDto.language || 'th', // Default to Thai
+      displayName: displayName || 'User',
+      pictureUrl: pictureUrl,
+      language: language || 'th',
       isActive: true,
       lastActiveAt: new Date(),
-      // Initialize other fields with defaults if necessary
-      goal: 'general_health', // Default goal
+      goal: 'general_health',
     })
     const savedUser = await newUser.save()
     return this.mapUserDocumentToDto(savedUser)
@@ -135,7 +141,7 @@ export class UserService {
     const user = await this.userModel
       .findOneAndUpdate(
         { lineUserId },
-        { isActive: false, lastActiveAt: new Date() }, // Set isActive to false
+        { isActive: false, lastActiveAt: new Date() },
         { new: true },
       )
       .exec()

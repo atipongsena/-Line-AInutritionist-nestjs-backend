@@ -25,7 +25,20 @@ export class User {
   goal?: string
 
   @Prop({
-    enum: ['male', 'female', 'other', 'not_specified'],
+    enum: [
+      'male',
+      'female',
+      'lgbtq_lesbian',
+      'lgbtq_gay',
+      'lgbtq_bisexual',
+      'lgbtq_transgender_m_to_f',
+      'lgbtq_transgender_f_to_m',
+      'lgbtq_queer',
+      'lgbtq_non_binary',
+      'lgbtq_other',
+      'other',
+      'not_specified',
+    ],
     default: 'not_specified',
   })
   gender: string
@@ -49,7 +62,18 @@ export class User {
   activityLevel: string
 
   @Prop({
-    enum: ['normal', 'keto', 'vegetarian', 'vegan', 'low_carb', 'high_protein'],
+    enum: [
+      'normal',
+      'keto',
+      'vegetarian',
+      'vegan',
+      'low_carb',
+      'high_protein',
+      'if_16_8',
+      'if_5_2',
+      'paleo',
+      'mediterranean',
+    ],
     default: 'normal',
   })
   dietType: string
@@ -60,14 +84,27 @@ export class User {
   @Prop({ type: [String], default: [] })
   foodAllergies: string[]
 
-  @Prop({ type: [String], default: [] })
-  foodRestrictions: string[]
-
   @Prop({ default: true })
   isActive: boolean
 
   @Prop({ default: Date.now })
   lastActiveAt: Date
+
+  // New fields for Step 4
+  @Prop({ type: [String], default: [] })
+  ethicalFoodConsiderations?: string[]
+
+  @Prop({
+    enum: ['not_applicable', 'pregnant', 'lactating'],
+    default: 'not_applicable',
+  })
+  pregnancyLactationStatus?: string // Mapped from PregnancyLactationStatus enum
+
+  @Prop({ type: [String], default: [] })
+  preferredCuisine?: string[]
+
+  @Prop({ type: [String], default: [] })
+  preferredFlavorProfiles?: string[]
 
   // Timestamps - Mongoose will add these, but we define them for type safety
   createdAt?: Date

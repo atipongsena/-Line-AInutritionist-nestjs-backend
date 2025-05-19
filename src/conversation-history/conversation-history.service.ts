@@ -5,7 +5,7 @@ import {
   ConversationHistory,
   ConversationMessage,
 } from './conversation-history.schema'
-import { UserProfileDto } from '../ai/ai.service' // Assuming UserProfileDto might be needed for context
+import { UserProfileDto } from '../user/user.interface' // Changed from ../ai/ai.service
 
 // Configuration for conversation history
 const MAX_HISTORY_LENGTH = 10 // Max number of messages to keep

@@ -20,6 +20,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@ai-nutritionist/shared-types": "workspace:*",
     "@azure/identity": "^4.10.0",
     "@azure/storage-blob": "^12.27.0",
     "@line/bot-sdk": "^9.9.0",
