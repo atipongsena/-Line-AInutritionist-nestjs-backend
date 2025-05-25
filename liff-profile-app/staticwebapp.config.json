@@ -5,6 +5,12 @@
       "allowedRoles": ["anonymous"]
     },
     {
+      "route": "/assets/*",
+      "headers": {
+        "Cache-Control": "max-age=31536000"
+      }
+    },
+    {
       "route": "/*",
       "rewrite": "/index.html"
     }
@@ -12,6 +18,7 @@
   "navigationFallback": {
     "rewrite": "/index.html",
     "exclude": [
+      "/assets/*",
       "/images/*.{png,jpg,gif,svg}",
       "/css/*",
       "/js/*",
@@ -19,7 +26,14 @@
       "*.png",
       "*.jpg",
       "*.gif",
-      "*.svg"
+      "*.svg",
+      "*.js",
+      "*.css",
+      "*.json",
+      "*.woff",
+      "*.woff2",
+      "*.ttf",
+      "*.eot"
     ]
   },
   "mimeTypes": {
