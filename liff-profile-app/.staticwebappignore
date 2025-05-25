@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Development files
+src/
+public/
+*.ts
+*.tsx
+tsconfig.json
+vite.config.ts
+package.json
+package-lock.json
+pnpm-lock.yaml
+
+# Build and development tools
+.vite/
+.eslintrc.js
+.prettierrc.json
+
+# Documentation
+README.md
+docs/
+
+# Environment files
+.env*
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Logs
+*.log
+logs/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Other
+*.zip
+*.tar.gz 
