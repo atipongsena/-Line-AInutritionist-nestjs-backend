@@ -1890,8 +1890,8 @@ function App() {
       </Stepper>
 
       {currentStep === 1 && (
-        <>
-          <FormControl fullWidth margin="normal">
+        <Box sx={{ '& > *': { mb: { xs: 2, sm: 1 } } }}>
+          <FormControl fullWidth size="small">
             <InputLabel id="language-select-label">
               {T.languageLabel}
             </InputLabel>
@@ -1905,7 +1905,9 @@ function App() {
               <MenuItem value="th">ภาษาไทย</MenuItem>
               <MenuItem value="en">English</MenuItem>
             </Select>
-            <FormHelperText>{T.languageHelper}</FormHelperText>
+            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+              {T.languageHelper}
+            </FormHelperText>
           </FormControl>
           <TextField
             label={T.nicknameLabel}
@@ -1913,8 +1915,14 @@ function App() {
             value={formData.displayName || ''}
             onChange={handleInputChange}
             fullWidth
-            margin="normal"
+            size="small"
             helperText={T.nicknameHelper}
+            InputLabelProps={{
+              sx: { fontSize: { xs: '0.9rem', sm: '1rem' } },
+            }}
+            FormHelperTextProps={{
+              sx: { fontSize: { xs: '0.7rem', sm: '0.75rem' } },
+            }}
           />
           <LocalizationProvider
             dateAdapter={AdapterDateFns}
@@ -1931,18 +1939,41 @@ function App() {
                     : undefined,
                 }))
               }
-              sx={{ width: '100%', mt: 2, mb: 1 }}
+              slotProps={{
+                textField: {
+                  size: 'small',
+                  fullWidth: true,
+                  InputLabelProps: {
+                    sx: { fontSize: { xs: '0.9rem', sm: '1rem' } },
+                  },
+                  FormHelperTextProps: {
+                    sx: { fontSize: { xs: '0.7rem', sm: '0.75rem' } },
+                  },
+                  helperText: T.birthdateHelper,
+                },
+              }}
+              sx={{ width: '100%' }}
             />
           </LocalizationProvider>
-          <FormHelperText>{T.birthdateHelper}</FormHelperText>
           {calculatedAge !== undefined && (
-            <Typography variant="body2" sx={{ mt: 1 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                mt: 0.5,
+                fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                color: 'text.secondary',
+              }}
+            >
               {T.ageLabel}: {calculatedAge}{' '}
               {currentLang === 'th' ? 'ปี' : 'years'}
             </Typography>
           )}
-          <FormControl component="fieldset" margin="normal" fullWidth>
-            <Typography variant="subtitle1" gutterBottom>
+          <FormControl component="fieldset" fullWidth>
+            <Typography
+              variant="subtitle1"
+              gutterBottom
+              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
+            >
               {T.genderLabel}
             </Typography>
             <ToggleButtonGroup
@@ -1951,6 +1982,13 @@ function App() {
               onChange={handleGenderChange}
               aria-label="gender selection"
               fullWidth
+              size="small"
+              sx={{
+                '& .MuiToggleButton-root': {
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                  py: { xs: 0.5, sm: 1 },
+                },
+              }}
             >
               <ToggleButton value="male" aria-label="male">
                 {T.male}
@@ -1962,32 +2000,53 @@ function App() {
                 {T.other}
               </ToggleButton>
             </ToggleButtonGroup>
-            <FormHelperText>{T.genderHelper}</FormHelperText>
+            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+              {T.genderHelper}
+            </FormHelperText>
           </FormControl>
-        </>
+        </Box>
       )}
       {currentStep === 2 && (
-        <>
-          <FormControl fullWidth margin="normal">
-            <InputLabel id="goal-label">{T.goalLabel}</InputLabel>
+        <Box sx={{ '& > *': { mb: { xs: 2, sm: 1 } } }}>
+          <FormControl fullWidth size="small">
+            <InputLabel
+              id="goal-label"
+              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
+            >
+              {T.goalLabel}
+            </InputLabel>
             <Select
               labelId="goal-label"
               name="goal"
               value={formData.goal || ''}
               onChange={handleSelectChange}
               label={T.goalLabel}
+              MenuProps={{
+                PaperProps: {
+                  sx: { maxHeight: 200 },
+                },
+              }}
             >
               {goalOptions.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
+                <MenuItem
+                  key={option.value}
+                  value={option.value}
+                  sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
+                >
                   {getLocalizedOptionLabel(option, currentLang)}
                 </MenuItem>
               ))}
             </Select>
-            <FormHelperText>{T.goalHelper}</FormHelperText>
+            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+              {T.goalHelper}
+            </FormHelperText>
           </FormControl>
 
-          <FormControl fullWidth margin="normal">
-            <InputLabel id="activity-level-label">
+          <FormControl fullWidth size="small">
+            <InputLabel
+              id="activity-level-label"
+              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
+            >
               {T.activityLevelLabel}
             </InputLabel>
             <Select
@@ -1996,34 +2055,61 @@ function App() {
               value={formData.activityLevel || ''}
               onChange={handleSelectChange}
               label={T.activityLevelLabel}
+              MenuProps={{
+                PaperProps: {
+                  sx: { maxHeight: 200 },
+                },
+              }}
             >
               {activityLevelOptionsList.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
+                <MenuItem
+                  key={option.value}
+                  value={option.value}
+                  sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
+                >
                   {getLocalizedOptionLabel(option, currentLang)}
                 </MenuItem>
               ))}
             </Select>
-            <FormHelperText>{T.activityLevelHelper}</FormHelperText>
+            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+              {T.activityLevelHelper}
+            </FormHelperText>
           </FormControl>
 
-          <FormControl fullWidth margin="normal">
-            <InputLabel id="diet-type-label">{T.dietTypeLabel}</InputLabel>
+          <FormControl fullWidth size="small">
+            <InputLabel
+              id="diet-type-label"
+              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
+            >
+              {T.dietTypeLabel}
+            </InputLabel>
             <Select
               labelId="diet-type-label"
               name="dietType"
               value={formData.dietType || ''}
               onChange={handleSelectChange}
               label={T.dietTypeLabel}
+              MenuProps={{
+                PaperProps: {
+                  sx: { maxHeight: 200 },
+                },
+              }}
             >
               {dietTypeOptionsList.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
+                <MenuItem
+                  key={option.value}
+                  value={option.value}
+                  sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
+                >
                   {getLocalizedOptionLabel(option, currentLang)}
                 </MenuItem>
               ))}
             </Select>
-            <FormHelperText>{T.dietTypeHelper}</FormHelperText>
+            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+              {T.dietTypeHelper}
+            </FormHelperText>
           </FormControl>
-        </>
+        </Box>
       )}
       {currentStep === 3 && renderStep3Content()}
       {currentStep === 4 && (

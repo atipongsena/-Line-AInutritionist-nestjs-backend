@@ -232,25 +232,47 @@ export class UserController {
     @Req() req: AuthenticatedLiffRequest,
     @Body() body: Record<string, any>,
   ): Promise<UserProfileDto> {
-    this.logger.log(
-      `Updating profile for LIFF user: ${req.lineUserId}, Data: ${JSON.stringify(body)}`,
+    this.logger.log(`Updating profile for LIFF user: ${req.lineUserId}`)
+    this.logger.debug(
+      `Profile update payload received:`,
+      JSON.stringify(body, null, 2),
     )
 
-    const incomingLineUserId = body.lineUserId as string | undefined
-    if (incomingLineUserId && incomingLineUserId !== req.lineUserId) {
-      this.logger.warn(
-        `Attempt to update profile for a different user (${incomingLineUserId}) by authenticated user (${req.lineUserId}). Action denied.`,
+    try {
+      const incomingLineUserId = body.lineUserId as string | undefined
+      if (incomingLineUserId && incomingLineUserId !== req.lineUserId) {
+        this.logger.warn(
+          `Attempt to update profile for a different user (${incomingLineUserId}) by authenticated user (${req.lineUserId}). Action denied.`,
+        )
+        throw new HttpException(
+          'Mismatch in user ID for update',
+          HttpStatus.BAD_REQUEST,
+        )
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { lineUserId, ...restOfBody } = body
+      const dtoToUpdate: UpdateUserProfileDto =
+        restOfBody as UpdateUserProfileDto
+
+      this.logger.debug(
+        `Processed DTO for update:`,
+        JSON.stringify(dtoToUpdate, null, 2),
       )
-      throw new HttpException(
-        'Mismatch in user ID for update',
-        HttpStatus.BAD_REQUEST,
+      const result = await this.userService.updateUserProfile(
+        req.lineUserId,
+        dtoToUpdate,
       )
+      this.logger.log(
+        `Profile updated successfully for user: ${req.lineUserId}`,
+      )
+      return result
+    } catch (error) {
+      this.logger.error(
+        `Failed to update profile for user: ${req.lineUserId}`,
+        error,
+      )
+      throw error
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { lineUserId, ...restOfBody } = body
-    const dtoToUpdate: UpdateUserProfileDto = restOfBody as UpdateUserProfileDto
-
-    return this.userService.updateUserProfile(req.lineUserId, dtoToUpdate)
   }
 }
