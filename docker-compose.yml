@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # AI Nutritionist Backend
+  backend:
+    build:
+      context: .
+      target: development
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+    volumes:
+      # Hot reload สำหรับ development
+      - ./src:/app/src
+      - ./packages:/app/packages
+      # Exclude node_modules from volume
+      - /app/node_modules
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    networks:
+      - ai-nutritionist-network
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:8
+    container_name: ai-nutritionist-mongo
+    ports:
+      - '27017:27017'
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password123
+      - MONGO_INITDB_DATABASE=ai_nutritionist
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    restart: unless-stopped
+    networks:
+      - ai-nutritionist-network
+
+  # LIFF Frontend (สำหรับ development)
+  frontend:
+    build:
+      context: ./liff-profile-app
+      dockerfile: Dockerfile.dev
+    ports:
+      - '3001:3001'
+    environment:
+      - VITE_API_BASE_URL=http://localhost:3000
+      - VITE_LIFF_ID=2007349762-AJ9J432d
+    volumes:
+      - ./liff-profile-app/src:/app/src
+      - ./liff-profile-app/public:/app/public
+      - /app/node_modules
+    restart: unless-stopped
+    networks:
+      - ai-nutritionist-network
+
+  # Redis (สำหรับ caching)
+  redis:
+    image: redis:7-alpine
+    container_name: ai-nutritionist-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - ai-nutritionist-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  ai-nutritionist-network:
+    driver: bridge

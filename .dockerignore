@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Workspace node_modules (ป้องกันปัญหา Windows permissions)
+packages/*/node_modules/
+packages/**/node_modules/
+
+# Development files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Testing
+*.spec.ts
+*.test.ts
+test/
+tests/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+azure-pipelines.yml
+
+# Frontend app (not needed in backend image)
+liff-profile-app/
+
+# Other
+.prettierrc
+.eslintrc.js
+eslint.config.mjs
+
+# Temporary files
+tmp/
+temp/ 

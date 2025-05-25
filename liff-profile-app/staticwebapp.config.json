@@ -1,0 +1,42 @@
+{
+  "routes": [
+    {
+      "route": "/api/*",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/*",
+      "rewrite": "/index.html"
+    }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": [
+      "/images/*.{png,jpg,gif,svg}",
+      "/css/*",
+      "/js/*",
+      "*.ico",
+      "*.png",
+      "*.jpg",
+      "*.gif",
+      "*.svg"
+    ]
+  },
+  "mimeTypes": {
+    ".json": "application/json",
+    ".js": "application/javascript",
+    ".css": "text/css"
+  },
+  "globalHeaders": {
+    "Cache-Control": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+  },
+  "responseOverrides": {
+    "404": {
+      "redirect": "/",
+      "statusCode": 302
+    }
+  }
+}

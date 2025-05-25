@@ -1,0 +1,141 @@
+name: Deploy AI Nutritionist to Azure
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+  statuses: write
+
+env:
+  AZURE_RESOURCE_GROUP: ai-nutritionist-rg
+  ACR_NAME: ainutritionistacr
+  BACKEND_APP_NAME: ai-nutritionist-backend
+  FRONTEND_APP_NAME: ai-nutritionist-frontend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run backend tests
+        run: pnpm test
+
+      - name: Run backend linting
+        run: pnpm lint
+
+      - name: Test frontend build
+        run: |
+          cd liff-profile-app
+          pnpm build
+
+  deploy-backend:
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }} .
+          docker push ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }}
+          docker tag ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:latest
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          az containerapp update \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }}
+
+  deploy-frontend:
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Build frontend
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_LIFF_ID: ${{ secrets.VITE_LIFF_ID }}
+          VITE_VERSION: ${{ github.sha }}
+          NODE_ENV: production
+        run: |
+          cd liff-profile-app
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: 'upload'
+          app_location: 'liff-profile-app'
+          output_location: 'dist'
+          skip_app_build: true
+
+  notify:
+    if: always()
+    needs: [deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify deployment status
+        run: |
+          BACKEND_STATUS="${{ needs.deploy-backend.result }}"
+          FRONTEND_STATUS="${{ needs.deploy-frontend.result }}"
+
+          if [ "$BACKEND_STATUS" == "success" ] && [ "$FRONTEND_STATUS" == "success" ]; then
+            echo "✅ Deployment successful!"
+            echo "Backend: $BACKEND_STATUS"
+            echo "Frontend: $FRONTEND_STATUS"
+          else
+            echo "❌ Deployment failed!"
+            echo "Backend: $BACKEND_STATUS"
+            echo "Frontend: $FRONTEND_STATUS"
+            exit 1
+          fi

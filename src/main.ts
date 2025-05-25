@@ -8,17 +8,40 @@ async function bootstrap() {
   const configService = app.get(ConfigService)
   const logger = new Logger('Bootstrap')
 
-  // Enable CORS with specific options
+  // Enable CORS with specific options for production
+  const frontendUrl = configService.get<string>('FRONTEND_URL')
+  const isProduction = configService.get<string>('NODE_ENV') === 'production'
+
   app.enableCors({
     origin: [
-      'http://localhost:3001', // HTTP version
-      'https://localhost:3001', // HTTPS version
-      // Add other origins if needed (e.g., your production LIFF URL)
+      // Development origins
+      'http://localhost:3000', // Frontend dev server
+      'http://localhost:3001', // LIFF dev server
+      // ❌ ลบ development HTTPS (Azure จัดการ HTTPS อัตโนมัติ)
+      // 'https://localhost:3000',
+      // 'https://localhost:3001',
+
+      // Production origins (Azure Static Web Apps)
+      ...(frontendUrl ? [frontendUrl] : []),
+      ...(isProduction
+        ? [
+            // Azure Static Web Apps HTTPS URLs (อัปเดตตาม deployment จริง)
+            'https://ai-nutritionist-frontend.*.z23.web.core.windows.net',
+          ]
+        : []),
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders:
-      'Content-Type, Accept, Authorization, X-LINE-ID-TOKEN, ngrok-skip-browser-warning',
+    allowedHeaders: [
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      'X-LINE-ID-TOKEN',
+      'Origin',
+      'X-Requested-With',
+    ],
     credentials: true,
+    // เปิดใช้ preflight caching สำหรับ performance
+    maxAge: 86400, // 24 hours
   })
 
   // Global Validation Pipe
