@@ -49,12 +49,15 @@ jobs:
           pnpm run build
         env:
           NODE_ENV: production
+          VITE_LIFF_ID: 2007349762-AJ9J432d
+          VITE_API_BASE_URL: https://ai-nutritionist-backend.wittyground-3784ecfe.southeastasia.azurecontainerapps.io
 
       - name: Copy build files to deploy folder
         run: |
           mkdir -p deploy
           cp -r liff-profile-app/build/* deploy/
           cp liff-profile-app/staticwebapp.config.json deploy/
+          cp liff-profile-app/.env.production deploy/.env.production
           ls -la deploy/
 
       - name: Build And Deploy
