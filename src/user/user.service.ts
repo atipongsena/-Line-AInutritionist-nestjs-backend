@@ -59,40 +59,53 @@ export class UserService {
     this.logger.log(
       `Getting or creating profile for ${lineUserId}, displayName: ${displayName}`,
     )
-    let user = await this.userModel.findOne({ lineUserId }).exec()
-    if (user) {
-      this.logger.log(`User ${lineUserId} found. Updating lastActiveAt.`)
-      user.lastActiveAt = new Date()
-      if (displayName !== undefined && user.displayName !== displayName) {
-        user.displayName = displayName
+    try {
+      let user = await this.userModel
+        .findOne({ lineUserId })
+        .maxTimeMS(10000)
+        .exec()
+      if (user) {
+        this.logger.log(`User ${lineUserId} found. Updating lastActiveAt.`)
+        user.lastActiveAt = new Date()
+        if (displayName !== undefined && user.displayName !== displayName) {
+          user.displayName = displayName
+        }
+        if (pictureUrl !== undefined && user.pictureUrl !== pictureUrl) {
+          user.pictureUrl = pictureUrl
+        }
+        if (language !== undefined && user.language !== language) {
+          user.language = language
+        }
+        if (!user.isActive) {
+          user.isActive = true
+        }
+        user = await user.save()
+        this.logger.log(`Successfully updated profile for ${lineUserId}`)
+        return this.mapUserDocumentToDto(user)
       }
-      if (pictureUrl !== undefined && user.pictureUrl !== pictureUrl) {
-        user.pictureUrl = pictureUrl
-      }
-      if (language !== undefined && user.language !== language) {
-        user.language = language
-      }
-      if (!user.isActive) {
-        user.isActive = true
-      }
-      user = await user.save()
-      return this.mapUserDocumentToDto(user)
-    }
 
-    this.logger.log(
-      `User ${lineUserId} not found. Creating new profile. DisplayName: ${displayName || 'N/A'}`,
-    )
-    const newUser = new this.userModel({
-      lineUserId,
-      displayName: displayName || 'User',
-      pictureUrl: pictureUrl,
-      language: language || 'th',
-      isActive: true,
-      lastActiveAt: new Date(),
-      goal: 'general_health',
-    })
-    const savedUser = await newUser.save()
-    return this.mapUserDocumentToDto(savedUser)
+      this.logger.log(
+        `User ${lineUserId} not found. Creating new profile. DisplayName: ${displayName || 'N/A'}`,
+      )
+      const newUser = new this.userModel({
+        lineUserId,
+        displayName: displayName || 'User',
+        pictureUrl: pictureUrl,
+        language: language || 'th',
+        isActive: true,
+        lastActiveAt: new Date(),
+        goal: 'general_health',
+      })
+      const savedUser = await newUser.save()
+      this.logger.log(`Successfully created new profile for ${lineUserId}`)
+      return this.mapUserDocumentToDto(savedUser)
+    } catch (error) {
+      this.logger.error(
+        `Error getting or creating profile for ${lineUserId}:`,
+        error,
+      )
+      throw error
+    }
   }
 
   async getUserDocumentByLineId(
@@ -109,14 +122,21 @@ export class UserService {
 
   async getUserProfile(lineUserId: string): Promise<UserProfileDto | null> {
     this.logger.log(`Getting profile for ${lineUserId}`)
-    const user = await this.userModel
-      .findOne({ lineUserId, isActive: true })
-      .exec()
-    if (!user) {
-      this.logger.warn(`User ${lineUserId} not found or inactive.`)
-      return null
+    try {
+      const user = await this.userModel
+        .findOne({ lineUserId, isActive: true })
+        .maxTimeMS(10000) // 10 second timeout
+        .exec()
+      if (!user) {
+        this.logger.warn(`User ${lineUserId} not found or inactive.`)
+        return null
+      }
+      this.logger.log(`Successfully retrieved profile for ${lineUserId}`)
+      return this.mapUserDocumentToDto(user)
+    } catch (error) {
+      this.logger.error(`Error getting profile for ${lineUserId}:`, error)
+      throw error
     }
-    return this.mapUserDocumentToDto(user)
   }
 
   async updateUserProfile(

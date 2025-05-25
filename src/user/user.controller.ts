@@ -24,8 +24,8 @@ import axios from 'axios'
 export interface AuthenticatedLiffRequest extends ExpressRequest {
   lineUserId: string
   // Optional: if you want to pass more decoded info
-  // lineProfileName?: string
-  // lineProfilePicture?: string
+  lineProfileName?: string
+  lineProfilePicture?: string
 }
 
 @Injectable()
@@ -177,9 +177,9 @@ export class LiffAuthGuard implements CanActivate {
 
     if (decodedToken && decodedToken.userId) {
       request.lineUserId = decodedToken.userId
-      // You can also attach name and picture to the request if needed by the controller
-      // (request as any).lineProfileName = decodedToken.name
-      // (request as any).lineProfilePicture = decodedToken.picture
+      // Attach name and picture to the request for use in controller
+      request.lineProfileName = decodedToken.name
+      request.lineProfilePicture = decodedToken.picture
       this.logger.log(
         `LiffAuthGuard: Authorized LIFF request for user ${decodedToken.userId}`,
       )
@@ -210,21 +210,17 @@ export class UserController {
       this.logger.warn(
         `Profile not found for LIFF user: ${req.lineUserId}. Attempting to create/retrieve.`,
       )
-      // The LiffAuthGuard provides lineUserId. Name and pictureUrl might be available
-      // from decodedToken if verifyLiffTokenOnline returns them and they are attached to request.
-      // For getOrCreate, we primarily need lineUserId.
-      // If verifyLiffTokenOnline also returns name/picture, we could pass them here.
-      // For now, UserService's getOrCreateUserProfile might only use lineUserId if others aren't provided.
 
-      // Let's try to get name and picture from a potentially enhanced request object
-      // const authReq = req as any
-      // const displayNameFromToken = authReq.lineProfileName
-      // const pictureUrlFromToken = authReq.lineProfilePicture
+      // Use displayName and pictureUrl from verified LINE token
+      this.logger.log(
+        `Creating new profile with displayName: ${req.lineProfileName}, pictureUrl: ${req.lineProfilePicture ? 'provided' : 'not provided'}`,
+      )
 
       profile = await this.userService.getOrCreateUserProfile({
         lineUserId: req.lineUserId,
-        // displayName: displayNameFromToken, // Pass if available and desired
-        // pictureUrl: pictureUrlFromToken,  // Pass if available and desired
+        displayName: req.lineProfileName,
+        pictureUrl: req.lineProfilePicture,
+        language: 'th', // Default language
       })
     }
     return profile

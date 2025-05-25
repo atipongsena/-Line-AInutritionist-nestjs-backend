@@ -1505,17 +1505,7 @@ function App() {
         'Critical LIFF error, navigation to report page might be blocked.',
       )
     }
-  }, [
-    error,
-    userProfileFromApi,
-    isEditMode,
-    currentStep,
-    goToNutritionReport,
-    T.apiFetchError,
-    T.liffIdMissingError,
-    T.liffInitError,
-    fetchWithTokenRetry,
-  ])
+  }, [error])
 
   // เพิ่ม useEffect เพื่อ sync checkbox states กับข้อมูล profile ที่มีอยู่
   useEffect(() => {
@@ -1863,11 +1853,28 @@ function App() {
   )
 
   const renderEditModeContent = () => (
-    <Paper elevation={3} sx={{ p: { xs: 2, sm: 3 } }}>
-      <Typography variant="h5" gutterBottom component="div">
+    <Paper
+      elevation={3}
+      sx={{ p: { xs: 1, sm: 2, md: 3 }, m: { xs: 0.5, sm: 1 } }}
+    >
+      <Typography
+        variant="h6"
+        gutterBottom
+        component="div"
+        sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}
+      >
         {T.userProfileTitle}
       </Typography>
-      <Stepper activeStep={currentStep - 1} alternativeLabel sx={{ mb: 3 }}>
+      <Stepper
+        activeStep={currentStep - 1}
+        alternativeLabel
+        sx={{
+          mb: 2,
+          '& .MuiStepLabel-label': {
+            fontSize: { xs: '0.75rem', sm: '0.875rem' },
+          },
+        }}
+      >
         {[
           T.step1Title,
           T.step2Title,
@@ -2586,29 +2593,38 @@ function App() {
               )}
             </Toolbar>
           </AppBar>
-          <Container component="main" maxWidth="md" sx={{ mt: 2, mb: 2 }}>
-            {profileError && (
+          <Container
+            component="main"
+            maxWidth="md"
+            sx={{ mt: 1, mb: 1, px: { xs: 1, sm: 2 } }}
+          >
+            {profileError && !profileError.includes(T.noApiProfileData) && (
               <Alert severity="error" sx={{ mb: 2 }}>
                 {profileError}
               </Alert>
             )}
-            <Suspense fallback={<CircularProgress />}>
-              <Routes>
-                <Route
-                  path="/"
-                  element={
-                    isEditMode
-                      ? renderEditModeContent()
-                      : renderDisplayModeContent()
-                  }
-                />
-                <Route
-                  path="/nutrition-report"
-                  element={<NutritionReportMain />}
-                />
-                <Route path="/daily-report" element={<NutritionReportMain />} />
-              </Routes>
-            </Suspense>
+            <Box sx={{ px: 1, py: 1 }}>
+              <Suspense fallback={<CircularProgress />}>
+                <Routes>
+                  <Route
+                    path="/"
+                    element={
+                      isEditMode
+                        ? renderEditModeContent()
+                        : renderDisplayModeContent()
+                    }
+                  />
+                  <Route
+                    path="/nutrition-report"
+                    element={<NutritionReportMain />}
+                  />
+                  <Route
+                    path="/daily-report"
+                    element={<NutritionReportMain />}
+                  />
+                </Routes>
+              </Suspense>
+            </Box>
           </Container>
         </LiffIdHandler>
       </ThemeProvider>
