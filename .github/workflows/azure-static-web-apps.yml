@@ -52,6 +52,7 @@ jobs:
         run: |
           mkdir -p deploy
           cp -r liff-profile-app/build/* deploy/
+          cp liff-profile-app/staticwebapp.config.json deploy/
           ls -la deploy/
 
       - name: Build And Deploy
