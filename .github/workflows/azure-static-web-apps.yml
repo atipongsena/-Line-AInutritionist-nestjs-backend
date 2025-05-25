@@ -26,10 +26,10 @@ jobs:
           submodules: true
           lfs: false
 
-      - name: Setup Node.js 24
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -57,6 +57,7 @@ jobs:
           action: 'upload'
           app_location: '/liff-profile-app'
           output_location: 'build'
+          skip_app_build: true
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
