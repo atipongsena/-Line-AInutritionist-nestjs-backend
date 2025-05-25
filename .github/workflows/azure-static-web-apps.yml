@@ -57,7 +57,6 @@ jobs:
           mkdir -p deploy
           cp -r liff-profile-app/build/* deploy/
           cp liff-profile-app/staticwebapp.config.json deploy/
-          cp liff-profile-app/.env.production deploy/.env.production
           ls -la deploy/
 
       - name: Build And Deploy
