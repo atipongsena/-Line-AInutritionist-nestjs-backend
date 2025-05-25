@@ -34,7 +34,35 @@ class FoodNutrition {
 
   @Prop({ default: 0 })
   sodium?: number
+
+  @Prop({ default: 0 })
+  cholesterol?: number
+
+  @Prop({ default: 0 })
+  saturated_fat?: number
+
+  @Prop({ default: 0 })
+  water?: number
+
+  @Prop({ default: 0 })
+  omega3?: number
 }
+
+@Schema({ _id: false })
+export class VitaminMineralDetailSchemaDocument {
+  @Prop({ required: true })
+  value: number
+
+  @Prop({ required: true })
+  unit: string
+
+  @Prop()
+  dv?: number
+}
+
+export const VitaminMineralDetailSchema = SchemaFactory.createForClass(
+  VitaminMineralDetailSchemaDocument,
+)
 
 @Schema({ _id: false })
 class FoodDetail {
@@ -56,17 +84,29 @@ class FoodDetail {
   @Prop({ type: FoodNutrition, required: true })
   nutrition: FoodNutrition
 
-  @Prop({ type: Map, of: Number, default: {} })
-  micronutrients?: Map<string, number>
+  @Prop({ type: Map, of: VitaminMineralDetailSchema, default: {} })
+  micronutrients?: Map<string, VitaminMineralDetailSchemaDocument>
 }
 
 @Schema({ _id: false })
-class ImageInfo {
+export class ImageInfo {
   @Prop({ default: '' })
   url?: string
 
   @Prop({ default: '' })
+  blobName?: string
+
+  @Prop({ default: '' })
   alt?: string
+
+  @Prop({ type: Date })
+  uploadDate?: Date
+
+  @Prop({ type: Boolean })
+  isPermanent?: boolean
+
+  @Prop({ type: Number })
+  retentionDays?: number
 }
 
 @Schema({ _id: false })
@@ -102,6 +142,9 @@ export class FoodLog {
 
   @Prop({ required: true, index: true })
   lineUserId: string
+
+  @Prop({ index: true }) // Added index for potential queries
+  sourceMessageId?: string // To store the original LINE message ID that triggered the analysis
 
   @Prop({ type: FoodDetail, required: true })
   food: FoodDetail

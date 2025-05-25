@@ -21,7 +21,7 @@ import { firstValueFrom } from 'rxjs'
 import axios from 'axios'
 
 // Define a type for the request object after LiffAuthGuard has processed it
-interface AuthenticatedLiffRequest extends ExpressRequest {
+export interface AuthenticatedLiffRequest extends ExpressRequest {
   lineUserId: string
   // Optional: if you want to pass more decoded info
   // lineProfileName?: string
@@ -41,7 +41,10 @@ export class LiffAuthGuard implements CanActivate {
   private async verifyLiffTokenOnline(
     idToken: string,
   ): Promise<{ userId: string; name?: string; picture?: string } | null> {
-    // const liffChannelId = this.configService.get<string>('LIFF_CHANNEL_ID');
+    this.logger.debug(
+      `[LiffAuthGuard] Received idToken for verification (raw): "${idToken}"`,
+    )
+
     const lineConsoleChannelId = this.configService.get<string>(
       'LINE_CONSOLE_CHANNEL_ID',
     ) // For API call's client_id

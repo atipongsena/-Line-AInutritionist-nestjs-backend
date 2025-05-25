@@ -3,19 +3,27 @@ import { ConfigService } from '@nestjs/config'
 import {
   AiService,
   FoodAnalysisToolResult,
-  BarcodeAnalysisToolResult,
-  WebSearchRequestToolResult,
   NonFoodDescriptionResult,
 } from '../ai/ai.service'
 import { UserProfileDto } from '../user/user.interface'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
-// import { FoodAnalysisData, FoodComponentDetail } from '../line/flex.messages'
-// import { InjectModel } from '@nestjs/mongoose'
-// import { Model } from 'mongoose'
-// Import Mongoose models as needed, e.g.:
-// import { User, UserDocument } from '../schemas/user.schema';
-// import { FoodLog, FoodLogDocument } from '../schemas/food-log.schema';
-// import { NutritionGoal, NutritionGoalDocument } from '../schemas/nutrition-goal.schema';
+import { InjectModel } from '@nestjs/mongoose'
+import { Model, Types } from 'mongoose'
+import { FoodLog, FoodLogDocument } from '../schemas/food-log.schema'
+import {
+  DailyReportResponseDto,
+  WeeklyReportResponseDto,
+  MonthlyReportResponseDto,
+  MealDto,
+  MicronutrientDetailWithGoal,
+} from './dto/report-data.dto'
+import { User, UserDocument } from '../schemas/user.schema'
+import {
+  NutritionGoal,
+  NutritionGoalDocument,
+} from '../schemas/nutrition-goal.schema'
+import { Food, FoodDocument } from '../schemas/food.schema'
+import { FoodItem as SharedFoodItemOriginal } from '@ai-nutritionist/shared-types'
 
 // Define DTOs/Interfaces as needed, e.g.:
 // interface MacroDistribution {
@@ -62,9 +70,11 @@ export class NutritionService {
   constructor(
     private readonly configService: ConfigService,
     private readonly aiService: AiService,
-    // @InjectModel(User.name) private userModel: Model<UserDocument>,
-    // @InjectModel(FoodLog.name) private foodLogModel: Model<FoodLogDocument>,
-    // @InjectModel(NutritionGoal.name) private nutritionGoalModel: Model<NutritionGoalDocument>,
+    @InjectModel(FoodLog.name) private foodLogModel: Model<FoodLogDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(NutritionGoal.name)
+    private nutritionGoalModel: Model<NutritionGoalDocument>,
+    @InjectModel(Food.name) private foodModel: Model<FoodDocument>,
   ) {
     this.logger.log('NutritionService initialized')
   }
@@ -196,9 +206,12 @@ export class NutritionService {
       case 'เพิ่มน้ำหนัก':
         return Math.round(tdee + 500)
       case 'gain_muscle':
+      case 'muscle_gain':
+      case 'build_muscle':
       case 'เพิ่มกล้ามเนื้อ':
         return Math.round(tdee + 300)
       case 'maintain':
+      case 'maintain_weight':
       case 'รักษาน้ำหนัก':
         return Math.round(tdee)
       default:
@@ -270,6 +283,8 @@ export class NutritionService {
       }
     } else if (
       goalLower.includes('gain_muscle') ||
+      goalLower.includes('muscle_gain') ||
+      goalLower.includes('build_muscle') ||
       goalLower.includes('เพิ่มกล้ามเนื้อ')
     ) {
       if (dietType?.toLowerCase() !== 'keto') {
@@ -489,107 +504,71 @@ export class NutritionService {
     message: string,
     options: {
       imageUrl?: string
-      barcodeValue?: string
       conversationHistory?: ChatCompletionMessageParam[]
-      isBarcodeAnalysis: boolean
       language?: string
       timeConstraint?: 'fast' | 'normal' | 'accurate'
       messageId?: string
     },
   ): Promise<
-    | FoodAnalysisToolResult
-    | BarcodeAnalysisToolResult
-    | WebSearchRequestToolResult
-    | NonFoodDescriptionResult
-    | { error: string }
-    | null
+    FoodAnalysisToolResult | NonFoodDescriptionResult | { error: string } | null
   > {
     this.logger.log(
-      `[${userId}] Analyzing food/barcode: "${message}", Image: ${!!options.imageUrl}, Barcode: ${!!options.barcodeValue}, Lang: ${options.language || userProfile.language || 'th'}, TC: ${options.timeConstraint || 'normal'}, MsgId: ${options.messageId || 'N/A'}`,
+      `[${userId}] Analyzing food/barcode: "${message}", Image: ${!!options.imageUrl}, Lang: ${options.language || userProfile.language || 'th'}, TC: ${options.timeConstraint || 'normal'}, MsgId: ${options.messageId || 'N/A'}`,
     )
 
     const language = options.language || userProfile.language || 'th'
     const timeConstraint = options.timeConstraint || 'normal'
 
     try {
-      let analysisResult:
-        | FoodAnalysisToolResult
-        | BarcodeAnalysisToolResult
-        | WebSearchRequestToolResult
-        | NonFoodDescriptionResult
-        | { error: string }
-        | null
+      // Analyze food or meal directly (barcode analysis removed)
+      const analysisResult = await this.aiService.analyzeFoodOrMeal(
+        userId,
+        message,
+        userProfile,
+        language,
+        timeConstraint,
+        options.imageUrl,
+        options.messageId,
+      )
 
-      if (options.isBarcodeAnalysis) {
-        analysisResult = await this.aiService.analyzeBarcode(
-          userId,
-          userProfile,
-          options.barcodeValue || message,
-          language,
-          timeConstraint,
-          options.messageId,
-        )
-      } else {
-        analysisResult = await this.aiService.analyzeFoodOrMeal(
-          userId,
-          message,
-          userProfile,
-          language,
-          timeConstraint,
-          options.imageUrl,
-          options.messageId,
-        )
-      }
-
-      if (analysisResult && typeof analysisResult === 'object') {
-        if (
-          'type' in analysisResult &&
-          analysisResult.type === 'non_food_description'
-        ) {
-          this.logger.warn(
-            `[${userId}] Received non-food description from AiService: ${analysisResult.description}. This service expects food/barcode analysis.`,
-          )
-          return {
-            error:
-              language === 'th'
-                ? 'รูปภาพที่ส่งมาไม่ใช่อาหาร'
-                : 'The provided image was not food.',
-          }
-        }
-
-        if (
-          'status' in analysisResult &&
-          analysisResult.status === 'web_search_required'
-        ) {
-          this.logger.log(
-            `[${userId}] Web search required. Query: "${analysisResult.search_query_for_assistant}", Product: "${analysisResult.original_product_name}"`,
-          )
-          return analysisResult
-        }
-        if (
-          analysisResult &&
-          'error' in analysisResult &&
-          typeof analysisResult.error === 'string'
-        ) {
-          this.logger.warn(
-            `[${userId}] AiService returned an error: ${analysisResult.error}`,
-          )
-          return { error: analysisResult.error }
-        }
-        if (
-          analysisResult &&
-          ('food_name' in analysisResult || 'barcode_type' in analysisResult)
-        ) {
-          this.logger.log(
-            `[${userId}] Successfully received analysis from AiService.`,
-          )
-          return analysisResult
-        }
-      }
-
-      if (analysisResult === null) {
+      if (!analysisResult) {
         this.logger.warn(`[${userId}] AiService returned null.`)
         return null
+      }
+
+      if (
+        'type' in analysisResult &&
+        analysisResult.type === 'non_food_description'
+      ) {
+        this.logger.warn(
+          `[${userId}] Received non-food description from AiService: ${analysisResult.description}. This service expects food/barcode analysis.`,
+        )
+        return {
+          error:
+            language === 'th'
+              ? 'รูปภาพที่ส่งมาไม่ใช่อาหาร'
+              : 'The provided image was not food.',
+        }
+      }
+
+      if (
+        analysisResult &&
+        'error' in analysisResult &&
+        typeof analysisResult.error === 'string'
+      ) {
+        this.logger.warn(
+          `[${userId}] AiService returned an error: ${analysisResult.error}`,
+        )
+        return { error: analysisResult.error }
+      }
+      if (
+        analysisResult &&
+        ('food_name' in analysisResult || 'barcode_type' in analysisResult)
+      ) {
+        this.logger.log(
+          `[${userId}] Successfully received analysis from AiService.`,
+        )
+        return analysisResult
       }
 
       this.logger.error(
@@ -648,4 +627,867 @@ export class NutritionService {
   //   this.logger.warn("Re-analysis with web results is not fully implemented yet.");
   //   return { error: "Re-analysis with web results not implemented" };
   // }
+
+  // --- Reporting Methods ---
+  async getDailyReportData(
+    lineUserId: string,
+    dateString: string, // Expecting YYYY-MM-DD
+  ): Promise<DailyReportResponseDto> {
+    this.logger.log(
+      `[getDailyReportData] Fetching for lineUserId: ${lineUserId}, date: ${dateString}`,
+    )
+
+    const today = new Date(dateString)
+    const startOfDay = new Date(new Date(today).setHours(0, 0, 0, 0))
+    const endOfDay = new Date(new Date(today).setHours(23, 59, 59, 999))
+
+    const user = await this.userModel.findOne({ lineUserId }).exec()
+    if (!user) {
+      this.logger.warn(`[getDailyReportData] User not found: ${lineUserId}`)
+      throw new Error('User not found')
+    }
+
+    const nutritionGoal = await this.nutritionGoalModel
+      .findOne({
+        userId: user._id,
+        isActive: true,
+        startDate: { $lte: endOfDay },
+        $or: [{ endDate: { $gte: startOfDay } }, { endDate: null }],
+      })
+      .sort({ createdAt: -1 })
+      .exec()
+
+    // Initialize goals variable outside the if-else block
+    let goals: {
+      calories: number
+      protein: number
+      carbs: number
+      fat: number
+      fiber: number
+      sugar: number
+      sodium: number
+      cholesterol: number
+      saturated_fat: number
+      omega3: number
+      water: number
+      micronutrients: Map<string, { goal?: number; unit?: string; dv?: number }>
+    }
+
+    // ✅ Dynamic calculation if no nutrition goal found
+    if (
+      !nutritionGoal &&
+      user.weightKg &&
+      user.heightCm &&
+      user.age &&
+      user.gender
+    ) {
+      this.logger.log(
+        `[getDailyReportData] No nutrition goal found, calculating from user profile`,
+      )
+
+      // Calculate goals using service methods
+      const bmr = this.calculateBMR(
+        user.gender,
+        user.weightKg,
+        user.heightCm,
+        user.age,
+      )
+      const tdee = this.calculateTDEE(bmr, user.activityLevel || 'moderate')
+      const targetCalories = this.calculateTargetCalories(
+        tdee,
+        user.goal || 'maintain_weight',
+      )
+      const macroDistribution = this.calculateMacroDistribution(
+        targetCalories,
+        user.goal || 'maintain_weight',
+        user.dietType || 'normal',
+      )
+      const waterNeeds = this.calculateWaterNeeds(
+        user.weightKg,
+        user.activityLevel,
+      )
+
+      // Create dynamic goals object
+      goals = {
+        calories: targetCalories || 2000,
+        protein: macroDistribution?.grams.protein || 75,
+        carbs: macroDistribution?.grams.carbs || 250,
+        fat: macroDistribution?.grams.fat || 65,
+        fiber: Math.round(((targetCalories || 2000) / 1000) * 14), // 14g per 1000 kcal
+        sugar: Math.round(((targetCalories || 2000) * 0.1) / 4), // <10% of calories from sugar
+        sodium: 2300, // mg, standard recommendation
+        cholesterol: 300, // mg, max recommended
+        saturated_fat: Math.round(((targetCalories || 2000) * 0.1) / 9), // <10% from saturated fat
+        omega3: user.gender === 'male' ? 1.6 : 1.1, // g/day ALA recommendation
+        water: waterNeeds || 2000, // ml
+        micronutrients: new Map<
+          string,
+          { goal?: number; unit?: string; dv?: number }
+        >(),
+      }
+
+      this.logger.log(
+        `[getDailyReportData] Calculated dynamic goals - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    } else {
+      // Use existing nutrition goal or defaults
+      const defaultGoalValues = {
+        calories: 2000,
+        protein: 75,
+        carbs: 250,
+        fat: 65,
+        micronutrients: new Map<
+          string,
+          { goal?: number; unit?: string; dv?: number }
+        >(),
+      }
+
+      const dailyGoalsFromDb = nutritionGoal?.daily_goals
+
+      goals = {
+        calories: dailyGoalsFromDb?.calories || defaultGoalValues.calories,
+        protein: dailyGoalsFromDb?.protein || defaultGoalValues.protein,
+        carbs: dailyGoalsFromDb?.carbs || defaultGoalValues.carbs,
+        fat: dailyGoalsFromDb?.fat || defaultGoalValues.fat,
+        fiber: dailyGoalsFromDb?.fiber || 25,
+        sugar: dailyGoalsFromDb?.sugar || 50,
+        sodium: dailyGoalsFromDb?.sodium || 2300,
+        cholesterol: dailyGoalsFromDb?.cholesterol || 300,
+        saturated_fat: dailyGoalsFromDb?.saturated_fat || 20,
+        omega3: dailyGoalsFromDb?.omega3 || 1.6,
+        water: dailyGoalsFromDb?.water || 2000,
+        micronutrients:
+          dailyGoalsFromDb?.micronutrients instanceof Map
+            ? dailyGoalsFromDb.micronutrients
+            : defaultGoalValues.micronutrients,
+      }
+    }
+
+    const foodLogs = await this.foodLogModel
+      .find({
+        lineUserId,
+        logDate: { $gte: startOfDay, $lte: endOfDay },
+      })
+      .sort({ logDate: 'asc' })
+      .exec()
+
+    const foodIdsToFetch: Types.ObjectId[] = foodLogs
+      .map((log) => log.food?.foodId)
+      .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId) // Type guard for filtering
+
+    let originalFoodItemsMap: Map<string, FoodDocument> = new Map()
+    if (foodIdsToFetch.length > 0) {
+      const fetchedFoodItems = await this.foodModel
+        .find({ _id: { $in: foodIdsToFetch } })
+        .exec()
+      originalFoodItemsMap = new Map(
+        fetchedFoodItems.map((item) => [
+          (item._id as Types.ObjectId).toString(),
+          item,
+        ]),
+      )
+    }
+
+    let consumedCalories = 0
+    let consumedProtein = 0
+    let consumedCarbs = 0
+    let consumedFat = 0
+    const consumedMicronutrients: {
+      [key: string]: MicronutrientDetailWithGoal
+    } = {}
+    let consumedFiber = 0
+    let consumedSugar = 0
+    let consumedSodium = 0
+    let consumedCholesterol = 0
+    let consumedSaturatedFat = 0
+    let consumedOmega3 = 0
+    let consumedWater = 0
+
+    const mealsMap: Map<
+      string,
+      {
+        foodItems: SharedFoodItemOriginal[]
+        mealCalories: number
+        logIds: string[]
+      }
+    > = new Map()
+
+    foodLogs.forEach((log: FoodLogDocument) => {
+      const foodDetail = log.food
+      const originalFoodItem = foodDetail?.foodId
+        ? originalFoodItemsMap.get(foodDetail.foodId.toString())
+        : undefined
+
+      let itemCalories = 0
+      let itemProtein = 0
+      let itemCarbs = 0
+      let itemFat = 0
+
+      if (foodDetail && foodDetail.nutrition) {
+        itemCalories = foodDetail.nutrition.calories || 0
+        itemProtein = foodDetail.nutrition.protein || 0
+        itemCarbs = foodDetail.nutrition.carbs || 0
+        itemFat = foodDetail.nutrition.fat || 0
+
+        consumedCalories += itemCalories
+        consumedProtein += itemProtein
+        consumedCarbs += itemCarbs
+        consumedFat += itemFat
+
+        consumedFiber += foodDetail.nutrition.fiber || 0
+        consumedSugar += foodDetail.nutrition.sugar || 0
+        consumedSodium += foodDetail.nutrition.sodium || 0
+        consumedCholesterol += foodDetail.nutrition.cholesterol || 0
+        consumedSaturatedFat += foodDetail.nutrition.saturated_fat || 0
+        consumedOmega3 += foodDetail.nutrition.omega3 || 0
+        consumedWater += foodDetail.nutrition.water || 0
+
+        const sourceMicros =
+          foodDetail.micronutrients ||
+          originalFoodItem?.nutrition?.vitamins ||
+          originalFoodItem?.nutrition?.minerals
+        if (sourceMicros) {
+          for (const [key, micro] of sourceMicros instanceof Map
+            ? sourceMicros.entries()
+            : Object.entries(sourceMicros)) {
+            if (micro && typeof micro.value === 'number' && micro.unit) {
+              const goalDetail = goals.micronutrients?.get(key)
+              if (!consumedMicronutrients[key]) {
+                consumedMicronutrients[key] = {
+                  value: 0,
+                  unit: micro.unit,
+                  dv: micro.dv,
+                  goal: goalDetail?.goal,
+                }
+              }
+              consumedMicronutrients[key].value += micro.value
+              if (goalDetail?.goal && !consumedMicronutrients[key].goal) {
+                consumedMicronutrients[key].goal = goalDetail.goal
+              }
+              if (goalDetail?.unit && !consumedMicronutrients[key].unit) {
+                consumedMicronutrients[key].unit = goalDetail.unit
+              }
+            }
+          }
+        }
+      }
+
+      const sharedFoodItem: SharedFoodItemOriginal = {
+        _id:
+          (foodDetail?.foodId as Types.ObjectId)?.toString() ||
+          (log._id as Types.ObjectId).toString(), // Should be original food item ID if available, otherwise log ID as fallback
+        name: {
+          th: foodDetail?.foodName?.th || originalFoodItem?.name?.th || 'N/A',
+          en: foodDetail?.foodName?.en || originalFoodItem?.name?.en,
+        },
+        description: {
+          th:
+            foodDetail?.portion ||
+            originalFoodItem?.description?.th ||
+            'รายละเอียดส่วนบริโภคไม่ชัดเจน',
+          en: foodDetail?.portion || originalFoodItem?.description?.en,
+        },
+        nutrition: {
+          calories: itemCalories,
+          protein: itemProtein,
+          carbs: itemCarbs,
+          fat: itemFat,
+          fiber:
+            foodDetail?.nutrition?.fiber || originalFoodItem?.nutrition?.fiber,
+          sugar:
+            foodDetail?.nutrition?.sugar || originalFoodItem?.nutrition?.sugar,
+          sodium:
+            foodDetail?.nutrition?.sodium ||
+            originalFoodItem?.nutrition?.sodium,
+          saturated_fat:
+            foodDetail?.nutrition?.saturated_fat ||
+            originalFoodItem?.nutrition?.saturated_fat,
+          cholesterol:
+            foodDetail?.nutrition?.cholesterol ||
+            originalFoodItem?.nutrition?.cholesterol,
+          water:
+            foodDetail?.nutrition?.water || originalFoodItem?.nutrition?.water,
+          omega3:
+            foodDetail?.nutrition?.omega3 ||
+            originalFoodItem?.nutrition?.omega3,
+          vitamins: {},
+          minerals: {},
+        },
+        serving: {
+          size: foodDetail?.amount || originalFoodItem?.serving?.size,
+          unit: foodDetail?.unit || originalFoodItem?.serving?.unit,
+          weight: originalFoodItem?.serving?.weight,
+        },
+        category: originalFoodItem?.category,
+        brand: originalFoodItem?.brand,
+        barcode: originalFoodItem?.barcode,
+        imageUrl: log.image?.url || originalFoodItem?.image?.url,
+        tags: originalFoodItem?.tags || [],
+      }
+
+      const foodItemMicrosSource =
+        originalFoodItem?.nutrition?.vitamins ||
+        originalFoodItem?.nutrition?.minerals ||
+        foodDetail?.micronutrients
+
+      if (foodItemMicrosSource) {
+        const vitamins: Record<string, any> = {}
+        const minerals: Record<string, any> = {}
+        const mineralKeys = [
+          'calcium',
+          'iron',
+          'magnesium',
+          'potassium',
+          'zinc',
+          'phosphorus',
+          'selenium',
+          'sodium', // sodium is handled separately as a macro-like nutrient usually
+        ]
+
+        for (const [key, microDetail] of foodItemMicrosSource instanceof Map
+          ? foodItemMicrosSource.entries()
+          : Object.entries(foodItemMicrosSource)) {
+          if (
+            microDetail &&
+            typeof microDetail.value === 'number' &&
+            microDetail.unit
+          ) {
+            const detailToStore = {
+              value: microDetail.value,
+              unit: microDetail.unit,
+              dv: microDetail.dv,
+            }
+            if (
+              mineralKeys.includes(key.toLowerCase()) &&
+              key.toLowerCase() !== 'sodium'
+            ) {
+              minerals[key] = detailToStore
+            } else if (key.toLowerCase() !== 'sodium') {
+              vitamins[key] = detailToStore
+            }
+          }
+        }
+        sharedFoodItem.nutrition.vitamins = vitamins
+        sharedFoodItem.nutrition.minerals = minerals
+      }
+
+      if (foodDetail?.nutrition?.sodium && !sharedFoodItem.nutrition.sodium) {
+        sharedFoodItem.nutrition.sodium = foodDetail.nutrition.sodium
+      }
+
+      const mealType = log.mealType || 'ไม่ระบุ'
+      if (!mealsMap.has(mealType)) {
+        mealsMap.set(mealType, { foodItems: [], mealCalories: 0, logIds: [] })
+      }
+      const currentMeal = mealsMap.get(mealType)!
+      currentMeal.foodItems.push(sharedFoodItem)
+      currentMeal.mealCalories += itemCalories
+      currentMeal.logIds.push((log._id as Types.ObjectId).toString())
+    })
+
+    const meals: MealDto[] = Array.from(mealsMap.entries()).map(
+      ([mealName, data]) => ({
+        id: data.logIds[0] || new Types.ObjectId().toString(), // Use first logId of the meal or generate new one
+        name: mealName,
+        totalCalories: data.mealCalories,
+        foodItems: data.foodItems,
+      }),
+    )
+
+    return {
+      date: dateString,
+      calories: {
+        consumed: consumedCalories,
+        goal: goals.calories,
+      },
+      macronutrients: {
+        protein: {
+          consumed: Math.round(consumedProtein),
+          goal: goals.protein,
+          unit: 'g',
+        },
+        carbs: {
+          consumed: Math.round(consumedCarbs),
+          goal: goals.carbs,
+          unit: 'g',
+        },
+        fat: { consumed: Math.round(consumedFat), goal: goals.fat, unit: 'g' },
+      },
+      otherNutrients: {
+        fiber: {
+          consumed: Math.round(consumedFiber),
+          goal: goals.fiber,
+          unit: 'g',
+        },
+        sugar: {
+          consumed: Math.round(consumedSugar),
+          goal: goals.sugar,
+          unit: 'g',
+        },
+        sodium: {
+          consumed: Math.round(consumedSodium),
+          goal: goals.sodium,
+          unit: 'mg',
+        },
+        cholesterol: {
+          consumed: Math.round(consumedCholesterol),
+          goal: goals.cholesterol,
+          unit: 'mg',
+        },
+        saturated_fat: {
+          consumed: Math.round(consumedSaturatedFat),
+          goal: goals.saturated_fat,
+          unit: 'g',
+        },
+        omega3: {
+          consumed: parseFloat(consumedOmega3.toFixed(1)),
+          goal: goals.omega3,
+          unit: 'g',
+        },
+        water: {
+          consumed: Math.round(consumedWater),
+          goal: goals.water,
+          unit: 'ml',
+        },
+      },
+      micronutrients: consumedMicronutrients,
+      meals,
+    }
+  }
+
+  async getWeeklyReportData(
+    lineUserId: string,
+    weekStartDateString: string,
+  ): Promise<WeeklyReportResponseDto> {
+    this.logger.log(
+      `[getWeeklyReportData] Fetching for lineUserId: ${lineUserId}, weekStart: ${weekStartDateString}`,
+    )
+
+    const weekStart = new Date(
+      new Date(weekStartDateString).setHours(0, 0, 0, 0),
+    )
+    const weekEnd = new Date(
+      new Date(weekStart).setDate(weekStart.getDate() + 6),
+    )
+    weekEnd.setHours(23, 59, 59, 999)
+
+    const user = await this.userModel.findOne({ lineUserId }).exec()
+    if (!user) {
+      this.logger.warn(`[getWeeklyReportData] User not found: ${lineUserId}`)
+      throw new Error('User not found')
+    }
+
+    // Use weekStart as the representative date for fetching the nutrition goal
+    const representativeGoalDateForWeek = new Date(weekStart)
+    const nutritionGoal = await this.nutritionGoalModel
+      .findOne({
+        userId: user._id,
+        isActive: true,
+        startDate: {
+          $lte: new Date(
+            new Date(representativeGoalDateForWeek).setHours(23, 59, 59, 999),
+          ),
+        },
+        $or: [
+          {
+            endDate: {
+              $gte: new Date(
+                new Date(representativeGoalDateForWeek).setHours(0, 0, 0, 0),
+              ),
+            },
+          },
+          { endDate: null },
+        ],
+      })
+      .sort({ createdAt: -1 })
+      .exec()
+
+    const defaultGoalValues = {
+      calories: 2000,
+      protein: 75,
+      carbs: 250,
+      fat: 65,
+    }
+
+    // ✅ Add dynamic calculation like in getDailyReportData
+    let goals: {
+      calories: number
+      protein: number
+      carbs: number
+      fat: number
+    }
+
+    // Dynamic calculation if no nutrition goal found
+    if (
+      !nutritionGoal &&
+      user.weightKg &&
+      user.heightCm &&
+      user.age &&
+      user.gender
+    ) {
+      this.logger.log(
+        `[getWeeklyReportData] No nutrition goal found, calculating from user profile`,
+      )
+
+      // Calculate goals using service methods
+      const bmr = this.calculateBMR(
+        user.gender,
+        user.weightKg,
+        user.heightCm,
+        user.age,
+      )
+      this.logger.log(
+        `Calculating BMR for gender: ${user.gender}, weight: ${user.weightKg}, height: ${user.heightCm}, age: ${user.age}`,
+      )
+
+      const tdee = this.calculateTDEE(bmr, user.activityLevel || 'moderate')
+      this.logger.log(
+        `Calculating TDEE for BMR: ${bmr}, activity level: ${user.activityLevel || 'moderate'}`,
+      )
+
+      const targetCalories = this.calculateTargetCalories(
+        tdee,
+        user.goal || 'maintain_weight',
+      )
+      this.logger.log(
+        `Calculating target calories for TDEE: ${tdee}, goal: ${user.goal || 'maintain_weight'}`,
+      )
+
+      const macroDistribution = this.calculateMacroDistribution(
+        targetCalories,
+        user.goal || 'maintain_weight',
+        user.dietType || 'normal',
+      )
+      this.logger.log(
+        `Calculating macro distribution for target calories: ${targetCalories}, goal: ${user.goal || 'maintain_weight'}, diet type: ${user.dietType || 'normal'}`,
+      )
+
+      // Create dynamic goals object
+      goals = {
+        calories: targetCalories || 2000,
+        protein: macroDistribution?.grams.protein || 75,
+        carbs: macroDistribution?.grams.carbs || 250,
+        fat: macroDistribution?.grams.fat || 65,
+      }
+
+      this.logger.log(
+        `[getWeeklyReportData] Calculated dynamic goals - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    } else {
+      // Use daily_goals from the fetched nutritionGoal or defaults
+      goals = {
+        calories:
+          nutritionGoal?.daily_goals?.calories || defaultGoalValues.calories,
+        protein:
+          nutritionGoal?.daily_goals?.protein || defaultGoalValues.protein,
+        carbs: nutritionGoal?.daily_goals?.carbs || defaultGoalValues.carbs,
+        fat: nutritionGoal?.daily_goals?.fat || defaultGoalValues.fat,
+      }
+    }
+
+    const foodLogs = await this.foodLogModel
+      .find({
+        lineUserId,
+        logDate: { $gte: weekStart, $lte: weekEnd },
+      })
+      .sort({ logDate: 'asc' })
+      .exec()
+
+    const dailyData: {
+      [date: string]: {
+        calories: number
+        protein: number
+        carbs: number
+        fat: number
+      }
+    } = {}
+
+    for (let i = 0; i < 7; i++) {
+      const currentDate = new Date(weekStart)
+      currentDate.setDate(weekStart.getDate() + i)
+      const dateStr = currentDate.toISOString().split('T')[0]
+      dailyData[dateStr] = { calories: 0, protein: 0, carbs: 0, fat: 0 }
+    }
+
+    let totalCaloriesWeek = 0
+    let totalProteinWeek = 0
+    let totalCarbsWeek = 0
+    let totalFatWeek = 0
+
+    foodLogs.forEach((log) => {
+      const dateStr = log.logDate.toISOString().split('T')[0]
+      if (log.food?.nutrition) {
+        const cal = log.food.nutrition.calories || 0
+        const prot = log.food.nutrition.protein || 0
+        const carb = log.food.nutrition.carbs || 0
+        const fatVal = log.food.nutrition.fat || 0
+
+        if (dailyData[dateStr]) {
+          dailyData[dateStr].calories += cal
+          dailyData[dateStr].protein += prot
+          dailyData[dateStr].carbs += carb
+          dailyData[dateStr].fat += fatVal
+        }
+        totalCaloriesWeek += cal
+        totalProteinWeek += prot
+        totalCarbsWeek += carb
+        totalFatWeek += fatVal
+      }
+    })
+
+    const daysWithLogs = Object.values(dailyData).filter(
+      (d) => d.calories > 0 || d.protein > 0 || d.carbs > 0 || d.fat > 0,
+    ).length
+    const numDaysForAverage = daysWithLogs > 0 ? daysWithLogs : 1
+
+    const orderedDailyCalories: { day: string; calories: number }[] = []
+    for (let i = 0; i < 7; i++) {
+      const currentDate = new Date(weekStart)
+      currentDate.setDate(weekStart.getDate() + i)
+      const dateStr = currentDate.toISOString().split('T')[0]
+      const dayName = currentDate.toLocaleDateString('en-US', {
+        weekday: 'short',
+      })
+      const foundData = dailyData[dateStr]
+      orderedDailyCalories.push({
+        day: dayName,
+        calories: foundData ? Math.round(foundData.calories) : 0,
+      })
+    }
+
+    return {
+      weekStartDate: weekStartDateString,
+      weekEndDate: weekEnd.toISOString().split('T')[0],
+      avgCalories: Math.round(totalCaloriesWeek / numDaysForAverage),
+      avgCaloriesGoal: goals.calories, // เพิ่ม calories goal
+      dailyCalories: orderedDailyCalories,
+      avgMacronutrients: {
+        protein: {
+          consumed: Math.round(totalProteinWeek / numDaysForAverage),
+          goal: goals.protein,
+          unit: 'g',
+        },
+        carbs: {
+          consumed: Math.round(totalCarbsWeek / numDaysForAverage),
+          goal: goals.carbs,
+          unit: 'g',
+        },
+        fat: {
+          consumed: Math.round(totalFatWeek / numDaysForAverage),
+          goal: goals.fat,
+          unit: 'g',
+        },
+      },
+      summary: `สัปดาห์นี้คุณบริโภคเฉลี่ยวันละ ${Math.round(totalCaloriesWeek / numDaysForAverage)} แคลอรี่ (เป้าหมาย: ${goals.calories} แคลอรี่/วัน)`,
+      tip: 'พยายามรับประทานผักและผลไม้ให้หลากหลายชนิดเพื่อวิตามินและแร่ธาตุที่ครบถ้วน',
+    }
+  }
+
+  async getMonthlyReportData(
+    lineUserId: string,
+    monthString: string, // Expecting YYYY-MM
+  ): Promise<MonthlyReportResponseDto> {
+    this.logger.log(
+      `[getMonthlyReportData] Fetching for lineUserId: ${lineUserId}, month: ${monthString}`,
+    )
+
+    const [year, monthNum] = monthString.split('-').map(Number)
+    const monthStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0)
+    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999) // Day 0 of next month gets last day of current month
+
+    const user = await this.userModel.findOne({ lineUserId }).exec()
+    if (!user) {
+      this.logger.warn(`[getMonthlyReportData] User not found: ${lineUserId}`)
+      throw new Error('User not found')
+    }
+
+    // Use the 15th of the month as a representative date for fetching the nutrition goal
+    const representativeGoalDateForMonth = new Date(year, monthNum - 1, 15)
+    const nutritionGoal = await this.nutritionGoalModel
+      .findOne({
+        userId: user._id,
+        isActive: true,
+        startDate: {
+          $lte: new Date(
+            new Date(representativeGoalDateForMonth).setHours(23, 59, 59, 999),
+          ),
+        },
+        $or: [
+          {
+            endDate: {
+              $gte: new Date(
+                new Date(representativeGoalDateForMonth).setHours(0, 0, 0, 0),
+              ),
+            },
+          },
+          { endDate: null },
+        ],
+      })
+      .sort({ createdAt: -1 })
+      .exec()
+
+    const defaultGoalValues = {
+      calories: 2000,
+      protein: 75,
+      carbs: 250,
+      fat: 65,
+    }
+
+    // ✅ Add dynamic calculation like in getDailyReportData and getWeeklyReportData
+    let goals: {
+      calories: number
+      protein: number
+      carbs: number
+      fat: number
+    }
+
+    // Dynamic calculation if no nutrition goal found
+    if (
+      !nutritionGoal &&
+      user.weightKg &&
+      user.heightCm &&
+      user.age &&
+      user.gender
+    ) {
+      this.logger.log(
+        `[getMonthlyReportData] No nutrition goal found, calculating from user profile`,
+      )
+
+      // Calculate goals using service methods
+      const bmr = this.calculateBMR(
+        user.gender,
+        user.weightKg,
+        user.heightCm,
+        user.age,
+      )
+      this.logger.log(
+        `Calculating BMR for gender: ${user.gender}, weight: ${user.weightKg}, height: ${user.heightCm}, age: ${user.age}`,
+      )
+
+      const tdee = this.calculateTDEE(bmr, user.activityLevel || 'moderate')
+      this.logger.log(
+        `Calculating TDEE for BMR: ${bmr}, activity level: ${user.activityLevel || 'moderate'}`,
+      )
+
+      const targetCalories = this.calculateTargetCalories(
+        tdee,
+        user.goal || 'maintain_weight',
+      )
+      this.logger.log(
+        `Calculating target calories for TDEE: ${tdee}, goal: ${user.goal || 'maintain_weight'}`,
+      )
+
+      const macroDistribution = this.calculateMacroDistribution(
+        targetCalories,
+        user.goal || 'maintain_weight',
+        user.dietType || 'normal',
+      )
+      this.logger.log(
+        `Calculating macro distribution for target calories: ${targetCalories}, goal: ${user.goal || 'maintain_weight'}, diet type: ${user.dietType || 'normal'}`,
+      )
+
+      // Create dynamic goals object
+      goals = {
+        calories: targetCalories || 2000,
+        protein: macroDistribution?.grams.protein || 75,
+        carbs: macroDistribution?.grams.carbs || 250,
+        fat: macroDistribution?.grams.fat || 65,
+      }
+
+      this.logger.log(
+        `[getMonthlyReportData] Calculated dynamic goals - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    } else {
+      // Use daily_goals from the fetched nutritionGoal or defaults
+      goals = {
+        calories:
+          nutritionGoal?.daily_goals?.calories || defaultGoalValues.calories,
+        protein:
+          nutritionGoal?.daily_goals?.protein || defaultGoalValues.protein,
+        carbs: nutritionGoal?.daily_goals?.carbs || defaultGoalValues.carbs,
+        fat: nutritionGoal?.daily_goals?.fat || defaultGoalValues.fat,
+      }
+    }
+
+    const foodLogs = await this.foodLogModel
+      .find({
+        lineUserId,
+        logDate: { $gte: monthStart, $lte: monthEnd },
+      })
+      .sort({ logDate: 'asc' })
+      .exec()
+
+    let totalCaloriesMonth = 0
+    let totalProteinMonth = 0
+    let totalCarbsMonth = 0
+    let totalFatMonth = 0
+    const daysInMonth = monthEnd.getDate()
+    const dailyCaloriesMap: { [day: number]: number } = {}
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      dailyCaloriesMap[i] = 0
+    }
+
+    const loggedDaysSet = new Set<string>()
+
+    foodLogs.forEach((log) => {
+      const logDate = log.logDate
+      const dayOfMonth = logDate.getDate()
+      loggedDaysSet.add(logDate.toISOString().split('T')[0])
+
+      if (log.food?.nutrition) {
+        const cal = log.food.nutrition.calories || 0
+        totalCaloriesMonth += cal
+        totalProteinMonth += log.food.nutrition.protein || 0
+        totalCarbsMonth += log.food.nutrition.carbs || 0
+        totalFatMonth += log.food.nutrition.fat || 0
+        dailyCaloriesMap[dayOfMonth] = (dailyCaloriesMap[dayOfMonth] || 0) + cal
+      }
+    })
+
+    const daysWithLogs = loggedDaysSet.size
+    const numDaysForAverage = daysWithLogs > 0 ? daysWithLogs : 1
+
+    const calorieTrend = Object.entries(dailyCaloriesMap).map(
+      ([day, calories]) => ({
+        day: parseInt(day, 10),
+        calories: Math.round(calories),
+      }),
+    )
+
+    return {
+      month: monthString,
+      avgCaloriesPerDay: Math.round(totalCaloriesMonth / numDaysForAverage),
+      avgCaloriesGoal: goals.calories, // เพิ่ม calories goal
+      totalCaloriesMonth: Math.round(totalCaloriesMonth),
+      calorieTrend,
+      avgMacronutrients: {
+        protein: {
+          consumed: Math.round(totalProteinMonth / numDaysForAverage),
+          goal: goals.protein,
+          unit: 'g',
+        },
+        carbs: {
+          consumed: Math.round(totalCarbsMonth / numDaysForAverage),
+          goal: goals.carbs,
+          unit: 'g',
+        },
+        fat: {
+          consumed: Math.round(totalFatMonth / numDaysForAverage),
+          goal: goals.fat,
+          unit: 'g',
+        },
+      },
+      summary: `ในเดือน ${monthString} คุณบริโภคเฉลี่ยวันละ ${Math.round(totalCaloriesMonth / numDaysForAverage)} แคลอรี่ (เป้าหมาย: ${goals.calories} แคลอรี่/วัน). รวมทั้งเดือน ${Math.round(totalCaloriesMonth)} แคลอรี่.`,
+      insights: [
+        'ภาพรวมการบริโภคของคุณค่อนข้างสอดคล้องกับเป้าหมาย แนะนำให้คงระดับการรับประทานอาหารที่มีประโยชน์ต่อไป',
+        totalProteinMonth / numDaysForAverage < goals.protein * 0.8
+          ? 'ลองเพิ่มปริมาณโปรตีนในแต่ละวัน เช่น จากเนื้อสัตว์ไม่ติดมัน ไข่ หรือผลิตภัณฑ์จากถั่วเหลือง เพื่อช่วยเสริมสร้างกล้ามเนื้อและทำให้อิ่มนานขึ้น'
+          : 'การบริโภคโปรตีนของคุณอยู่ในระดับที่ดี! โปรตีนช่วยในการซ่อมแซมและเสริมสร้างกล้ามเนื้อ',
+      ],
+    }
+  }
 }

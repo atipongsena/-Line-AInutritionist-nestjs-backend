@@ -62,7 +62,6 @@ export interface FoodAnalysisData {
   fiber?: number
   sugar?: number
   saturated_fat?: number
-  trans_fat?: number // Though not in example, keep if schema supports
   cholesterol?: number
   sodium?: number
   // Vitamins - matching example + schema
@@ -111,7 +110,6 @@ interface TranslationSet {
   fiber: string
   sugar: string
   saturated_fat: string
-  trans_fat: string
   cholesterol: string
   sodium: string
   vitamins_group_title: string // Changed to be more generic
@@ -173,7 +171,6 @@ const translations: Record<string, TranslationSet> = {
     fiber: 'ใยอาหาร',
     sugar: 'น้ำตาล',
     saturated_fat: 'ไขมันอิ่มตัว',
-    trans_fat: 'ไขมันทรานส์',
     cholesterol: 'คอเลสเตอรอล',
     sodium: 'โซเดียม',
     vitamins_group_title: '🌈 วิตามิน',
@@ -206,7 +203,7 @@ const translations: Record<string, TranslationSet> = {
     view_vitamins_minerals_button: 'ดูวิตามินและแร่ธาตุ',
     vitamins_minerals_summary_text:
       'มีวิตามินและแร่ธาตุหลายชนิด กดปุ่มเพื่อดูเพิ่มเติม',
-    edit_food_button: 'แก้ไขข้อมูล',
+    edit_food_button: 'วิเคราะห์ใหม่',
     not_specified: 'ไม่ระบุ',
     unit_g: 'ก.',
     unit_mg: 'มก.',
@@ -235,7 +232,6 @@ const translations: Record<string, TranslationSet> = {
     fiber: 'Fiber',
     sugar: 'Sugar',
     saturated_fat: 'Saturated Fat',
-    trans_fat: 'Trans Fat',
     cholesterol: 'Cholesterol',
     sodium: 'Sodium',
     vitamins_group_title: '🌈 Vitamins',
@@ -265,10 +261,10 @@ const translations: Record<string, TranslationSet> = {
     recommendation_subtitle: 'Recommendations',
     save_food_button: 'Save this Analysis',
     view_details_button: 'View Full Details',
-    view_vitamins_minerals_button: 'View Vitamins & Minerals',
+    view_vitamins_minerals_button: 'Vitamins&Minerals',
     vitamins_minerals_summary_text:
       'Contains various vitamins and minerals. Press button to see details.',
-    edit_food_button: 'Edit Data',
+    edit_food_button: 'Reanalyze',
     not_specified: 'Not specified',
     unit_g: 'g',
     unit_mg: 'mg',
@@ -404,6 +400,28 @@ export function createFoodAnalysisFlexMessage(
 
   const bodyContents: FlexComponent[] = []
 
+  // ✅ เพิ่มการแสดงภาพอาหาร (ถ้ามี)
+  if (foodData.imageUrl) {
+    logger.debug(
+      `Adding food image to flex message: ${foodData.imageUrl.substring(0, 50)}...`,
+    )
+    bodyContents.push({
+      type: 'image',
+      url: foodData.imageUrl,
+      size: 'full',
+      aspectRatio: '3:2', // อัตราส่วนที่เหมาะสมสำหรับอาหาร
+      aspectMode: 'cover', // ให้ภาพครอบคลุมพื้นที่ทั้งหมด
+      margin: 'none',
+      action: {
+        type: 'uri',
+        uri: foodData.imageUrl, // คลิกเพื่อดูภาพขนาดเต็ม
+        label: language === 'th' ? 'ดูภาพขนาดเต็ม' : 'View full image', // เพิ่ม label ตาม LINE SDK requirement
+      },
+    })
+    // เพิ่ม separator หลังภาพ
+    bodyContents.push({ type: 'separator', margin: 'lg' })
+  }
+
   // Common parameters for postback actions, ensuring messageId is prioritized
   const commonPostbackParams = new URLSearchParams()
   if (foodData.messageId) {
@@ -424,14 +442,6 @@ export function createFoodAnalysisFlexMessage(
     )
   }
 
-  // If imageUrl was part of foodData and needed for some actions (e.g., analyze_again with image)
-  // It's already noted in logs it's excluded to save space.
-  // If re-introducing, ensure it doesn't exceed length limits.
-  // if (foodData.imageUrl) {
-  // commonPostbackParams.append('imageUrl', foodData.imageUrl);
-  // logger.debug(`imageUrl was present in foodData but is currently excluded from commonPostbackParams to save space.`);
-  // }
-
   // Section: Components (Main Ingredients)
   if (foodData.components && foodData.components.length > 0) {
     bodyContents.push({
@@ -443,7 +453,7 @@ export function createFoodAnalysisFlexMessage(
       color: '#1DB446', // Theme color
     })
     foodData.components.forEach((component) => {
-      const componentName = truncateText(component.name, 30, language, t) // Truncate component name
+      const componentName = truncateText(component.name, 50, language, t) // Truncate component name
       let componentAmountText = component.amount
         ? `${formatNumber(component.amount, 1)} ${getUnitLabel(component.unit, language, t)}`
         : t.not_specified
@@ -517,7 +527,6 @@ export function createFoodAnalysisFlexMessage(
     foodData.fiber !== undefined ||
     foodData.sugar !== undefined ||
     foodData.saturated_fat !== undefined ||
-    foodData.trans_fat !== undefined ||
     foodData.cholesterol !== undefined ||
     foodData.sodium !== undefined
 
@@ -567,15 +576,6 @@ export function createFoodAnalysisFlexMessage(
           t,
         ),
       )
-    if (foodData.trans_fat !== undefined)
-      bodyContents.push(
-        createNutrientRow(
-          t.trans_fat,
-          formatNumber(foodData.trans_fat, 0),
-          getUnitLabel(t.unit_g, language, t),
-          t,
-        ),
-      ) // Often 0 or small
     if (foodData.cholesterol !== undefined)
       bodyContents.push(
         createNutrientRow(
@@ -623,7 +623,7 @@ export function createFoodAnalysisFlexMessage(
         },
         {
           type: 'text',
-          text: truncateText(foodData.health_benefits, 150, language, t),
+          text: truncateText(foodData.health_benefits, 300, language, t),
           size: 'sm',
           color: '#555555',
           wrap: true,
@@ -643,7 +643,7 @@ export function createFoodAnalysisFlexMessage(
         },
         {
           type: 'text',
-          text: truncateText(foodData.health_cautions, 150, language, t),
+          text: truncateText(foodData.health_cautions, 300, language, t),
           size: 'sm',
           color: '#555555',
           wrap: true,
@@ -663,7 +663,7 @@ export function createFoodAnalysisFlexMessage(
         },
         {
           type: 'text',
-          text: truncateText(foodData.recommendation, 150, language, t),
+          text: truncateText(foodData.recommendation, 300, language, t),
           size: 'sm',
           color: '#555555',
           wrap: true,
@@ -763,7 +763,7 @@ export function createFoodAnalysisFlexMessage(
   // 2. Edit Food (Secondary) - Uncommented
   const editFoodAction = createActionButton(
     t.edit_food_button,
-    'edit_food_analysis',
+    'reanalyze_food',
     'secondary',
   )
   if (editFoodAction) buttons.push(editFoodAction)
@@ -773,7 +773,11 @@ export function createFoodAnalysisFlexMessage(
     t.save_food_button, // Label now "บันทึกมื้ออาหาร"
     'save_food_analysis',
     'primary',
+    {
+      mealType: 'breakfast', // ค่าเริ่มต้นเป็นมื้อเช้า
+    },
   )
+
   if (saveFoodAction) buttons.push(saveFoodAction)
 
   // --- Analyze Again Button --- REMOVED from main button set for footer
@@ -821,7 +825,7 @@ export function createFoodAnalysisFlexMessage(
           {
             type: 'text',
             text: foodData.portion
-              ? `${t.portion}: ${truncateText(foodData.portion, 30, language, t)}`
+              ? `${t.portion}: ${truncateText(foodData.portion, 40, language, t)}`
               : '',
             color: '#FFFFFFCC',
             size: 'sm',

@@ -25,6 +25,9 @@ export interface SharedUserProfileDto {
     pregnancyLactationStatus?: PregnancyLactationStatus;
     preferredCuisine?: string[];
     preferredFlavorProfiles?: string[];
+    targetWeightKg?: number | null;
+    calculatedBmr?: number | null;
+    calculatedTdee?: number | null;
 }
 export interface SharedCreateUserProfileDto {
     lineUserId: string;

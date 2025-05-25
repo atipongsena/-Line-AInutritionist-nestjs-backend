@@ -59,6 +59,11 @@ export interface SharedUserProfileDto {
   pregnancyLactationStatus?: PregnancyLactationStatus
   preferredCuisine?: string[] // e.g., 'thai', 'japanese', 'western', 'chinese', 'indian_arabic', 'other_cuisine'
   preferredFlavorProfiles?: string[] // e.g., 'spicy', 'mild', 'bland', 'low_sugar_salt', 'non_oily_fried'
+
+  // Nutrition Calculation related fields
+  targetWeightKg?: number | null
+  calculatedBmr?: number | null
+  calculatedTdee?: number | null
 }
 
 export interface SharedCreateUserProfileDto {

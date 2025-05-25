@@ -8,8 +8,18 @@ async function bootstrap() {
   const configService = app.get(ConfigService)
   const logger = new Logger('Bootstrap')
 
-  // Enable CORS
-  app.enableCors() // Allows all origins by default, customize if needed
+  // Enable CORS with specific options
+  app.enableCors({
+    origin: [
+      'http://localhost:3001', // HTTP version
+      'https://localhost:3001', // HTTPS version
+      // Add other origins if needed (e.g., your production LIFF URL)
+    ],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders:
+      'Content-Type, Accept, Authorization, X-LINE-ID-TOKEN, ngrok-skip-browser-warning',
+    credentials: true,
+  })
 
   // Global Validation Pipe
   app.useGlobalPipes(

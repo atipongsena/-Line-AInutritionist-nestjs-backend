@@ -7,6 +7,8 @@ import {
   Logger,
   Headers,
   // Body, // WebhookRequestBody is no longer used here, so Body decorator might not be needed directly
+  Get,
+  Body,
 } from '@nestjs/common'
 import { LineService } from './line.service'
 import { ConfigService } from '@nestjs/config'
@@ -15,6 +17,9 @@ import {
   /* WebhookRequestBody, */ SignatureValidationFailed,
   HTTPError as LineHTTPError,
 } from '@line/bot-sdk' // Comment out WebhookRequestBody
+import { IntentDetectionMetricsService } from './intent-detection-metrics.service'
+import { IntentDetectionService } from './intent-detection.service'
+import { UserProfileDto } from '../user/user.interface'
 
 interface RequestWithRawBody extends Request {
   rawBody?: Buffer
@@ -28,6 +33,8 @@ export class LineController {
   constructor(
     private readonly lineService: LineService,
     private readonly configService: ConfigService,
+    private readonly intentDetectionMetricsService: IntentDetectionMetricsService,
+    private readonly intentDetectionService: IntentDetectionService,
   ) {
     const secret = this.configService.get<string>('LINE_CHANNEL_SECRET')
     if (!secret) {
@@ -110,5 +117,167 @@ export class LineController {
           `Async processing error: ${errorName} - ${errorMessage}`,
         )
       })
+  }
+
+  @Get('intent-metrics')
+  getIntentMetrics() {
+    return this.intentDetectionMetricsService.getMetrics()
+  }
+
+  @Get('intent-detections/recent')
+  getRecentDetections() {
+    return this.intentDetectionMetricsService.getRecentDetections(20)
+  }
+
+  @Post('test-intent')
+  async testIntentDetection(
+    @Body() body: { message: string; language?: string },
+  ): Promise<{
+    message: string
+    result?: any
+    error?: string
+    timestamp: string
+  }> {
+    try {
+      // Mock user profile for testing
+      const mockUserProfile = {
+        lineUserId: 'test-user',
+        displayName: 'Test User',
+        language: body.language || 'th',
+        goal: 'general',
+      } as const
+
+      const result = await this.intentDetectionService.detectIntent(
+        body.message,
+        mockUserProfile,
+        body.language || 'th',
+      )
+
+      return {
+        message: body.message,
+        result,
+        timestamp: new Date().toISOString(),
+      }
+    } catch (error) {
+      return {
+        message: body.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      }
+    }
+  }
+
+  @Post('test-autonomous-eating-analysis')
+  async testAutonomousEatingAnalysis(
+    @Body()
+    body: {
+      lineUserId: string
+      userProfile?: {
+        lineUserId: string
+        displayName?: string
+        language?: string
+        goal?: string
+        dietType?: string
+        age?: number
+        gender?: string
+      }
+      language?: string
+      timeConstraint?: 'fast' | 'normal' | 'accurate'
+    },
+  ): Promise<{
+    status: string
+    result?: unknown
+    error?: string
+    timestamp: string
+  }> {
+    try {
+      this.logger.log(
+        `Testing autonomous eating analysis for user: ${body.lineUserId}`,
+      )
+
+      // Use provided userProfile or create a mock one
+      const userProfile = body.userProfile || {
+        lineUserId: body.lineUserId,
+        displayName: 'Test User',
+        language: body.language || 'th',
+        goal: 'maintain_weight',
+        dietType: 'normal',
+      }
+
+      const result = await this.lineService.testAutonomousEatingAnalysis(
+        body.lineUserId,
+        userProfile as UserProfileDto,
+        body.language || 'th',
+        body.timeConstraint || 'normal',
+      )
+
+      return {
+        status: 'success',
+        result,
+        timestamp: new Date().toISOString(),
+      }
+    } catch (error) {
+      this.logger.error(`Test autonomous eating analysis error: ${error}`)
+      return {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      }
+    }
+  }
+
+  @Post('test-get-food-history')
+  async testGetFoodHistory(
+    @Body()
+    body: {
+      lineUserId: string
+      userProfile?: {
+        lineUserId: string
+        displayName?: string
+        language?: string
+      }
+      days?: number
+      limit?: number
+      language?: string
+    },
+  ): Promise<{
+    status: string
+    result?: unknown
+    error?: string
+    timestamp: string
+  }> {
+    try {
+      this.logger.log(
+        `Testing food history retrieval for user: ${body.lineUserId}`,
+      )
+
+      // Use provided userProfile or create a mock one
+      const userProfile = body.userProfile || {
+        lineUserId: body.lineUserId,
+        displayName: 'Test User',
+        language: body.language || 'th',
+      }
+
+      const result = await this.lineService.testGetFoodHistory(
+        body.lineUserId,
+        userProfile as UserProfileDto,
+        body.days || 30,
+        body.limit || 100,
+        body.language || 'th',
+      )
+
+      return {
+        status: 'success',
+        result,
+        timestamp: new Date().toISOString(),
+      }
+    } catch (error) {
+      this.logger.error(`Test food history retrieval error: ${error}`)
+      return {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      }
+    }
   }
 }

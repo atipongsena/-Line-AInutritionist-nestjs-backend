@@ -72,7 +72,6 @@ const MultipleCheckboxWithOther: React.FC<MultipleCheckboxWithOtherProps> = ({
     const { checked } = event.target
     setIsOtherChecked(checked)
     if (!checked) {
-      const oldOtherText = otherText
       setOtherText('')
       triggerOnChange(selectedOptions, false, '')
     } else {

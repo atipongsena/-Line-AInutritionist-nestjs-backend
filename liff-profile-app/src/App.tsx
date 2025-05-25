@@ -1,48 +1,81 @@
-import React, { useEffect, useState, useMemo } from 'react'
-import liff from '@line/liff'
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  Suspense,
+} from 'react'
 import {
-  ThemeProvider,
-  createTheme,
-  CssBaseline,
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  useNavigate,
+} from 'react-router-dom'
+import {
   Container,
   Typography,
+  Button,
   CircularProgress,
   Box,
-  Alert,
-  List,
-  ListItem,
-  ListItemText,
-  Divider,
-  Button,
   TextField,
-  Stack,
-  FormControl,
-  InputLabel,
   Select,
   MenuItem,
+  FormControl,
+  InputLabel,
+  FormHelperText,
+  Alert,
+  AppBar,
+  Toolbar,
+  IconButton,
+  Paper,
   ToggleButton,
   ToggleButtonGroup,
   Card,
   CardContent,
-  Grid,
-  FormHelperText,
+  CssBaseline,
+  ThemeProvider,
+  createTheme,
+  SelectChangeEvent,
+  Stepper,
+  Step,
+  StepLabel,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers'
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns'
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
-import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { th, enUS } from 'date-fns/locale'
-import {
-  SharedUserProfileDto,
-  Gender,
-  ActivityLevel,
-  DietType,
-  PregnancyLactationStatus,
-} from '@ai-nutritionist/shared-types'
-import MultipleCheckboxWithOther from './MultipleCheckboxWithOther'
+import { format, differenceInYears, isValid, parseISO } from 'date-fns'
 
-// Helper function to decode JWT (for debugging purposes ONLY)
-const parseJwt = (token: string | null) => {
-  if (!token) return null
+// สร้าง interface สำหรับ LIFF SDK
+interface LiffProfile {
+  userId: string
+  displayName: string
+  pictureUrl?: string
+  statusMessage?: string
+}
+
+export interface LiffType {
+  init(config: { liffId: string }): Promise<void>
+  isLoggedIn(): boolean
+  login(): void
+  getIDToken(): string | null
+  getProfile(): Promise<LiffProfile>
+  getLanguage(): string
+  closeWindow(): void
+  // ปัจจุบัน LIFF SDK อาจไม่มีเมธอด isInitialized แล้ว
+}
+
+// Helper function to decode JWT (for debugging และตรวจสอบอายุ token)
+const parseJwt = (token: string | null): object | null => {
+  if (!token) {
+    return null
+  }
   try {
     const base64Url = token.split('.')[1]
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
@@ -54,25 +87,64 @@ const parseJwt = (token: string | null) => {
         })
         .join(''),
     )
-    return JSON.parse(jsonPayload)
+    return JSON.parse(jsonPayload) as object
   } catch (e) {
     console.error('Error decoding JWT:', e)
     return null
   }
 }
 
-// Define Profile type based on liff.getProfile() response
-interface Profile {
-  userId: string
-  displayName: string
-  pictureUrl?: string
-  statusMessage?: string
+// ฟังก์ชันตรวจสอบอายุของ token
+const isTokenExpired = (token: string | null): boolean => {
+  if (!token) return true
+  try {
+    const decoded = parseJwt(token) as { exp?: number } | null
+    if (!decoded || !decoded.exp) return true
+
+    // คำนวณเวลาที่เหลือก่อน token หมดอายุ (หน่วยเป็นวินาที)
+    const currentTime = Math.floor(Date.now() / 1000)
+    const timeRemaining = decoded.exp - currentTime
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[TOKEN_DEBUG] Token expires in ${timeRemaining} seconds`)
+    }
+
+    // ถ้าเหลือเวลาน้อยกว่า 5 นาที ให้ถือว่า token ใกล้หมดอายุ
+    return timeRemaining < 300
+  } catch (error) {
+    console.error('Error checking token expiration:', error)
+    return true
+  }
 }
 
-// Use LIFF ID from environment variable
-const LIFF_ID = process.env.REACT_APP_LIFF_ID
+// const typedLiff: LiffType = liff as any; // Removed old assignment
 
-console.log('process.env.REACT_APP_LIFF_ID:', process.env.REACT_APP_LIFF_ID)
+import EditIcon from '@mui/icons-material/Edit'
+import {
+  SharedUserProfileDto,
+  SharedUpdateUserProfileDto,
+  Gender,
+  ActivityLevel,
+  DietType,
+  PregnancyLactationStatus,
+} from '@ai-nutritionist/shared-types'
+
+// Lazy load NutritionReportMain for better initial load time
+const NutritionReportMain = React.lazy(
+  () => import('./nutrition-report/views/NutritionReportMain'),
+)
+
+// interface Profile {
+//   userId: string
+//   displayName: string
+//   pictureUrl?: string
+//   statusMessage?: string
+// }
+
+// Use LIFF ID from environment variable
+const LIFF_ID = import.meta.env.VITE_LIFF_ID
+
+console.log('import.meta.env.VITE_LIFF_ID:', import.meta.env.VITE_LIFF_ID)
 console.log('Effective LIFF_ID for liff.init:', LIFF_ID)
 
 // Basic MUI theme (can be customized later)
@@ -87,12 +159,16 @@ const theme = createTheme({
   },
 })
 
-// --- Localization (i18n) ---
+// App Global State and API interaction types
+// (Re-evaluating SharedUserProfileDto usage based on actual backend responses)
+// Re-importing from shared-types
+
 interface Translations {
   [key: string]: {
     // General
     appName: string
     userProfileTitle: string
+    nutritionReportTitle: string
     loadingLiff: string
     loadingProfile: string
     saveChangesButton: string
@@ -100,7 +176,7 @@ interface Translations {
     nextButton: string
     backButton: string
     cancelButton: string
-    stepOutOf: string
+    stepOutOf: (current: number, total: number) => string
     // Errors
     liffIdMissingError: string
     liffInitError: string
@@ -169,222 +245,288 @@ interface Translations {
 
 const translations: Translations = {
   th: {
-    appName: 'โปรไฟล์สุขภาพ AI Nutritionist',
-    userProfileTitle: 'โปรไฟล์ผู้ใช้',
-    loadingLiff: 'กำลังเริ่มต้น LIFF...',
-    loadingProfile: 'กำลังโหลดข้อมูลโปรไฟล์...',
-    saveChangesButton: 'บันทึกการเปลี่ยนแปลง',
-    editProfileButton: 'แก้ไขโปรไฟล์',
-    nextButton: 'ถัดไป',
-    backButton: 'ย้อนกลับ',
-    cancelButton: 'ยกเลิก',
-    stepOutOf: 'ขั้นตอนที่ {current} จาก {total}',
-    liffIdMissingError: 'ข้อผิดพลาดการตั้งค่า: ไม่พบ LIFF ID',
-    liffInitError: 'เกิดข้อผิดพลาดในการเริ่มต้น LIFF: {message}',
-    apiFetchError: 'ไม่สามารถโหลดโปรไฟล์จากเซิร์ฟเวอร์: {message}',
-    apiSaveError: 'ไม่สามารถบันทึกโปรไฟล์: {message}',
-    idTokenMissingError: 'ไม่สามารถบันทึก: ไม่พบ ID Token',
-    welcomeMessage: 'ยินดีต้อนรับ, {name}!',
-    lineUserIdLabel: 'LINE User ID',
-    idTokenLabel: 'ID Token (เริ่มต้น)',
-    apiProfileDataTitle: 'ข้อมูลโปรไฟล์ (จาก /api/users/me):',
-    noApiProfileData: 'ยังไม่มีข้อมูลโปรไฟล์จาก API หรือการเรียก API ล้มเหลว',
-    step1Title: 'ข้อมูลส่วนตัว',
-    languageLabel: 'ภาษาในการตอบกลับ',
-    languageHelper: 'เลือกภาษาที่ต้องการให้ AI ใช้สื่อสารกับคุณ',
-    nicknameLabel: 'ชื่อเล่น (ให้ AI เรียก)',
-    nicknameHelper: 'เราจะใช้ชื่อนี้เรียกคุณ',
-    birthdateLabel: 'วันเกิด',
-    birthdateHelper: 'เลือกวันเกิดของคุณเพื่อคำนวณอายุ',
-    ageLabel: 'อายุ (ปี)',
-    genderLabel: 'เพศ',
-    genderHelper: 'ระบุเพศของคุณ',
-    male: 'ชาย',
-    female: 'หญิง',
-    other: 'อื่นๆ/ไม่ระบุ',
-    step2Title: 'เป้าหมายและไลฟ์สไตล์',
-    goalLabel: 'เป้าหมายสุขภาพ',
+    appName: 'โปรไฟล์ของฉัน',
+    userProfileTitle: '⚙️ แก้ไขโปรไฟล์',
+    nutritionReportTitle: '📊 รายงานโภชนาการ',
+    loadingLiff: '⏳ กำลังโหลด LIFF...',
+    loadingProfile: '⏳ กำลังโหลดข้อมูลส่วนตัว...',
+    saveChangesButton: '💾 บันทึกข้อมูล',
+    editProfileButton: '✏️ แก้ไขข้อมูล',
+    nextButton: 'ถัดไป ➡️',
+    backButton: '⬅️ ย้อนกลับ',
+    cancelButton: '❌ ยกเลิก',
+    stepOutOf: (current, total) => `ขั้นตอนที่ ${current} จาก ${total}`,
+    liffIdMissingError: '❗️ ไม่ได้ตั้งค่า LIFF ID',
+    liffInitError: '❗️ เกิดข้อผิดพลาดในการเริ่มต้น LIFF',
+    apiFetchError: '❗️ ไม่สามารถโหลดข้อมูลได้',
+    apiSaveError: '❗️ ไม่สามารถบันทึกข้อมูลได้',
+    idTokenMissingError: '❗️ ไม่พบ ID Token',
+    welcomeMessage: '👋 ยินดีต้อนรับ!',
+    lineUserIdLabel: 'LINE User ID:',
+    idTokenLabel: 'ID Token (สำหรับทดสอบ):',
+    apiProfileDataTitle: 'ข้อมูลจาก API:',
+    noApiProfileData: '✨ ยินดีต้อนรับ! กรุณากรอกข้อมูลของคุณ',
+    step1Title: '👤 ข้อมูลพื้นฐาน',
+    languageLabel: '🌐 ภาษา',
+    languageHelper: 'เลือกภาษาที่ต้องการใช้งาน',
+    nicknameLabel: '😊 ชื่อเล่น',
+    nicknameHelper: 'ชื่อที่ต้องการให้เรียก',
+    birthdateLabel: '📅 วันเกิด',
+    birthdateHelper: 'เลือกวันเกิดของคุณ หรืออายุจะคำนวณให้อัตโนมัติ',
+    ageLabel: '🎂 อายุ',
+    genderLabel: '👥 เพศ',
+    genderHelper: 'เลือกข้อมูลเพศของคุณ (ใช้ในการคำนวณพลังงานที่ต้องการ)',
+    male: '👨 ชาย',
+    female: '👩 หญิง',
+    other: '⚧ อื่นๆ',
+    step2Title: '🎯 เป้าหมายและไลฟ์สไตล์',
+    goalLabel: '🎯 เป้าหมายสุขภาพ',
     goalHelper: 'เลือกเป้าหมายหลักของคุณ',
     goalOptions: {
-      weight_loss: 'ลดน้ำหนัก',
-      weight_gain: 'เพิ่มน้ำหนัก',
-      muscle_gain: 'เพิ่มกล้ามเนื้อ',
-      maintenance: 'รักษาน้ำหนัก',
-      general_health: 'ปรับสมดุลสุขภาพทั่วไป',
+      lose_weight: '🏃‍♀️ ลดน้ำหนัก',
+      maintain_weight: '⚖️ คงที่',
+      gain_weight: '📈 เพิ่มน้ำหนัก',
+      build_muscle: '💪 เพิ่มกล้ามเนื้อ',
+      general_health: '🌱 สุขภาพโดยรวม',
+      improve_digestion: '🥗 ปรับปรุงระบบย่อยอาหาร',
+      increase_energy: '⚡ เพิ่มพลังงาน',
+      manage_stress: '🧘 จัดการความเครียด',
+      better_sleep: '😴 นอนหลับดีขึ้น',
+      learn_recipes: '👨‍🍳 เรียนรู้สูตรอาหารใหม่',
+      special_diet: '🏥 ดูแลอาหารเฉพาะโรค', // (เช่น เบาหวาน, ความดัน)
     },
-    activityLevelLabel: 'ระดับกิจกรรม',
-    activityLevelHelper: 'คุณเคลื่อนไหวร่างกายมากน้อยแค่ไหนในแต่ละวัน?',
+    activityLevelLabel: '🏃‍♂️ ระดับกิจกรรม',
+    activityLevelHelper: 'เลือกระดับการออกกำลังกายของคุณเฉลี่ยต่อสัปดาห์',
     activityLevelOptions: {
-      sedentary: 'ไม่ออกกำลังกาย (นั่งทำงาน)',
-      light: 'เบา (ออกกำลังกาย 1-2 วัน/สัปดาห์)',
-      moderate: 'ปานกลาง (ออกกำลังกาย 3-5 วัน/สัปดาห์)',
-      active: 'หนัก (ออกกำลังกาย 6-7 วัน/สัปดาห์)',
-      very_active: 'หนักมาก (ทำงานใช้แรงงาน / ออกกำลังกาย 2 ครั้ง/วัน)',
+      sedentary: '📱 นั่งทำงานเป็นหลัก (ไม่ได้ออกกำลังกาย)',
+      light: '🚶 เดินบ้าง / ออกกำลังเบา 1-3 วัน/สัปดาห์',
+      moderate: '🏊 ออกกำลังปานกลาง 3-5 วัน/สัปดาห์',
+      active: '🏋️ ออกกำลังหนัก 6-7 วัน/สัปดาห์',
+      very_active: '🚴‍♂️ ทำงานใช้แรง/ออกกำลัง 2 รอบ/วัน',
     },
-    dietTypeLabel: 'รูปแบบการทานอาหาร',
-    dietTypeHelper: 'คุณมีรูปแบบการทานอาหารแบบใดเป็นพิเศษหรือไม่?',
+    dietTypeLabel: '🍽️ รูปแบบอาหาร',
+    dietTypeHelper: 'เลือกรูปแบบการทานอาหารที่คุณสนใจหรือทานเป็นประจำ',
     dietTypeOptions: {
-      normal: 'ทั่วไป (Normal)',
-      if_16_8: 'IF 16/8',
-      if_5_2: 'IF 5:2',
-      keto: 'คีโต (Keto)',
-      low_carb: 'Low-carb',
-      paleo: 'Paleo',
-      vegetarian: 'มังสวิรัติ (Vegetarian)',
-      vegan: 'เจ / วีแกน (Vegan)',
-      mediterranean: 'เมดิเตอร์เรเนียน',
-      high_protein: 'โปรตีนสูง',
+      normal: '🍽️ อาหารทั่วไป',
+      keto: '🥑 คีโตเจนิค (ไขมันสูง-คาร์บต่ำ)',
+      vegetarian: '🥗 มังสวิรัติ',
+      vegan: '🌱 วีแกน/เจ',
+      low_carb: '🥦 คาร์โบไฮเดรตต่ำ',
+      high_protein: '🥩 โปรตีนสูง',
+      if_16_8: '⏱️ IF (16/8)',
+      if_5_2: '📅 IF (5:2)',
+      paleo: '🦴 พาเลโอ',
+      mediterranean: '🫒 เมดิเตอร์เรเนียน',
+      gluten_free: '🌾 ปลอดกลูเตน',
+      dairy_free: '🥛 ไม่ทานผลิตภัณฑ์จากนม',
+      halal: '☪️ ฮาลาล',
+      kosher: '✡️ โคเชอร์',
     },
-    step3Title: 'สุขภาพและข้อจำกัด',
-    healthConditionsLabel: 'โรคประจำตัว (เลือกได้หลายข้อ ถ้ามี)',
-    foodAllergiesLabel: 'แพ้อาหาร / ข้อจำกัดด้านอาหาร (เลือกได้หลายข้อ ถ้ามี)',
-    step4Title: 'ข้อมูลเพิ่มเติม',
-    ethicalConsiderationsLabel: 'ศาสนา / แนวทางจริยธรรม (เลือกได้หลายข้อ)',
-    pregnancyStatusLabel: 'การตั้งครรภ์ / ให้นมบุตร',
-    pregnancyStatusHelper: 'กรุณาระบุหากคุณกำลังตั้งครรภ์หรือให้นมบุตร',
+    step3Title: '⚕️ สุขภาพและข้อจำกัด',
+    healthConditionsLabel: '🏥 โรคประจำตัว (ถ้ามี)',
+    foodAllergiesLabel: '⚠️ อาหารที่แพ้/ไม่ทาน (ถ้ามี)',
+    step4Title: '🍲 ไลฟ์สไตล์และความชอบ',
+    ethicalConsiderationsLabel: '🙏 ข้อพิจารณาด้านศาสนา/แนวทางจริยธรรม',
+    pregnancyStatusLabel: '👶 สถานะการตั้งครรภ์/ให้นมบุตร',
+    pregnancyStatusHelper: 'เลือกสถานะปัจจุบันของคุณ',
     pregnancyOptions: {
-      not_applicable: 'ไม่ใช่ / ไม่ระบุ',
-      pregnant: 'กำลังตั้งครรภ์',
-      lactating: 'ให้นมบุตร',
+      not_applicable: '➖ ไม่เกี่ยวข้อง',
+      pregnant: '🤰 กำลังตั้งครรภ์',
+      lactating: '🍼 กำลังให้นมบุตร',
     },
-    preferredCuisineLabel: 'วัฒนธรรมอาหารที่ชอบ (เลือกได้หลายข้อ)',
-    preferredFlavorProfilesLabel: 'รสชาติที่ชอบ (เลือกได้หลายข้อ)',
-    step5Title: 'ข้อมูลทางกายภาพ',
-    weightLabel: 'น้ำหนัก (กก.)',
+    preferredCuisineLabel: '🍜 วัฒนธรรมอาหารที่ชื่นชอบ',
+    preferredFlavorProfilesLabel: '🧂 รสชาติอาหารที่ชื่นชอบ',
+    step5Title: '📏 ข้อมูลร่างกาย',
+    weightLabel: '⚖️ น้ำหนัก (กก.)',
     weightHelper: 'ระบุน้ำหนักปัจจุบันของคุณ',
-    heightLabel: 'ส่วนสูง (ซม.)',
+    heightLabel: '📏 ส่วนสูง (ซม.)',
     heightHelper: 'ระบุส่วนสูงปัจจุบันของคุณ',
-    bmiLabel: 'BMI',
-    bmiCalculatedLabel: 'BMI ของคุณคือ {bmiValue} ({status})',
-    step6Title: 'สรุปและบันทึก',
-    summaryTitle: 'สรุปข้อมูลของคุณ',
-    targetWeightLabel: 'น้ำหนักเป้าหมาย (กก.)',
-    calculatedCaloriesLabel: 'แคลอรี่ที่แนะนำต่อวัน',
-    profileUpdatedSuccess: 'อัปเดตโปรไฟล์สำเร็จ!',
+    bmiLabel: '📊 BMI:',
+    bmiCalculatedLabel: '📊 ค่า BMI:',
+    step6Title: '✅ ยืนยันข้อมูล',
+    summaryTitle: '📋 สรุปข้อมูลโปรไฟล์',
+    targetWeightLabel: '🎯 น้ำหนักเป้าหมาย (กก.)',
+    calculatedCaloriesLabel: '🔥 พลังงานที่แนะนำ (kcal)',
+    profileUpdatedSuccess: '✅ บันทึกข้อมูลสำเร็จแล้ว',
   },
   en: {
-    appName: 'AI Nutritionist Health Profile',
-    userProfileTitle: 'User Profile',
-    loadingLiff: 'Initializing LIFF...',
-    loadingProfile: 'Loading profile data...',
-    saveChangesButton: 'Save Changes',
-    editProfileButton: 'Edit Profile',
-    nextButton: 'Next',
-    backButton: 'Back',
-    cancelButton: 'Cancel',
-    stepOutOf: 'Step {current} of {total}',
-    liffIdMissingError: 'Configuration error: LIFF ID is missing.',
-    liffInitError: 'LIFF Initialization failed: {message}',
-    apiFetchError: 'Failed to load app profile: {message}',
-    apiSaveError: 'Failed to save profile: {message}',
-    idTokenMissingError: 'Cannot save: ID Token is missing.',
-    welcomeMessage: 'Welcome, {name}!',
-    lineUserIdLabel: 'LINE User ID',
-    idTokenLabel: 'ID Token (start)',
-    apiProfileDataTitle: 'API Profile Data (from /api/users/me):',
-    noApiProfileData: 'No profile data loaded from API yet or API call failed.',
-    step1Title: 'Personal Info',
-    languageLabel: 'Response Language',
-    languageHelper: 'Select the language for AI responses.',
-    nicknameLabel: 'Nickname (for AI)',
-    nicknameHelper: 'How should we call you?',
-    birthdateLabel: 'Birthdate',
-    birthdateHelper: 'Select your birthdate to calculate age.',
-    ageLabel: 'Age (Years)',
-    genderLabel: 'Gender',
-    genderHelper: 'Specify your gender.',
-    male: 'Male',
-    female: 'Female',
-    other: 'Other/Prefer not to say',
-    step2Title: 'Goals & Lifestyle',
-    goalLabel: 'Health Goal',
-    goalHelper: 'Choose your primary health goal.',
+    appName: 'My Profile',
+    userProfileTitle: '⚙️ Edit Profile',
+    nutritionReportTitle: '📊 Nutrition Report',
+    loadingLiff: '⏳ Loading LIFF...',
+    loadingProfile: '⏳ Loading profile...',
+    saveChangesButton: '💾 Save Changes',
+    editProfileButton: '✏️ Edit Profile',
+    nextButton: 'Next ➡️',
+    backButton: '⬅️ Back',
+    cancelButton: '❌ Cancel',
+    stepOutOf: (current, total) => `Step ${current} of ${total}`,
+    liffIdMissingError: '❗️ LIFF ID is not set.',
+    liffInitError: '❗️ Error initializing LIFF.',
+    apiFetchError: '❗️ Could not load profile data.',
+    apiSaveError: '❗️ Could not save profile data.',
+    idTokenMissingError: '❗️ ID Token not found.',
+    welcomeMessage: '👋 Welcome!',
+    lineUserIdLabel: 'LINE User ID:',
+    idTokenLabel: 'ID Token (for testing):',
+    apiProfileDataTitle: 'Profile Data:',
+    noApiProfileData: '✨ Welcome! Please fill in your information.',
+    step1Title: '👤 Basic Information',
+    languageLabel: '🌐 Language',
+    languageHelper: 'Select your display language',
+    nicknameLabel: '😊 Nickname',
+    nicknameHelper: 'Your preferred name',
+    birthdateLabel: '📅 Birthdate',
+    birthdateHelper: 'Select your date of birth',
+    ageLabel: '🎂 Age',
+    genderLabel: '👥 Gender',
+    genderHelper: 'Select your gender (used for energy calculations)',
+    male: '👨 Male',
+    female: '👩 Female',
+    other: '⚧ Other',
+    step2Title: '🎯 Goals & Lifestyle',
+    goalLabel: '🎯 Health Goal',
+    goalHelper: 'Select your primary health goal',
     goalOptions: {
-      weight_loss: 'Weight Loss',
-      weight_gain: 'Weight Gain',
-      muscle_gain: 'Muscle Gain',
-      maintenance: 'Weight Maintenance',
-      general_health: 'General Health Improvement',
+      lose_weight: '🏃‍♀️ Weight Loss',
+      maintain_weight: '⚖️ Maintain',
+      gain_weight: '📈 Weight Gain',
+      build_muscle: '💪 Muscle Gain',
+      general_health: '🌱 General Health',
+      improve_digestion: '🥗 Improve Digestion',
+      increase_energy: '⚡ Increase Energy',
+      manage_stress: '🧘 Manage Stress',
+      better_sleep: '😴 Better Sleep',
+      learn_recipes: '👨‍🍳 Learn New Recipes',
+      special_diet: '🏥 Manage Special Diet',
     },
-    activityLevelLabel: 'Activity Level',
-    activityLevelHelper: 'How active are you on a daily basis?',
+    activityLevelLabel: '🏃‍♂️ Activity Level',
+    activityLevelHelper: 'Select your weekly exercise level',
     activityLevelOptions: {
-      sedentary: 'Sedentary (office job)',
-      light: 'Light (exercise 1-2 days/week)',
-      moderate: 'Moderate (exercise 3-5 days/week)',
-      active: 'Active (exercise 6-7 days/week)',
-      very_active: 'Very Active (hard physical work / exercise 2x/day)',
+      sedentary: '📱 Sedentary (little or no exercise)',
+      light: '🚶 Light exercise 1-3 days/week',
+      moderate: '🏊 Moderate exercise 3-5 days/week',
+      active: '🏋️ Hard exercise 6-7 days/week',
+      very_active: '🚴‍♂️ Physical job & hard exercise',
     },
-    dietTypeLabel: 'Dietary Pattern',
-    dietTypeHelper: 'Do you follow any specific dietary pattern?',
+    dietTypeLabel: '🍽️ Dietary Preferences',
+    dietTypeHelper: 'Select diets you are interested in or follow',
     dietTypeOptions: {
-      normal: 'Normal',
-      if_16_8: 'IF 16/8',
-      if_5_2: 'IF 5:2',
-      keto: 'Keto',
-      low_carb: 'Low-carb',
-      paleo: 'Paleo',
-      vegetarian: 'Vegetarian',
-      vegan: 'Vegan',
-      mediterranean: 'Mediterranean',
-      high_protein: 'High Protein',
+      normal: '🍽️ Normal Diet',
+      keto: '🥑 Ketogenic',
+      vegetarian: '🥗 Vegetarian',
+      vegan: '🌱 Vegan',
+      low_carb: '🥦 Low Carb',
+      high_protein: '🥩 High Protein',
+      if_16_8: '⏱️ IF (16/8)',
+      if_5_2: '📅 IF (5:2)',
+      paleo: '🦴 Paleo',
+      mediterranean: '🫒 Mediterranean',
+      gluten_free: '🌾 Gluten-Free',
+      dairy_free: '🥛 Dairy-Free',
+      halal: '☪️ Halal',
+      kosher: '✡️ Kosher',
     },
-    step3Title: 'Health & Restrictions',
-    healthConditionsLabel: 'Health Conditions (select multiple if any)',
-    foodAllergiesLabel:
-      'Food Allergies / Restrictions (select multiple if any)',
-    step4Title: 'Additional Preferences',
-    ethicalConsiderationsLabel:
-      'Ethical/Religious Food Considerations (select multiple)',
-    pregnancyStatusLabel: 'Pregnancy / Lactation Status',
-    pregnancyStatusHelper: 'Please specify if you are pregnant or lactating.',
+    step3Title: '⚕️ Health & Restrictions',
+    healthConditionsLabel: '🏥 Health Conditions (if any)',
+    foodAllergiesLabel: '⚠️ Food Allergies/Restrictions (if any)',
+    step4Title: '🍲 Lifestyle & Preferences',
+    ethicalConsiderationsLabel: '🙏 Religious/Ethical Considerations',
+    pregnancyStatusLabel: '👶 Pregnancy/Lactation Status',
+    pregnancyStatusHelper: 'Select your current status',
     pregnancyOptions: {
-      not_applicable: 'Not Applicable / Prefer not to say',
-      pregnant: 'Pregnant',
-      lactating: 'Lactating',
+      not_applicable: '➖ Not Applicable',
+      pregnant: '🤰 Pregnant',
+      lactating: '🍼 Lactating',
     },
-    preferredCuisineLabel: 'Preferred Cuisines (select multiple)',
-    preferredFlavorProfilesLabel: 'Preferred Flavor Profiles (select multiple)',
-    step5Title: 'Physical Information',
-    weightLabel: 'Weight (kg)',
-    weightHelper: 'Enter your current weight.',
-    heightLabel: 'Height (cm)',
-    heightHelper: 'Enter your current height.',
-    bmiLabel: 'BMI',
-    bmiCalculatedLabel: 'Your BMI is {bmiValue} ({status})',
-    step6Title: 'Summary & Save',
-    summaryTitle: 'Your Profile Summary',
-    targetWeightLabel: 'Target Weight (kg)',
-    calculatedCaloriesLabel: 'Recommended Daily Calories',
-    profileUpdatedSuccess: 'Profile updated successfully!',
+    preferredCuisineLabel: '🍜 Preferred Cuisine Types',
+    preferredFlavorProfilesLabel: '🧂 Preferred Flavor Profiles',
+    step5Title: '📏 Body Metrics',
+    weightLabel: '⚖️ Weight (kg)',
+    weightHelper: 'Enter your current weight',
+    heightLabel: '📏 Height (cm)',
+    heightHelper: 'Enter your current height',
+    bmiLabel: '📊 BMI:',
+    bmiCalculatedLabel: '📊 Calculated BMI:',
+    step6Title: '✅ Review & Confirm',
+    summaryTitle: '📋 Profile Summary',
+    targetWeightLabel: '🎯 Target Weight (kg)',
+    calculatedCaloriesLabel: '🔥 Recommended Calories (kcal)',
+    profileUpdatedSuccess: '✅ Profile updated successfully!',
   },
 }
 
-// Helper function to render profile items
 const ProfileListItem: React.FC<{
   label: string
   value?: string | string[] | number | null
 }> = ({ label, value }) => {
-  if (
-    value === undefined ||
-    value === null ||
-    (Array.isArray(value) && value.length === 0)
-  ) {
-    return null // Don't render if value is not set or an empty array
+  let displayValue: string | React.ReactNode = 'N/A'
+  if (value !== undefined && value !== null) {
+    if (Array.isArray(value)) {
+      displayValue = value.join(', ') || 'N/A'
+    } else if (typeof value === 'number') {
+      displayValue = value.toString()
+    } else if (typeof value === 'string' && value.trim() !== '') {
+      displayValue = value
+    }
   }
-  const displayValue = Array.isArray(value) ? value.join(', ') : String(value)
+
+  // Special handling for age to show "ปี" or "years"
+  if (label === translations.th.ageLabel && typeof value === 'number') {
+    displayValue = `${value} ปี`
+  } else if (label === translations.en.ageLabel && typeof value === 'number') {
+    displayValue = `${value} years`
+  }
+
   return (
-    <>
-      <ListItem>
-        <ListItemText primary={label} secondary={displayValue || 'N/A'} />
-      </ListItem>
-      <Divider component="li" />
-    </>
+    <Paper
+      variant="outlined"
+      sx={{ p: 1.5, mb: 1, display: 'flex', justifyContent: 'space-between' }}
+    >
+      <Typography variant="body1" color="text.secondary">
+        {label}
+      </Typography>
+      <Typography
+        variant="body1"
+        sx={{ textAlign: 'right', fontWeight: 'medium' }}
+      >
+        {displayValue}
+      </Typography>
+    </Paper>
   )
 }
 
-// Define options for multi-select fields
+// Options for Select components (example)
+const goalOptions = [
+  { value: 'lose_weight', labelTh: 'ลดน้ำหนัก', labelEn: 'Weight Loss' },
+  { value: 'gain_weight', labelTh: 'เพิ่มน้ำหนัก', labelEn: 'Weight Gain' },
+  { value: 'build_muscle', labelTh: 'เพิ่มกล้ามเนื้อ', labelEn: 'Muscle Gain' },
+  {
+    value: 'maintain_weight',
+    labelTh: 'รักษาน้ำหนัก',
+    labelEn: 'Maintain Weight',
+  },
+  {
+    value: 'general_health',
+    labelTh: 'ปรับสมดุลสุขภาพทั่วไป',
+    labelEn: 'General Health Balance',
+  },
+]
+
+// Food allergies options
+const foodAllergyOptions = [
+  { value: 'none', labelTh: 'ไม่มีแพ้', labelEn: 'No allergies' },
+  { value: 'peanuts', labelTh: 'ถั่วลิสง', labelEn: 'Peanuts' },
+  { value: 'dairy', labelTh: 'นมวัว', labelEn: 'Dairy' },
+  { value: 'gluten', labelTh: 'แป้งสาลี / กลูเตน', labelEn: 'Gluten' },
+  { value: 'seafood', labelTh: 'อาหารทะเล', labelEn: 'Seafood' },
+  { value: 'eggs', labelTh: 'ไข่', labelEn: 'Eggs' },
+  { value: 'other', labelTh: 'อื่นๆ', labelEn: 'Others' },
+]
+
+// Health conditions options
 const healthConditionOptions = [
+  { value: 'none', labelTh: 'ไม่มี', labelEn: 'None' },
   { value: 'diabetes', labelTh: 'เบาหวาน', labelEn: 'Diabetes' },
   {
     value: 'hypertension',
@@ -394,88 +536,114 @@ const healthConditionOptions = [
   { value: 'kidney_disease', labelTh: 'โรคไต', labelEn: 'Kidney Disease' },
   { value: 'heart_disease', labelTh: 'โรคหัวใจ', labelEn: 'Heart Disease' },
   {
-    value: 'hyperlipidemia',
+    value: 'high_cholesterol',
     labelTh: 'ไขมันในเลือดสูง',
-    labelEn: 'Hyperlipidemia',
+    labelEn: 'High Cholesterol',
   },
-  { value: 'gerd', labelTh: 'โรคกรดไหลย้อน', labelEn: 'GERD' },
-  { value: 'ibs', labelTh: 'โรคลำไส้แปรปรวน', labelEn: 'IBS' },
-  { value: 'gout', labelTh: 'โรคเกาต์', labelEn: 'Gout' },
-  // { value: 'none', label: 'ไม่มี' }
+  { value: 'other', labelTh: 'อื่นๆ', labelEn: 'Others' },
 ]
 
-const foodAllergyOptions = [
-  { value: 'peanut', labelTh: 'ถั่วลิสง', labelEn: 'Peanut' },
-  { value: 'tree_nuts', labelTh: 'ถั่วเปลือกแข็งอื่นๆ', labelEn: 'Tree Nuts' },
-  { value: 'dairy', labelTh: 'นมวัว', labelEn: 'Dairy' },
-  { value: 'gluten', labelTh: 'กลูเตน', labelEn: 'Gluten' },
-  {
-    value: 'seafood_shellfish',
-    labelTh: 'อาหารทะเล (กุ้ง, หอย, ปู)',
-    labelEn: 'Seafood (Shellfish)',
-  },
-  {
-    value: 'seafood_fish',
-    labelTh: 'อาหารทะเล (ปลา)',
-    labelEn: 'Seafood (Fish)',
-  },
-  { value: 'egg', labelTh: 'ไข่', labelEn: 'Egg' },
-  { value: 'soy', labelTh: 'ถั่วเหลือง', labelEn: 'Soy' },
-  { value: 'sesame', labelTh: 'งา', labelEn: 'Sesame' },
-  { value: 'mustard', labelTh: 'มัสตาร์ด', labelEn: 'Mustard' },
-  { value: 'celery', labelTh: 'ขึ้นฉ่ายฝรั่ง (Celery)', labelEn: 'Celery' },
-  {
-    value: 'sulfites',
-    labelTh: 'ซัลไฟต์ (สารกันบูดในไวน์, ผลไม้แห้ง)',
-    labelEn: 'Sulfites',
-  },
-  // { value: 'none', label: 'ไม่มีแพ้ / ไม่มีข้อจำกัด' }
-]
-
+// Ethical considerations options
 const ethicalConsiderationOptions = [
-  {
-    value: 'vegetarian_jain',
-    labelTh: 'ทานอาหารเจ',
-    labelEn: 'Jain Vegetarian',
-  },
+  { value: 'none', labelTh: 'ไม่ระบุ', labelEn: 'Not specified' },
+  { value: 'vegetarian', labelTh: 'ทานอาหารเจ', labelEn: 'Vegetarian' },
   { value: 'halal', labelTh: 'ฮาลาล', labelEn: 'Halal' },
-  { value: 'no_beef', labelTh: 'ไม่ทานเนื้อวัว', labelEn: 'No Beef' },
+  { value: 'no_beef', labelTh: 'ไม่ทานเนื้อวัว', labelEn: 'No beef' },
+  { value: 'other', labelTh: 'อื่นๆ', labelEn: 'Others' },
 ]
 
-const cuisineOptions = [
+// Cuisine preferences options
+const cuisinePreferenceOptions = [
   { value: 'thai', labelTh: 'ไทย', labelEn: 'Thai' },
   { value: 'japanese', labelTh: 'ญี่ปุ่น', labelEn: 'Japanese' },
   { value: 'western', labelTh: 'ตะวันตก', labelEn: 'Western' },
   { value: 'chinese', labelTh: 'จีน', labelEn: 'Chinese' },
   {
-    value: 'indian_arabic',
+    value: 'indian_arab',
     labelTh: 'อินเดีย / อาหรับ',
-    labelEn: 'Indian / Arabic',
+    labelEn: 'Indian / Arab',
   },
-  {
-    value: 'other_cuisine',
-    labelTh: 'อื่นๆ (โปรดระบุในรายละเอียดเพิ่มเติม หากจำเป็น)',
-    labelEn: 'Other Cuisine (Please specify in additional details if needed)',
-  }, // Simple "Other"
+  { value: 'other', labelTh: 'อื่นๆ', labelEn: 'Others' },
 ]
 
-const flavorProfileOptions = [
-  { value: 'spicy_hot', labelTh: 'เผ็ดจัด', labelEn: 'Very Spicy' },
-  { value: 'mild_flavor', labelTh: 'รสกลาง', labelEn: 'Mild Flavor' },
-  { value: 'bland', labelTh: 'จืด', labelEn: 'Bland' },
+// Flavor preferences options
+const flavorPreferenceOptions = [
+  { value: 'very_spicy', labelTh: 'เผ็ดจัด', labelEn: 'Very spicy' },
+  { value: 'medium', labelTh: 'รสกลาง', labelEn: 'Medium' },
+  { value: 'mild', labelTh: 'จืด', labelEn: 'Mild' },
   {
-    value: 'low_sugar_salt',
-    labelTh: 'หวานน้อย / เค็มน้อย',
-    labelEn: 'Low Sugar / Low Salt',
+    value: 'sweet_low_salt',
+    labelTh: 'หวาน / เค็มน้อย',
+    labelEn: 'Sweet / Low salt',
   },
   {
-    value: 'non_oily_fried',
-    labelTh: 'ไม่ชอบมัน / ของทอด',
-    labelEn: 'Non-Oily / Non-Fried',
+    value: 'no_oily_fried',
+    labelTh: 'ไม่ชอบมัน / ทอด',
+    labelEn: 'No oily / fried',
+  },
+  { value: 'other', labelTh: 'อื่นๆ', labelEn: 'Others' },
+]
+
+const activityLevelOptionsList = [
+  { value: 'sedentary', labelTh: 'ไม่ออกกำลังกายเลย', labelEn: 'Sedentary' },
+  {
+    value: 'light',
+    labelTh: 'ออกกำลังกายเบาๆ 1-3 วัน/สัปดาห์',
+    labelEn: 'Lightly active',
+  },
+  {
+    value: 'moderate',
+    labelTh: 'ออกกำลังกายปานกลาง 3-5 วัน/สัปดาห์',
+    labelEn: 'Moderately active',
+  },
+  {
+    value: 'active',
+    labelTh: 'ออกกำลังกายหนัก 6-7 วัน/สัปดาห์',
+    labelEn: 'Very active',
+  },
+  {
+    value: 'very_active',
+    labelTh: 'ออกกำลังกายหนักมาก (นักกีฬา)',
+    labelEn: 'Super active',
   },
 ]
 
-// Helper function to get localized option label
+const dietTypeOptionsList = [
+  { value: 'normal', labelTh: 'อาหารทั่วไป', labelEn: 'Normal Diet' },
+  { value: 'keto', labelTh: 'คีโตเจนิค', labelEn: 'Ketogenic' },
+  { value: 'vegetarian', labelTh: 'มังสวิรัติ', labelEn: 'Vegetarian' },
+  { value: 'vegan', labelTh: 'วีแกน', labelEn: 'Vegan' },
+  { value: 'low_carb', labelTh: 'คาร์โบไฮเดรตต่ำ', labelEn: 'Low Carb' },
+  { value: 'high_protein', labelTh: 'โปรตีนสูง', labelEn: 'High Protein' },
+  { value: 'if_16_8', labelTh: 'IF (16/8)', labelEn: 'IF (16/8)' },
+  { value: 'if_5_2', labelTh: 'IF (5:2)', labelEn: 'IF (5:2)' },
+  { value: 'paleo', labelTh: 'พาเลโอ', labelEn: 'Paleo' },
+  {
+    value: 'mediterranean',
+    labelTh: 'เมดิเตอร์เรเนียน',
+    labelEn: 'Mediterranean',
+  },
+  { value: 'gluten_free', labelTh: 'ปลอดกลูเตน', labelEn: 'Gluten-Free' },
+  {
+    value: 'dairy_free',
+    labelTh: 'ไม่ทานผลิตภัณฑ์จากนม',
+    labelEn: 'Dairy-Free',
+  },
+  { value: 'halal', labelTh: 'ฮาลาล', labelEn: 'Halal' },
+  { value: 'kosher', labelTh: 'โคเชอร์', labelEn: 'Kosher' },
+]
+
+const pregnancyOptionsList = [
+  {
+    value: 'not_applicable',
+    labelTh: 'ไม่เกี่ยวข้อง',
+    labelEn: 'Not Applicable',
+  },
+  { value: 'pregnant', labelTh: 'กำลังตั้งครรภ์', labelEn: 'Pregnant' },
+  { value: 'lactating', labelTh: 'กำลังให้นมบุตร', labelEn: 'Lactating' },
+]
+
+// Get localized label for select options
 const getLocalizedOptionLabel = (
   option: { value: string; labelTh: string; labelEn: string },
   lang: 'th' | 'en',
@@ -483,338 +651,663 @@ const getLocalizedOptionLabel = (
   return lang === 'th' ? option.labelTh : option.labelEn
 }
 
+const LiffIdHandler: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [error] = useState<string | null>(null)
+
+  if (error) {
+    return (
+      <Container
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh',
+        }}
+      >
+        <Alert severity="error">{error}</Alert>
+      </Container>
+    )
+  }
+  return <>{children}</>
+}
+
+interface WindowWithLiff extends Window {
+  liff?: LiffType & { [key: string]: any } // Make liff optional and allow other properties
+}
+
 function App() {
-  const [lineLiffProfile, setLineLiffProfile] = useState<Profile | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [liffObject, setLiffObject] = useState<LiffType | null>(null)
+  const [isLiffSdkReady, setIsLiffSdkReady] = useState(false)
   const [isLiffInitialized, setIsLiffInitialized] = useState(false)
+  const [idToken, setIdToken] = useState<string | null>(null)
+  const [lineUserId, setLineUserId] = useState<string | null>(null)
+  const [lineProfile, setLineProfile] = useState<LiffProfile | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState<boolean>(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [errorCount, setErrorCount] = useState<number>(0)
+  const [hasInitiatedLoad, setHasInitiatedLoad] = useState<boolean>(false) // เพิ่ม state นี้เพื่อแทน window.hasInitiatedLoad
+
   const [userProfileFromApi, setUserProfileFromApi] =
     useState<SharedUserProfileDto | null>(null)
-  const [isLoadingApi, setIsLoadingApi] = useState(false)
-  const [isEditMode, setIsEditMode] = useState(false)
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true)
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+
   const [currentLang, setCurrentLang] = useState<'th' | 'en'>('th')
-  const T = useMemo(() => translations[currentLang], [currentLang])
-
-  const initialFormData: Partial<SharedUserProfileDto> = {
-    language: 'th',
-    gender: 'not_specified' as Gender,
-    goal: 'maintenance' as SharedUserProfileDto['goal'],
-    activityLevel: 'moderate' as ActivityLevel,
-    dietType: 'normal' as DietType,
-    healthConditions: [],
-    foodAllergies: [],
-    ethicalFoodConsiderations: [],
-    pregnancyLactationStatus: 'not_applicable' as PregnancyLactationStatus,
-    preferredCuisine: [],
-    preferredFlavorProfiles: [],
-  }
-  const [formData, setFormData] =
-    useState<Partial<SharedUserProfileDto>>(initialFormData)
-  const [birthDate, setBirthDate] = useState<Date | null>(null)
-
+  const [isEditMode, setIsEditMode] = useState(false)
   const [currentStep, setCurrentStep] = useState(1)
-  const totalSteps = 6
+  const [formData, setFormData] = useState<Partial<SharedUserProfileDto>>({})
 
-  // Helper function for API calls with token refresh and retry logic
-  const fetchWithTokenRetry = async (
-    url: string,
-    options: RequestInit = {},
-    retryCount = 0,
-    maxRetries = 1, // Only retry once for token expiry
-  ): Promise<Response> => {
-    const currentIdToken = liff.getIDToken()
-    if (!currentIdToken) {
-      // This case should ideally be handled before calling, e.g. by ensuring liff.isLoggedIn()
-      // and that liff.getIDToken() is available.
-      throw new Error('LIFF ID Token is not available.')
-    }
-    console.log('Current ID Token (raw) for fetch:', currentIdToken)
-    console.log('Decoded ID Token for fetch:', parseJwt(currentIdToken))
+  // State for checkbox arrays
+  const [selectedFoodAllergies, setSelectedFoodAllergies] = useState<string[]>(
+    [],
+  )
+  const [selectedHealthConditions, setSelectedHealthConditions] = useState<
+    string[]
+  >([])
+  const [selectedEthicalConsiderations, setSelectedEthicalConsiderations] =
+    useState<string[]>([])
+  const [selectedCuisinePreferences, setSelectedCuisinePreferences] = useState<
+    string[]
+  >([])
+  const [selectedFlavorPreferences, setSelectedFlavorPreferences] = useState<
+    string[]
+  >([])
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...options.headers,
-        'X-LINE-ID-TOKEN': currentIdToken,
-      },
-    })
+  // State for "other" text inputs
+  const [otherFoodAllergy, setOtherFoodAllergy] = useState('')
+  const [otherHealthCondition, setOtherHealthCondition] = useState('')
+  const [otherEthicalConsideration, setOtherEthicalConsideration] = useState('')
+  const [otherCuisinePreference, setOtherCuisinePreference] = useState('')
+  const [otherFlavorPreference, setOtherFlavorPreference] = useState('')
 
-    if (!response.ok) {
-      const errorText = await response.text() // Read error text once
-      if (
-        (response.status === 401 || response.status === 403) &&
-        errorText.toLowerCase().includes('expired') && // More robust check for expiry
-        retryCount < maxRetries
-      ) {
-        console.warn(
-          `ID Token expired for ${options.method || 'GET'} ${url}. Retrying (attempt ${retryCount + 1}).`,
-        )
-        await new Promise((resolve) => setTimeout(resolve, 250)) // Small delay before retry
-        return fetchWithTokenRetry(url, options, retryCount + 1, maxRetries)
-      }
-      // For other errors, or if max retries reached, throw the original error info
-      throw new Error(
-        `API Error ${response.status}: ${errorText || response.statusText}`,
-      )
-    }
-    return response
+  const T = translations[currentLang]
+
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL
+  if (process.env.NODE_ENV === 'development') {
+    console.log(
+      `[DEBUG] VITE_API_BASE_URL from env: ${import.meta.env.VITE_API_BASE_URL}`,
+    )
+    console.log('[DEBUG] apiBaseUrl in App.tsx:', apiBaseUrl)
   }
+
+  const fetchWithTokenRetry = useCallback(
+    async (url: string, options: RequestInit = {}): Promise<Response> => {
+      let currentIdToken: string | null = null
+
+      if (liffObject && liffObject.isLoggedIn()) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(
+            '[DEBUG] fetchWithTokenRetry: Attempting to get fresh ID token from liffObject.',
+          )
+        }
+        currentIdToken = liffObject.getIDToken()
+      } else {
+        console.warn(
+          '[DEBUG] fetchWithTokenRetry: liffObject not available or user not logged in. Cannot get ID token.',
+        )
+        throw new Error(
+          'LIFF not initialized or user not logged in to get ID token.',
+        )
+      }
+
+      if (!currentIdToken) {
+        console.error(
+          '[DEBUG] fetchWithTokenRetry: Failed to obtain ID token for API call.',
+        )
+        throw new Error('Failed to obtain ID token for API call.')
+      }
+
+      const baseHeaders = {
+        ...options.headers,
+        'Content-Type': 'application/json',
+        'X-LINE-ID-TOKEN': currentIdToken,
+      }
+
+      const isLocalhost = url.includes('localhost')
+      const headers = isLocalhost
+        ? baseHeaders
+        : { ...baseHeaders, 'ngrok-skip-browser-warning': 'true' }
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log(
+          '[DEBUG] fetchWithTokenRetry: Request Headers being set:',
+          headers,
+        )
+      }
+
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers,
+        })
+
+        // ตรวจสอบการตอบกลับที่เกี่ยวข้องกับ token หมดอายุ
+        if (response.status === 401 || response.status === 403) {
+          const responseText = await response.text()
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[DEBUG] Token error response:', responseText)
+          }
+
+          if (
+            responseText.includes('expired') ||
+            responseText.includes('Invalid')
+          ) {
+            if (process.env.NODE_ENV === 'development') {
+              console.log(
+                '[DEBUG] Token expired or invalid. Reloading the page...',
+              )
+            }
+
+            // แสดงข้อความแจ้งเตือนให้ผู้ใช้ทราบ
+            alert(
+              'ช่วงเวลาเข้าสู่ระบบหมดอายุ กำลังรีเฟรชหน้าเว็บเพื่อเข้าสู่ระบบใหม่',
+            )
+
+            // หากต้องการรีเฟรชหน้า
+            window.location.reload()
+
+            throw new Error(
+              'LINE login session expired. Reloading application...',
+            )
+          }
+        }
+
+        return response
+      } catch (error) {
+        console.error('[DEBUG] Fetch error:', error)
+
+        // ตรวจสอบว่าถ้าเป็นข้อผิดพลาดเกี่ยวกับการเชื่อมต่อ
+        if (
+          error instanceof TypeError &&
+          error.message.includes('Failed to fetch')
+        ) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log(
+              '[DEBUG] Network error occurred. Please check your connection.',
+            )
+          }
+        }
+
+        throw error
+      }
+    },
+    [liffObject],
+  )
 
   useEffect(() => {
-    const initializeLiffAndLoadProfile = async () => {
-      try {
-        console.log(
-          'LIFF_ID inside initializeLiffAndLoadProfile before init:',
-          LIFF_ID,
-        ) // Log it again here
-        if (!LIFF_ID) {
-          setError(T.liffIdMissingError)
-          setIsLiffInitialized(true)
-          return
+    // Wait for the LIFF SDK to load from the script tag
+    const checkLiffSdk = () => {
+      const windowWithLiff = window as WindowWithLiff
+      if (
+        windowWithLiff.liff &&
+        typeof windowWithLiff.liff.init === 'function'
+      ) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[LIFF_DEBUG] window.liff is available.')
         }
-        await liff.init({ liffId: LIFF_ID })
-        setIsLiffInitialized(true)
-
-        if (!liff.isLoggedIn()) {
-          liff.login()
-          return // liff.login() will redirect
-        }
-
-        const liffProfileData = await liff.getProfile()
-        setLineLiffProfile(liffProfileData)
-
-        // Fetch user profile from API
-        setIsLoadingApi(true)
-        try {
-          const backendApiUrl = 'http://localhost:3001/api/users/me'
-          // Log token before this specific fetch too
-          const tokenForProfileFetch = liff.getIDToken()
+        setLiffObject(windowWithLiff.liff as LiffType)
+        setIsLiffSdkReady(true)
+      } else {
+        if (process.env.NODE_ENV === 'development') {
           console.log(
-            'ID Token (raw) before /api/users/me:',
-            tokenForProfileFetch,
+            '[LIFF_DEBUG] window.liff is NOT YET available or not fully loaded, retrying...',
           )
-          console.log(
-            'Decoded ID Token before /api/users/me:',
-            parseJwt(tokenForProfileFetch),
-          )
-
-          const response = await fetchWithTokenRetry(backendApiUrl, {
-            method: 'GET',
-          })
-          const data: SharedUserProfileDto = await response.json()
-
-          setUserProfileFromApi(data)
-          setFormData({
-            ...initialFormData,
-            ...data,
-            healthConditions: data.healthConditions || [],
-            foodAllergies: data.foodAllergies || [],
-            ethicalFoodConsiderations: data.ethicalFoodConsiderations || [],
-            preferredCuisine: data.preferredCuisine || [],
-            preferredFlavorProfiles: data.preferredFlavorProfiles || [],
-          })
-          if (data.language) setCurrentLang(data.language as 'th' | 'en')
-          if (data.birthDate) setBirthDate(new Date(data.birthDate))
-          setError(null) // Clear previous errors on successful load
-        } catch (apiError: any) {
-          setError(T.apiFetchError.replace('{message}', apiError.message))
-        } finally {
-          setIsLoadingApi(false)
         }
-      } catch (e: any) {
-        setError(T.liffInitError.replace('{message}', e.message))
-        if (!isLiffInitialized) setIsLiffInitialized(true) // Ensure loading state is cleared if init fails early
+        setTimeout(checkLiffSdk, 100) // Retry after 100ms
       }
     }
-    // if (!isLiffInitialized) { // This condition might be too restrictive if LIFF can de-initialize
-    initializeLiffAndLoadProfile()
-    // }
-  }, []) // Removed T from dependency array to prevent re-fetch on language change in UI before save
-  // which is handled separately. Consider if there are other scenarios for re-init.
+    checkLiffSdk()
+  }, [])
 
-  const calculatedAge = useMemo(() => {
-    if (!birthDate) return formData.age || null
-    const today = new Date()
-    let age = today.getFullYear() - birthDate.getFullYear()
-    const m = today.getMonth() - birthDate.getMonth()
-    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-      age--
+  const initializeLiffAndLoadProfile = useCallback(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(
+        '[LIFF_DEBUG] useCallback for initializeLiffAndLoadProfile is being defined/redefined. Current lang in closure: ',
+        currentLang,
+      )
     }
-    return age
-  }, [birthDate, formData.age])
-
-  const calculatedBmi = useMemo(() => {
-    if (formData.weightKg && formData.heightCm) {
-      const heightInMeters = formData.heightCm / 100
-      if (heightInMeters > 0) {
-        return (formData.weightKg / (heightInMeters * heightInMeters)).toFixed(
-          2,
+    return async () => {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(
+          '[LIFF_DEBUG] Step 1: Entering initializeLiffAndLoadProfile (async part).',
+        )
+        console.log(
+          '[LIFF_DEBUG] Step 1.1: Current states - isLiffSdkReady:',
+          isLiffSdkReady,
+          'liffObject:',
+          !!liffObject,
+          'error:',
+          error,
+          'isLiffInitialized:',
+          isLiffInitialized,
         )
       }
+
+      if (!isLiffSdkReady || !liffObject) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(
+            '[LIFF_DEBUG] LIFF SDK not ready or liffObject is null, skipping initialization.',
+          )
+        }
+        if (!error && !isLiffInitialized)
+          setError('Waiting for LIFF SDK to load...')
+        return
+      }
+
+      const typedLiff = liffObject
+
+      if (!LIFF_ID) {
+        setError(translations[currentLang].liffIdMissingError)
+        setIsLoadingProfile(false)
+        return
+      }
+      if (process.env.NODE_ENV === 'development') {
+        console.log(
+          '[LIFF_DEBUG] Starting initializeLiffAndLoadProfile. LIFF_ID:',
+          LIFF_ID,
+        )
+      }
+
+      try {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[LIFF_DEBUG] Attempting typedLiff.init().')
+        }
+        await typedLiff.init({ liffId: LIFF_ID })
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[LIFF_DEBUG] Step 3: typedLiff.init() promise resolved.')
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        if (process.env.NODE_ENV === 'development') {
+          console.log(
+            '[LIFF_DEBUG] Step 4: Delay finished. ตรวจสอบสถานะหลังจาก init',
+          )
+        }
+        setIsLiffInitialized(true)
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[LIFF_DEBUG] Step 4.1: isLiffInitialized set to true.')
+        }
+
+        try {
+          const isLoggedIn = typedLiff.isLoggedIn()
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[LIFF_DEBUG] liff.isLoggedIn() check:', isLoggedIn)
+          }
+
+          if (!isLoggedIn) {
+            console.log(
+              '[LIFF_DEBUG] liff.isLoggedIn() is false. Calling liff.login().',
+            )
+            typedLiff.login()
+            return
+          }
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[LIFF_DEBUG] liff.isLoggedIn() is true.')
+          }
+
+          const token = typedLiff.getIDToken()
+          setIdToken(token)
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[LIFF_DEBUG] ID Token:', token ? 'Exists' : 'NULL')
+          }
+
+          // ตรวจสอบ token ว่าหมดอายุหรือยัง
+          if (token && isTokenExpired(token)) {
+            console.log(
+              '[LIFF_DEBUG] Token is expired or about to expire. Re-login required.',
+            )
+            alert(
+              'ช่วงเวลาเข้าสู่ระบบหมดอายุหรือกำลังจะหมดอายุ กำลังเข้าสู่ระบบใหม่',
+            )
+            typedLiff.login() // เข้าสู่ระบบใหม่
+            return
+          }
+
+          const profile = await typedLiff.getProfile()
+          setLineProfile(profile)
+          setLineUserId(profile.userId)
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[LIFF_DEBUG] Profile UserID:', profile.userId)
+          }
+
+          if (profile.userId && token) {
+            try {
+              console.log(
+                '[LIFF_DEBUG] Fetching API profile for user (via /api/users/me). LIFF User ID will be derived from token by backend.',
+              )
+              console.log(
+                '[LIFF_DEBUG] Step 7: About to call fetchWithTokenRetry for /api/users/me.',
+              )
+              const response = await fetchWithTokenRetry(
+                `${apiBaseUrl}/api/users/me`,
+              )
+              console.log(
+                '[LIFF_DEBUG] Step 8: fetchWithTokenRetry for /api/users/me completed. Response status:',
+                response.status,
+              )
+
+              if (!response.ok) {
+                if (response.status === 404) {
+                  console.log(
+                    '[LIFF_DEBUG] API Profile not found (404). Setting up for new user.',
+                  )
+                  setProfileError(translations[currentLang].noApiProfileData)
+                  setUserProfileFromApi(null)
+                  setFormData({
+                    lineUserId: profile.userId,
+                    displayName: profile.displayName,
+                    pictureUrl: profile.pictureUrl,
+                    language: typedLiff.getLanguage() === 'th' ? 'th' : 'en',
+                  })
+                  setIsEditMode(true)
+                  setCurrentStep(1)
+                } else {
+                  const errorData = (await response
+                    .json()
+                    .catch(() => ({}))) as {
+                    message?: string
+                  }
+                  console.error(
+                    '[LIFF_DEBUG] API Profile fetch error:',
+                    errorData,
+                  )
+                  throw new Error(
+                    errorData?.message || `API Error: ${response.status}`,
+                  )
+                }
+              } else {
+                const data = (await response.json()) as SharedUserProfileDto
+                console.log(
+                  '[LIFF_DEBUG] Step 8.1: API Profile data received and parsed:',
+                  data,
+                )
+                setUserProfileFromApi(data)
+                setFormData(data)
+                if (currentLang !== (data.language === 'th' ? 'th' : 'en')) {
+                  setCurrentLang(data.language === 'th' ? 'th' : 'en')
+                }
+              }
+            } catch (apiError: unknown) {
+              console.error(
+                '[LIFF_DEBUG] Step 8.E: API Profile Fetch Exception:',
+                apiError,
+              )
+              setProfileError(
+                `${translations[currentLang].apiFetchError}: ${
+                  (apiError as { message?: string })?.message ||
+                  'Unknown API error'
+                }`,
+              )
+              setErrorCount((prev) => prev + 1)
+            }
+          }
+        } catch (loginError) {
+          console.error(
+            '[LIFF_DEBUG] Step 4.E: Error checking login status or getting profile/token:',
+            loginError,
+          )
+          setError(
+            `${translations[currentLang].liffInitError}: ${
+              (loginError as { message?: string })?.message ||
+              'Unknown LIFF error'
+            }`,
+          )
+          setErrorCount((prev) => prev + 1)
+        }
+      } catch (initError: unknown) {
+        console.error(
+          '[LIFF_DEBUG] Step 3.E: Error during liff.init():',
+          initError,
+        )
+        setError(
+          `${translations[currentLang].liffInitError}: ${
+            (initError as { message?: string })?.message || 'Unknown LIFF error'
+          }`,
+        )
+        setErrorCount((prev) => prev + 1)
+      } finally {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(
+            '[LIFF_DEBUG] initializeLiffAndLoadProfile finally block.',
+          )
+        }
+        setIsLoadingProfile(false)
+      }
     }
-    return null
-  }, [formData.weightKg, formData.heightCm])
+  }, [
+    isLiffSdkReady,
+    liffObject,
+    apiBaseUrl,
+    currentLang,
+    error,
+    isLiffInitialized,
+    fetchWithTokenRetry,
+    setError,
+    setIsLoadingProfile,
+    setIsLiffInitialized,
+    setIdToken,
+    setLineProfile,
+    setLineUserId,
+    setProfileError,
+    setUserProfileFromApi,
+    setFormData,
+    setIsEditMode,
+    setCurrentStep,
+    setErrorCount,
+  ])
+
+  useEffect(() => {
+    console.log(
+      '[LIFF_DEBUG] useEffect for initial load. States: isLiffSdkReady:',
+      isLiffSdkReady,
+      'liffObject:',
+      !!liffObject,
+      'userProfileFromApi:',
+      !!userProfileFromApi,
+      'isLoadingProfile:',
+      isLoadingProfile,
+      'error:',
+      error,
+      'errorCount:',
+      errorCount,
+    )
+
+    const shouldAttemptLoad =
+      isLiffSdkReady &&
+      liffObject &&
+      !userProfileFromApi &&
+      errorCount < 3 &&
+      !hasInitiatedLoad // ใช้ state แทน window
+
+    if (shouldAttemptLoad) {
+      setHasInitiatedLoad(true) // ใช้ state แทน window
+
+      console.log(
+        '[LIFF_DEBUG_PINNED] Starting load sequence - first and only attempt',
+      )
+
+      const liffIdMissingErrorText = translations['en'].liffIdMissingError
+      const criticalErrors = [liffIdMissingErrorText]
+
+      console.log(
+        '[LIFF_DEBUG_PINNED] Breaking potential deadlock. Current isLoadingProfile:',
+        isLoadingProfile,
+      )
+      console.log(
+        '[LIFF_DEBUG_PINNED] Checking condition for triggering load. Error state:',
+        error,
+      )
+      const isErrorPreventingLoad =
+        error && criticalErrors.some((e) => error.startsWith(e))
+      console.log(
+        '[LIFF_DEBUG_PINNED] Is error preventing load? (error && criticalErrors.some()):',
+        isErrorPreventingLoad,
+      )
+
+      if (!error || !isErrorPreventingLoad) {
+        console.log(
+          '[LIFF_DEBUG] Triggering initial profile load logic (useEffect) despite isLoadingProfile=true.',
+        )
+        setIsLoadingProfile(true)
+        void initializeLiffAndLoadProfile()()
+      } else {
+        console.warn(
+          '[LIFF_DEBUG] Load NOT triggered because of existing error or critical error condition.',
+          { error, isErrorPreventingLoad },
+        )
+        setHasInitiatedLoad(false) // ใช้ state แทน window
+      }
+    } else if (errorCount >= 3) {
+      console.warn(
+        '[LIFF_DEBUG] Stopped retry attempts after 3 errors. Please reload manually.',
+      )
+    }
+  }, [
+    isLiffSdkReady,
+    liffObject,
+    userProfileFromApi,
+    isLoadingProfile,
+    error,
+    initializeLiffAndLoadProfile,
+    translations,
+    errorCount,
+    hasInitiatedLoad,
+  ])
+
+  // ตรวจสอบอายุของ token ทุกๆ นาที และรีเฟรชหากใกล้หมดอายุ
+  useEffect(() => {
+    if (!liffObject || !isLiffInitialized) return
+
+    // ตรวจสอบ token ทุกๆ 1 นาที
+    const tokenCheckInterval = setInterval(() => {
+      if (liffObject.isLoggedIn()) {
+        const currentToken = liffObject.getIDToken()
+        if (currentToken && isTokenExpired(currentToken)) {
+          console.log(
+            '[TOKEN_DEBUG] Token is expiring soon. Will refresh session.',
+          )
+
+          // แสดงข้อความแจ้งเตือนผู้ใช้
+          if (
+            confirm(
+              'ช่วงเวลาเข้าสู่ระบบกำลังจะหมดอายุ ต้องการเข้าสู่ระบบใหม่อัตโนมัติหรือไม่?',
+            )
+          ) {
+            // หากผู้ใช้ตกลง ทำการรีเฟรชหน้าเพื่อเข้าสู่ระบบใหม่
+            window.location.reload()
+          }
+        }
+      }
+    }, 60000) // ตรวจสอบทุก 1 นาที
+
+    return () => clearInterval(tokenCheckInterval)
+  }, [liffObject, isLiffInitialized])
+
+  useEffect(() => {
+    setFormData((prev) => ({ ...prev, language: currentLang }))
+  }, [currentLang])
 
   const getBmiStatus = (
     bmi: number | null | string,
     lang: 'th' | 'en',
   ): string => {
-    if (bmi === null) return ''
-    const bmiNum = parseFloat(bmi as string)
-    if (lang === 'th') {
-      if (bmiNum < 18.5) return 'น้ำหนักน้อย'
-      if (bmiNum < 23) return 'ปกติ'
-      if (bmiNum < 25) return 'ท้วม'
-      if (bmiNum < 30) return 'อ้วนระดับ 1'
-      return 'อ้วนระดับ 2'
-    } else {
-      if (bmiNum < 18.5) return 'Underweight'
-      if (bmiNum < 25) return 'Normal' // Standard BMI range
-      if (bmiNum < 30) return 'Overweight'
-      return 'Obese'
+    const bmiVal = typeof bmi === 'string' ? parseFloat(bmi) : bmi
+    if (bmiVal === null || isNaN(bmiVal)) return '-'
+
+    const statusesTh = {
+      underweight: 'น้ำหนักน้อยกว่าเกณฑ์',
+      normal: 'น้ำหนักตามเกณฑ์',
+      overweight: 'น้ำหนักเกินเกณฑ์ (ท้วม)',
+      obese1: 'โรคอ้วนระดับ 1 (อ้วน)',
+      obese2: 'โรคอ้วนระดับ 2 (อ้วนมาก)',
+      obese3: 'โรคอ้วนระดับ 3 (อ้วนอันตราย)',
     }
+    const statusesEn = {
+      underweight: 'Underweight',
+      normal: 'Normal weight',
+      overweight: 'Overweight',
+      obese1: 'Obesity Class 1',
+      obese2: 'Obesity Class 2',
+      obese3: 'Obesity Class 3 (Dangerously Obese)',
+    }
+    const S = lang === 'th' ? statusesTh : statusesEn
+
+    if (bmiVal < 18.5) return S.underweight
+    if (bmiVal < 23) return S.normal
+    if (bmiVal < 25) return S.overweight
+    if (bmiVal < 30) return S.obese1
+    if (bmiVal < 35) return S.obese2
+    return S.obese3
   }
 
   const getGenderDisplay = (genderKey?: Gender): string | undefined => {
     if (!genderKey) return undefined
-    if (genderKey === 'male') return T.male
-    if (genderKey === 'female') return T.female
-    // For 'not_specified', 'other', and any 'lgbtq_' values, use T.other
-    if (
-      genderKey === 'not_specified' ||
-      genderKey === 'other' ||
-      genderKey.startsWith('lgbtq_')
-    ) {
-      return T.other
-    }
-    return T.other // Fallback
+    const key = genderKey.toLowerCase()
+    if (key === 'male') return T.male
+    if (key === 'female') return T.female
+    if (key.startsWith('lgbtq_')) return T.other
+    if (key === 'other') return T.other
+    return undefined
   }
 
-  const calculatedCalories = useMemo(() => {
-    if (
-      !formData.weightKg ||
-      !formData.heightCm ||
-      !calculatedAge ||
-      !formData.gender ||
-      !formData.activityLevel
-    ) {
-      return null
-    }
-    // Mifflin-St Jeor Equation for BMR
-    let bmr
-    if (formData.gender === 'male') {
-      bmr =
-        10 * formData.weightKg +
-        6.25 * formData.heightCm -
-        5 * calculatedAge +
-        5
-    } else if (formData.gender === 'female') {
-      bmr =
-        10 * formData.weightKg +
-        6.25 * formData.heightCm -
-        5 * calculatedAge -
-        161
-    } else {
-      // For 'other' or 'not_specified', use an average or a method less dependent on binary gender
-      // Using average of male and female for simplicity, or could prompt for biological sex for calculation
-      bmr =
-        10 * formData.weightKg +
-        6.25 * formData.heightCm -
-        5 * calculatedAge -
-        78 // Average offset
-    }
-
-    let activityMultiplier = 1.2 // Default for sedentary
-    switch (formData.activityLevel) {
-      case 'light':
-        activityMultiplier = 1.375
-        break
-      case 'moderate':
-        activityMultiplier = 1.55
-        break
-      case 'active':
-        activityMultiplier = 1.725
-        break
-      case 'very_active':
-        activityMultiplier = 1.9
-        break
-    }
-    const tdee = bmr * activityMultiplier
-
-    // Adjust TDEE based on goal
-    let calorieGoal = tdee
-    switch (formData.goal) {
-      case 'weight_loss':
-        calorieGoal -= 500
-        break // Typical deficit
-      case 'weight_gain':
-        calorieGoal += 500
-        break // Typical surplus
-      case 'muscle_gain':
-        calorieGoal += 300
-        break // Smaller surplus for lean gain
-      // case 'maintenance': // No change
-      // case 'general_health': // No change, focus on quality
-    }
-    return Math.round(calorieGoal)
-  }, [
-    formData.weightKg,
-    formData.heightCm,
-    calculatedAge,
-    formData.gender,
-    formData.activityLevel,
-    formData.goal,
-  ])
-
-  const handleEditToggle = () => {
-    if (!isEditMode && userProfileFromApi) {
-      setFormData({
-        ...initialFormData,
-        ...userProfileFromApi,
-        healthConditions: userProfileFromApi.healthConditions || [],
-        foodAllergies: userProfileFromApi.foodAllergies || [],
-        ethicalFoodConsiderations:
-          userProfileFromApi.ethicalFoodConsiderations || [],
-        preferredCuisine: userProfileFromApi.preferredCuisine || [],
-        preferredFlavorProfiles:
-          userProfileFromApi.preferredFlavorProfiles || [],
-      })
-      if (userProfileFromApi.language)
-        setCurrentLang(userProfileFromApi.language as 'th' | 'en')
-      if (userProfileFromApi.birthDate)
-        setBirthDate(new Date(userProfileFromApi.birthDate))
-    } else if (isEditMode) {
-      setFormData(
-        userProfileFromApi
-          ? {
-              ...initialFormData,
-              ...userProfileFromApi,
-              healthConditions: userProfileFromApi.healthConditions || [],
-              foodAllergies: userProfileFromApi.foodAllergies || [],
-              ethicalFoodConsiderations:
-                userProfileFromApi.ethicalFoodConsiderations || [],
-              preferredCuisine: userProfileFromApi.preferredCuisine || [],
-              preferredFlavorProfiles:
-                userProfileFromApi.preferredFlavorProfiles || [],
-            }
-          : initialFormData,
-      )
-      if (userProfileFromApi?.language)
-        setCurrentLang(userProfileFromApi.language as 'th' | 'en')
-      if (userProfileFromApi?.birthDate)
-        setBirthDate(new Date(userProfileFromApi.birthDate))
-    }
-    setCurrentStep(1)
-    setIsEditMode(!isEditMode)
+  const getActivityLevelDisplay = (
+    levelKey?: ActivityLevel,
+  ): string | undefined => {
+    if (!levelKey) return undefined
+    return T.activityLevelOptions[levelKey] || undefined
   }
+
+  const getDietTypeDisplay = (dietKey?: DietType): string | undefined => {
+    if (!dietKey) return undefined
+    return T.dietTypeOptions[dietKey] || undefined
+  }
+
+  const getGoalDisplay = (goalKey?: string): string | undefined => {
+    if (!goalKey) return undefined
+    return T.goalOptions[goalKey] || undefined
+  }
+
+  const getPregnancyStatusDisplay = (
+    statusKey?: PregnancyLactationStatus,
+  ): string | undefined => {
+    if (!statusKey) return undefined
+    return T.pregnancyOptions[statusKey] || undefined
+  }
+
+  const calculatedBmi = useMemo(() => {
+    if (formData.weightKg && formData.heightCm) {
+      const heightM = formData.heightCm / 100
+      return (formData.weightKg / (heightM * heightM)).toFixed(1)
+    }
+    return null
+  }, [formData.weightKg, formData.heightCm])
+
+  const calculatedAge = useMemo(() => {
+    if (formData.birthDate && isValid(parseISO(formData.birthDate))) {
+      return differenceInYears(new Date(), parseISO(formData.birthDate))
+    }
+    return formData.age
+  }, [formData.birthDate, formData.age])
 
   const handleInputChange = (
     event: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | { name?: string; value: unknown }
     >,
   ) => {
-    const target = event.target as HTMLInputElement
-    const { name, value } = target
-    setFormData((prev) => ({ ...prev, [name as string]: value }))
+    const target = event.target as HTMLInputElement | HTMLTextAreaElement
+    const { name, value, type } = target
+
+    let processedValue: string | number | string[] | undefined = value
+    if (type === 'number') {
+      processedValue = value === '' ? undefined : Number(value)
+    }
+
+    setFormData((prev) => ({ ...prev, [name]: processedValue }))
   }
 
   const handleGenderChange = (
@@ -826,493 +1319,1240 @@ function App() {
     }
   }
 
-  const handleSelectChange = (event: any) => {
-    const { name, value } = event.target
-    if (name === 'language') {
-      setCurrentLang(value as 'th' | 'en')
-    }
+  const handleSelectChange = (event: SelectChangeEvent<any>) => {
+    // Event target มี type 'any' แต่เราสามารถตั้งค่า known type ได้
+    type SelectTargetType = { name: string; value: unknown }
+    const target = event.target as SelectTargetType
+    const name = target.name
+    const value = target.value
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleMultipleCheckboxChange = (
-    fieldName: string,
-    newValues: string[],
+  // Checkbox handling functions
+  const handleCheckboxChange = (
+    value: string,
+    selectedArray: string[],
+    setSelectedArray: React.Dispatch<React.SetStateAction<string[]>>,
   ) => {
-    setFormData((prev) => ({ ...prev, [fieldName]: newValues }))
+    if (selectedArray.includes(value)) {
+      setSelectedArray(selectedArray.filter((item) => item !== value))
+    } else {
+      setSelectedArray([...selectedArray, value])
+    }
+  }
+
+  const handleOtherInputChange = (
+    value: string,
+    setOtherValue: React.Dispatch<React.SetStateAction<string>>,
+    selectedArray: string[],
+    setSelectedArray: React.Dispatch<React.SetStateAction<string[]>>,
+  ) => {
+    setOtherValue(value)
+
+    // Auto-add "other" to selection if not already present and value is not empty
+    if (value.trim() && !selectedArray.includes('other')) {
+      setSelectedArray([...selectedArray, 'other'])
+    } else if (!value.trim() && selectedArray.includes('other')) {
+      setSelectedArray(selectedArray.filter((item) => item !== 'other'))
+    }
   }
 
   const handleSave = async () => {
-    // No need to get token here, fetchWithTokenRetry will do it
-    const profileToSave: Partial<SharedUserProfileDto> = {
-      ...formData,
-      age: calculatedAge !== null ? calculatedAge : undefined,
-      birthDate: birthDate ? birthDate.toISOString().split('T')[0] : undefined,
+    if (!lineUserId || !idToken) {
+      setSaveError(T.idTokenMissingError)
+      return
+    }
+    setIsSavingProfile(true)
+    setSaveError(null)
+    setSaveSuccess(false)
+
+    // Process checkbox selections and combine with "other" inputs
+    const processCheckboxData = (
+      selected: string[],
+      otherText: string,
+      options: Array<{ value: string; labelTh: string; labelEn: string }>,
+    ): string[] => {
+      const result: string[] = []
+
+      selected.forEach((value) => {
+        if (value === 'other' && otherText.trim()) {
+          result.push(otherText.trim())
+        } else if (value !== 'other') {
+          const option = options.find((opt) => opt.value === value)
+          result.push(
+            option
+              ? currentLang === 'th'
+                ? option.labelTh
+                : option.labelEn
+              : value,
+          )
+        }
+      })
+
+      return result
     }
 
-    // Log token before save
-    const tokenForSave = liff.getIDToken()
-    console.log('ID Token (raw) before PUT /api/users/me:', tokenForSave)
-    console.log(
-      'Decoded ID Token before PUT /api/users/me:',
-      parseJwt(tokenForSave),
-    )
+    const payload: SharedUpdateUserProfileDto = {
+      ...formData,
+      age:
+        calculatedAge !== undefined && !isNaN(calculatedAge)
+          ? calculatedAge
+          : undefined,
+      weightKg: formData.weightKg ? Number(formData.weightKg) : undefined,
+      heightCm: formData.heightCm ? Number(formData.heightCm) : undefined,
 
-    setIsLoadingApi(true)
+      // Process checkbox data
+      foodAllergies: processCheckboxData(
+        selectedFoodAllergies,
+        otherFoodAllergy,
+        foodAllergyOptions,
+      ),
+      healthConditions: processCheckboxData(
+        selectedHealthConditions,
+        otherHealthCondition,
+        healthConditionOptions,
+      ),
+      ethicalFoodConsiderations: processCheckboxData(
+        selectedEthicalConsiderations,
+        otherEthicalConsideration,
+        ethicalConsiderationOptions,
+      ),
+      preferredCuisine: processCheckboxData(
+        selectedCuisinePreferences,
+        otherCuisinePreference,
+        cuisinePreferenceOptions,
+      ),
+      preferredFlavorProfiles: processCheckboxData(
+        selectedFlavorPreferences,
+        otherFlavorPreference,
+        flavorPreferenceOptions,
+      ),
+    }
+
+    if ('lineUserId' in payload) {
+      delete (payload as Partial<SharedUserProfileDto>).lineUserId
+    }
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[PROFILE_DEBUG] Saving profile with payload:', payload)
+    }
+
     try {
-      const backendApiUrl = 'http://localhost:3001/api/users/me'
-      const response = await fetchWithTokenRetry(backendApiUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(profileToSave),
+      // เปลี่ยน endpoint ให้ตรงกับที่ใช้ในการ fetch profile
+      const response = await fetchWithTokenRetry(`${apiBaseUrl}/api/users/me`, {
+        method: 'PUT', // ยังคงใช้ PUT method
+        body: JSON.stringify(payload),
       })
-      const updatedProfile: SharedUserProfileDto = await response.json()
+
+      console.log(
+        '[PROFILE_DEBUG] Profile save response status:',
+        response.status,
+      )
+
+      if (!response.ok) {
+        let errorMessage = `API Error: ${response.status}`
+        try {
+          const errorData = (await response.json()) as { message?: string }
+          errorMessage = errorData?.message || errorMessage
+          console.error('[PROFILE_DEBUG] API save error details:', errorData)
+        } catch (jsonError) {
+          console.error(
+            '[PROFILE_DEBUG] Could not parse error response:',
+            jsonError,
+          )
+        }
+        throw new Error(errorMessage)
+      }
+
+      const updatedProfile = (await response.json()) as SharedUserProfileDto
+      console.log(
+        '[PROFILE_DEBUG] Profile updated successfully:',
+        updatedProfile,
+      )
 
       setUserProfileFromApi(updatedProfile)
-      setFormData({
-        ...initialFormData,
-        ...updatedProfile,
-        healthConditions: updatedProfile.healthConditions || [],
-        foodAllergies: updatedProfile.foodAllergies || [],
-        ethicalFoodConsiderations:
-          updatedProfile.ethicalFoodConsiderations || [],
-        preferredCuisine: updatedProfile.preferredCuisine || [],
-        preferredFlavorProfiles: updatedProfile.preferredFlavorProfiles || [],
-      })
-      if (updatedProfile.language)
-        setCurrentLang(updatedProfile.language as 'th' | 'en')
-      if (updatedProfile.birthDate)
-        setBirthDate(new Date(updatedProfile.birthDate))
+      setFormData(updatedProfile)
+      setCurrentLang(updatedProfile.language === 'th' ? 'th' : 'en')
+      setSaveSuccess(true)
       setIsEditMode(false)
       setCurrentStep(1)
-      setError(null) // Clear error on success
-      alert(T.profileUpdatedSuccess)
-    } catch (apiError: any) {
-      setError(T.apiSaveError.replace('{message}', apiError.message))
+      setTimeout(() => setSaveSuccess(false), 3000)
+    } catch (err: unknown) {
+      console.error('[PROFILE_DEBUG] Save Profile Error:', err)
+      setSaveError(
+        `${T.apiSaveError}: ${(err as { message?: string })?.message || 'Unknown error'}`,
+      )
+      setTimeout(() => setSaveError(null), 5000)
     } finally {
-      setIsLoadingApi(false)
+      setIsSavingProfile(false)
     }
   }
 
   const handleNextStep = () => setCurrentStep((prev) => prev + 1)
   const handlePrevStep = () => setCurrentStep((prev) => prev - 1)
 
-  // --- Render Logic ---
-  if (error) {
+  const navigate = useNavigate()
+  const goToNutritionReport = useCallback(() => {
+    void navigate('/nutrition-report')
+  }, [navigate])
+
+  useEffect(() => {
+    if (
+      error &&
+      (error.includes('LIFF ID') || error.includes('LIFF initialization'))
+    ) {
+      console.error(
+        'Critical LIFF error, navigation to report page might be blocked.',
+      )
+    }
+  }, [
+    error,
+    userProfileFromApi,
+    isEditMode,
+    currentStep,
+    goToNutritionReport,
+    T.apiFetchError,
+    T.liffIdMissingError,
+    T.liffInitError,
+    fetchWithTokenRetry,
+  ])
+
+  // เพิ่ม useEffect เพื่อ sync checkbox states กับข้อมูล profile ที่มีอยู่
+  useEffect(() => {
+    if (userProfileFromApi && isEditMode) {
+      // Initialize checkbox states from API data
+      if (userProfileFromApi.foodAllergies) {
+        const allergies = userProfileFromApi.foodAllergies
+        const mappedAllergies: string[] = []
+        let otherAllergies = ''
+
+        allergies.forEach((allergy) => {
+          const found = foodAllergyOptions.find(
+            (option) =>
+              option.labelTh === allergy || option.labelEn === allergy,
+          )
+          if (found) {
+            mappedAllergies.push(found.value)
+          } else {
+            otherAllergies += (otherAllergies ? ', ' : '') + allergy
+          }
+        })
+
+        if (otherAllergies) {
+          mappedAllergies.push('other')
+          setOtherFoodAllergy(otherAllergies)
+        }
+
+        setSelectedFoodAllergies(mappedAllergies)
+      }
+
+      if (userProfileFromApi.healthConditions) {
+        const conditions = userProfileFromApi.healthConditions
+        const mappedConditions: string[] = []
+        let otherConditions = ''
+
+        conditions.forEach((condition) => {
+          const found = healthConditionOptions.find(
+            (option) =>
+              option.labelTh === condition || option.labelEn === condition,
+          )
+          if (found) {
+            mappedConditions.push(found.value)
+          } else {
+            otherConditions += (otherConditions ? ', ' : '') + condition
+          }
+        })
+
+        if (otherConditions) {
+          mappedConditions.push('other')
+          setOtherHealthCondition(otherConditions)
+        }
+
+        setSelectedHealthConditions(mappedConditions)
+      }
+
+      if (userProfileFromApi.ethicalFoodConsiderations) {
+        const considerations = userProfileFromApi.ethicalFoodConsiderations
+        const mappedConsiderations: string[] = []
+        let otherConsiderations = ''
+
+        considerations.forEach((consideration) => {
+          const found = ethicalConsiderationOptions.find(
+            (option) =>
+              option.labelTh === consideration ||
+              option.labelEn === consideration,
+          )
+          if (found) {
+            mappedConsiderations.push(found.value)
+          } else {
+            otherConsiderations +=
+              (otherConsiderations ? ', ' : '') + consideration
+          }
+        })
+
+        if (otherConsiderations) {
+          mappedConsiderations.push('other')
+          setOtherEthicalConsideration(otherConsiderations)
+        }
+
+        setSelectedEthicalConsiderations(mappedConsiderations)
+      }
+
+      if (userProfileFromApi.preferredCuisine) {
+        const cuisines = userProfileFromApi.preferredCuisine
+        const mappedCuisines: string[] = []
+        let otherCuisines = ''
+
+        cuisines.forEach((cuisine) => {
+          const found = cuisinePreferenceOptions.find(
+            (option) =>
+              option.labelTh === cuisine || option.labelEn === cuisine,
+          )
+          if (found) {
+            mappedCuisines.push(found.value)
+          } else {
+            otherCuisines += (otherCuisines ? ', ' : '') + cuisine
+          }
+        })
+
+        if (otherCuisines) {
+          mappedCuisines.push('other')
+          setOtherCuisinePreference(otherCuisines)
+        }
+
+        setSelectedCuisinePreferences(mappedCuisines)
+      }
+
+      if (userProfileFromApi.preferredFlavorProfiles) {
+        const flavors = userProfileFromApi.preferredFlavorProfiles
+        const mappedFlavors: string[] = []
+        let otherFlavors = ''
+
+        flavors.forEach((flavor) => {
+          const found = flavorPreferenceOptions.find(
+            (option) => option.labelTh === flavor || option.labelEn === flavor,
+          )
+          if (found) {
+            mappedFlavors.push(found.value)
+          } else {
+            otherFlavors += (otherFlavors ? ', ' : '') + flavor
+          }
+        })
+
+        if (otherFlavors) {
+          mappedFlavors.push('other')
+          setOtherFlavorPreference(otherFlavors)
+        }
+
+        setSelectedFlavorPreferences(mappedFlavors)
+      }
+    }
+  }, [userProfileFromApi, isEditMode])
+
+  if (!isLiffSdkReady || isLoadingProfile) {
     return (
       <ThemeProvider theme={theme}>
-        {' '}
         <CssBaseline />
         <Container sx={{ textAlign: 'center', mt: 4 }}>
-          {' '}
-          <Alert severity="error">{error}</Alert>{' '}
+          <CircularProgress />
+          <Typography sx={{ mt: 2 }}>
+            {!isLiffSdkReady
+              ? 'Loading LIFF SDK...'
+              : !isLiffInitialized
+                ? T.loadingLiff
+                : T.loadingProfile}
+          </Typography>
         </Container>
       </ThemeProvider>
     )
   }
 
-  if (
-    !isLiffInitialized ||
-    (liff.isLoggedIn() && isLoadingApi && !userProfileFromApi)
-  ) {
-    // Show loading if API call is in progress after LIFF init
+  if (error && !lineUserId) {
+    // Critical LIFF errors before profile loaded
     return (
       <ThemeProvider theme={theme}>
-        {' '}
         <CssBaseline />
-        <Box
-          sx={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '100vh',
-          }}
-        >
-          <CircularProgress />
-          <Typography sx={{ ml: 2 }}>
-            {!isLiffInitialized ? T.loadingLiff : T.loadingProfile}
-          </Typography>
-        </Box>
+        <Container sx={{ textAlign: 'center', mt: 4 }}>
+          <Alert severity="error">{error}</Alert>
+        </Container>
       </ThemeProvider>
     )
   }
 
-  const renderStepContent = () => {
-    switch (currentStep) {
-      case 1: // Personal Info
-        return (
-          <>
-            <Typography variant="h5" gutterBottom>
-              {T.step1Title}
-            </Typography>
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="language-select-label">
-                {T.languageLabel}
-              </InputLabel>
-              <Select
-                labelId="language-select-label"
-                name="language"
-                value={formData.language || 'th'}
-                label={T.languageLabel}
-                onChange={handleSelectChange}
-              >
-                <MenuItem value="th">ภาษาไทย</MenuItem>
-                <MenuItem value="en">English</MenuItem>
-              </Select>
-              <FormHelperText>{T.languageHelper}</FormHelperText>
-            </FormControl>
+  const renderStep3Content = () => (
+    <Box>
+      {/* Food Allergies Accordion */}
+      <Accordion defaultExpanded sx={{ mb: 2 }}>
+        <AccordionSummary
+          expandIcon={<ExpandMoreIcon />}
+          aria-controls="food-allergies-content"
+          id="food-allergies-header"
+        >
+          <Typography variant="h6">{T.foodAllergiesLabel}</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <FormGroup>
+            {foodAllergyOptions.map((option) => (
+              <FormControlLabel
+                key={option.value}
+                control={
+                  <Checkbox
+                    checked={selectedFoodAllergies.includes(option.value)}
+                    onChange={() =>
+                      handleCheckboxChange(
+                        option.value,
+                        selectedFoodAllergies,
+                        setSelectedFoodAllergies,
+                      )
+                    }
+                  />
+                }
+                label={getLocalizedOptionLabel(option, currentLang)}
+              />
+            ))}
+          </FormGroup>
+          {selectedFoodAllergies.includes('other') && (
             <TextField
-              label={T.nicknameLabel}
-              name="displayName"
-              value={formData.displayName || ''}
-              onChange={handleInputChange}
               fullWidth
               margin="normal"
-              helperText={T.nicknameHelper}
+              size="small"
+              label={
+                currentLang === 'th'
+                  ? 'ระบุอาหารที่แพ้อื่นๆ'
+                  : 'Specify other allergies'
+              }
+              value={otherFoodAllergy}
+              onChange={(e) =>
+                handleOtherInputChange(
+                  e.target.value,
+                  setOtherFoodAllergy,
+                  selectedFoodAllergies,
+                  setSelectedFoodAllergies,
+                )
+              }
+              placeholder={
+                currentLang === 'th'
+                  ? 'เช่น ถั่วอัลมอนด์, สับปะรด'
+                  : 'e.g. almonds, pineapple'
+              }
             />
+          )}
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Health Conditions Accordion */}
+      <Accordion defaultExpanded sx={{ mb: 2 }}>
+        <AccordionSummary
+          expandIcon={<ExpandMoreIcon />}
+          aria-controls="health-conditions-content"
+          id="health-conditions-header"
+        >
+          <Typography variant="h6">{T.healthConditionsLabel}</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <FormGroup>
+            {healthConditionOptions.map((option) => (
+              <FormControlLabel
+                key={option.value}
+                control={
+                  <Checkbox
+                    checked={selectedHealthConditions.includes(option.value)}
+                    onChange={() =>
+                      handleCheckboxChange(
+                        option.value,
+                        selectedHealthConditions,
+                        setSelectedHealthConditions,
+                      )
+                    }
+                  />
+                }
+                label={getLocalizedOptionLabel(option, currentLang)}
+              />
+            ))}
+          </FormGroup>
+          {selectedHealthConditions.includes('other') && (
+            <TextField
+              fullWidth
+              margin="normal"
+              size="small"
+              label={
+                currentLang === 'th'
+                  ? 'ระบุโรคประจำตัวอื่นๆ'
+                  : 'Specify other conditions'
+              }
+              value={otherHealthCondition}
+              onChange={(e) =>
+                handleOtherInputChange(
+                  e.target.value,
+                  setOtherHealthCondition,
+                  selectedHealthConditions,
+                  setSelectedHealthConditions,
+                )
+              }
+              placeholder={
+                currentLang === 'th'
+                  ? 'เช่น โรคผิวหนัง, โรคภูมิแพ้'
+                  : 'e.g. skin conditions, allergies'
+              }
+            />
+          )}
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Ethical Considerations Accordion */}
+      <Accordion sx={{ mb: 2 }}>
+        <AccordionSummary
+          expandIcon={<ExpandMoreIcon />}
+          aria-controls="ethical-considerations-content"
+          id="ethical-considerations-header"
+        >
+          <Typography variant="h6">{T.ethicalConsiderationsLabel}</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <FormGroup>
+            {ethicalConsiderationOptions.map((option) => (
+              <FormControlLabel
+                key={option.value}
+                control={
+                  <Checkbox
+                    checked={selectedEthicalConsiderations.includes(
+                      option.value,
+                    )}
+                    onChange={() =>
+                      handleCheckboxChange(
+                        option.value,
+                        selectedEthicalConsiderations,
+                        setSelectedEthicalConsiderations,
+                      )
+                    }
+                  />
+                }
+                label={getLocalizedOptionLabel(option, currentLang)}
+              />
+            ))}
+          </FormGroup>
+          {selectedEthicalConsiderations.includes('other') && (
+            <TextField
+              fullWidth
+              margin="normal"
+              size="small"
+              label={
+                currentLang === 'th'
+                  ? 'ระบุข้อพิจารณาอื่นๆ'
+                  : 'Specify other considerations'
+              }
+              value={otherEthicalConsideration}
+              onChange={(e) =>
+                handleOtherInputChange(
+                  e.target.value,
+                  setOtherEthicalConsideration,
+                  selectedEthicalConsiderations,
+                  setSelectedEthicalConsiderations,
+                )
+              }
+              placeholder={
+                currentLang === 'th'
+                  ? 'เช่น ไม่ทานเนื้อแกะ, โคเชอร์'
+                  : 'e.g. no lamb, kosher'
+              }
+            />
+          )}
+        </AccordionDetails>
+      </Accordion>
+    </Box>
+  )
+
+  const renderEditModeContent = () => (
+    <Paper elevation={3} sx={{ p: { xs: 2, sm: 3 } }}>
+      <Typography variant="h5" gutterBottom component="div">
+        {T.userProfileTitle}
+      </Typography>
+      <Stepper activeStep={currentStep - 1} alternativeLabel sx={{ mb: 3 }}>
+        {[
+          T.step1Title,
+          T.step2Title,
+          T.step3Title,
+          T.step4Title,
+          T.step5Title,
+          T.step6Title,
+        ].map((label) => (
+          <Step key={label}>
+            <StepLabel>{label}</StepLabel>
+          </Step>
+        ))}
+      </Stepper>
+
+      {currentStep === 1 && (
+        <>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="language-select-label">
+              {T.languageLabel}
+            </InputLabel>
+            <Select
+              labelId="language-select-label"
+              name="language"
+              value={currentLang}
+              label={T.languageLabel}
+              onChange={(e) => setCurrentLang(e.target.value)}
+            >
+              <MenuItem value="th">ภาษาไทย</MenuItem>
+              <MenuItem value="en">English</MenuItem>
+            </Select>
+            <FormHelperText>{T.languageHelper}</FormHelperText>
+          </FormControl>
+          <TextField
+            label={T.nicknameLabel}
+            name="displayName"
+            value={formData.displayName || ''}
+            onChange={handleInputChange}
+            fullWidth
+            margin="normal"
+            helperText={T.nicknameHelper}
+          />
+          <LocalizationProvider
+            dateAdapter={AdapterDateFns}
+            adapterLocale={currentLang === 'th' ? th : enUS}
+          >
             <DatePicker
               label={T.birthdateLabel}
-              value={birthDate}
-              onChange={(newValue) => setBirthDate(newValue)}
+              value={formData.birthDate ? parseISO(formData.birthDate) : null}
+              onChange={(newValue) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  birthDate: newValue
+                    ? format(newValue, 'yyyy-MM-dd')
+                    : undefined,
+                }))
+              }
               sx={{ width: '100%', mt: 2, mb: 1 }}
             />
-            <FormHelperText sx={{ ml: 1.5 }}>
-              {T.birthdateHelper}
-            </FormHelperText>
-            {calculatedAge !== null && (
-              <Typography variant="body1" sx={{ mt: 1 }}>
-                {T.ageLabel}: {calculatedAge}
-              </Typography>
-            )}
+          </LocalizationProvider>
+          <FormHelperText>{T.birthdateHelper}</FormHelperText>
+          {calculatedAge !== undefined && (
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              {T.ageLabel}: {calculatedAge}{' '}
+              {currentLang === 'th' ? 'ปี' : 'years'}
+            </Typography>
+          )}
+          <FormControl component="fieldset" margin="normal" fullWidth>
+            <Typography variant="subtitle1" gutterBottom>
+              {T.genderLabel}
+            </Typography>
+            <ToggleButtonGroup
+              value={formData.gender || ''}
+              exclusive
+              onChange={handleGenderChange}
+              aria-label="gender selection"
+              fullWidth
+            >
+              <ToggleButton value="male" aria-label="male">
+                {T.male}
+              </ToggleButton>
+              <ToggleButton value="female" aria-label="female">
+                {T.female}
+              </ToggleButton>
+              <ToggleButton value="other" aria-label="other">
+                {T.other}
+              </ToggleButton>
+            </ToggleButtonGroup>
+            <FormHelperText>{T.genderHelper}</FormHelperText>
+          </FormControl>
+        </>
+      )}
+      {currentStep === 2 && (
+        <>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="goal-label">{T.goalLabel}</InputLabel>
+            <Select
+              labelId="goal-label"
+              name="goal"
+              value={formData.goal || ''}
+              onChange={handleSelectChange}
+              label={T.goalLabel}
+            >
+              {goalOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {getLocalizedOptionLabel(option, currentLang)}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>{T.goalHelper}</FormHelperText>
+          </FormControl>
 
-            <FormControl component="fieldset" margin="normal" fullWidth>
-              <Typography variant="subtitle1" gutterBottom>
-                {T.genderLabel}
-              </Typography>
-              <ToggleButtonGroup
-                value={formData.gender}
-                exclusive
-                onChange={handleGenderChange}
-                aria-label="gender"
-                fullWidth
-              >
-                <ToggleButton value={'female' as Gender} aria-label="female">
-                  {T.female}
-                </ToggleButton>
-                <ToggleButton value={'male' as Gender} aria-label="male">
-                  {T.male}
-                </ToggleButton>
-                <ToggleButton
-                  value={'not_specified' as Gender}
-                  aria-label="other"
-                >
-                  {T.other}
-                </ToggleButton>
-              </ToggleButtonGroup>
-              <FormHelperText>{T.genderHelper}</FormHelperText>
-            </FormControl>
-          </>
-        )
-      case 2: // Goals & Lifestyle
-        return (
-          <>
-            <Typography variant="h5" gutterBottom>
-              {T.step2Title}
-            </Typography>
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="goal-select-label">{T.goalLabel}</InputLabel>
-              <Select
-                labelId="goal-select-label"
-                name="goal"
-                value={formData.goal || 'maintenance'}
-                label={T.goalLabel}
-                onChange={handleSelectChange}
-              >
-                {Object.entries(T.goalOptions).map(([key, label]) => (
-                  <MenuItem key={key} value={key}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>{T.goalHelper}</FormHelperText>
-            </FormControl>
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="activity-level-select-label">
-                {T.activityLevelLabel}
-              </InputLabel>
-              <Select
-                labelId="activity-level-select-label"
-                name="activityLevel"
-                value={formData.activityLevel || 'moderate'}
-                label={T.activityLevelLabel}
-                onChange={handleSelectChange}
-              >
-                {Object.entries(T.activityLevelOptions).map(([key, label]) => (
-                  <MenuItem key={key} value={key}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>{T.activityLevelHelper}</FormHelperText>
-            </FormControl>
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="diet-type-select-label">
-                {T.dietTypeLabel}
-              </InputLabel>
-              <Select
-                labelId="diet-type-select-label"
-                name="dietType"
-                value={formData.dietType || 'normal'}
-                label={T.dietTypeLabel}
-                onChange={handleSelectChange}
-              >
-                {Object.entries(T.dietTypeOptions).map(([key, label]) => (
-                  <MenuItem key={key} value={key}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>{T.dietTypeHelper}</FormHelperText>
-            </FormControl>
-          </>
-        )
-      case 3: // Health & Restrictions
-        return (
-          <>
-            <Typography variant="h5" gutterBottom>
-              {T.step3Title}
-            </Typography>
-            <MultipleCheckboxWithOther
-              formControlLabel={T.healthConditionsLabel}
-              name="healthConditions"
-              options={healthConditionOptions.map((opt) => ({
-                value: opt.value,
-                label: getLocalizedOptionLabel(opt, currentLang),
-              }))}
-              currentSelectedValues={formData.healthConditions || []}
-              onValuesChange={handleMultipleCheckboxChange}
-            />
-            <MultipleCheckboxWithOther
-              formControlLabel={T.foodAllergiesLabel}
-              name="foodAllergies"
-              options={foodAllergyOptions.map((opt) => ({
-                value: opt.value,
-                label: getLocalizedOptionLabel(opt, currentLang),
-              }))}
-              currentSelectedValues={formData.foodAllergies || []}
-              onValuesChange={handleMultipleCheckboxChange}
-            />
-          </>
-        )
-      case 4: // Additional Preferences
-        return (
-          <>
-            <Typography variant="h5" gutterBottom>
-              {T.step4Title}
-            </Typography>
-            <MultipleCheckboxWithOther
-              formControlLabel={T.ethicalConsiderationsLabel}
-              name="ethicalFoodConsiderations"
-              options={ethicalConsiderationOptions.map((opt) => ({
-                value: opt.value,
-                label: getLocalizedOptionLabel(opt, currentLang),
-              }))}
-              currentSelectedValues={formData.ethicalFoodConsiderations || []}
-              onValuesChange={handleMultipleCheckboxChange}
-            />
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="pregnancy-status-select-label">
-                {T.pregnancyStatusLabel}
-              </InputLabel>
-              <Select
-                labelId="pregnancy-status-select-label"
-                name="pregnancyLactationStatus"
-                value={formData.pregnancyLactationStatus || 'not_applicable'}
-                label={T.pregnancyStatusLabel}
-                onChange={handleSelectChange}
-              >
-                {Object.entries(T.pregnancyOptions).map(([key, label]) => (
-                  <MenuItem key={key} value={key}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>{T.pregnancyStatusHelper}</FormHelperText>
-            </FormControl>
-            <MultipleCheckboxWithOther
-              formControlLabel={T.preferredCuisineLabel}
-              name="preferredCuisine"
-              options={cuisineOptions.map((opt) => ({
-                value: opt.value,
-                label: getLocalizedOptionLabel(opt, currentLang),
-              }))}
-              currentSelectedValues={formData.preferredCuisine || []}
-              onValuesChange={handleMultipleCheckboxChange}
-            />
-            <MultipleCheckboxWithOther
-              formControlLabel={T.preferredFlavorProfilesLabel}
-              name="preferredFlavorProfiles"
-              options={flavorProfileOptions.map((opt) => ({
-                value: opt.value,
-                label: getLocalizedOptionLabel(opt, currentLang),
-              }))}
-              currentSelectedValues={formData.preferredFlavorProfiles || []}
-              onValuesChange={handleMultipleCheckboxChange}
-            />
-          </>
-        )
-      case 5: // Physical Info
-        return (
-          <>
-            <Typography variant="h5" gutterBottom>
-              {T.step5Title}
-            </Typography>
-            <TextField
-              label={T.weightLabel}
-              name="weightKg"
-              type="number"
-              value={formData.weightKg || ''}
-              onChange={handleInputChange}
-              fullWidth
-              margin="normal"
-              helperText={T.weightHelper}
-              InputProps={{ inputProps: { step: 0.1 } }}
-            />
-            <TextField
-              label={T.heightLabel}
-              name="heightCm"
-              type="number"
-              value={formData.heightCm || ''}
-              onChange={handleInputChange}
-              fullWidth
-              margin="normal"
-              helperText={T.heightHelper}
-            />
-            {calculatedBmi && (
-              <Typography variant="body1" sx={{ mt: 1 }}>
-                {T.bmiCalculatedLabel
-                  .replace('{bmiValue}', calculatedBmi)
-                  .replace(
-                    '{status}',
-                    getBmiStatus(calculatedBmi, currentLang),
-                  )}
-              </Typography>
-            )}
-          </>
-        )
-      case 6: // Summary & Save
-        return (
-          <>
-            <Typography variant="h5" gutterBottom>
-              {T.step6Title}
-            </Typography>
-            <Card variant="outlined" sx={{ mb: 2 }}>
-              <CardContent>
-                <Typography variant="h6">{T.summaryTitle}</Typography>
-                <ProfileListItem
-                  label={T.nicknameLabel}
-                  value={formData.displayName}
-                />
-                <ProfileListItem
-                  label={T.ageLabel}
-                  value={calculatedAge ?? undefined}
-                />
-                <ProfileListItem
-                  label={T.genderLabel}
-                  value={
-                    formData.gender
-                      ? getGenderDisplay(formData.gender)
-                      : undefined
-                  }
-                />
-                <ProfileListItem
-                  label={T.weightLabel}
-                  value={formData.weightKg}
-                />
-                <ProfileListItem
-                  label={T.heightLabel}
-                  value={formData.heightCm}
-                />
-                {userProfileFromApi &&
-                  userProfileFromApi.weightKg &&
-                  userProfileFromApi.heightCm &&
-                  (() => {
-                    const bmiVal = (
-                      userProfileFromApi.weightKg! /
-                      (userProfileFromApi.heightCm! / 100) ** 2
-                    ).toFixed(2)
-                    return (
-                      <ProfileListItem
-                        label={T.bmiLabel}
-                        value={`${bmiVal} (${getBmiStatus(bmiVal, currentLang)})`}
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="activity-level-label">
+              {T.activityLevelLabel}
+            </InputLabel>
+            <Select
+              labelId="activity-level-label"
+              name="activityLevel"
+              value={formData.activityLevel || ''}
+              onChange={handleSelectChange}
+              label={T.activityLevelLabel}
+            >
+              {activityLevelOptionsList.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {getLocalizedOptionLabel(option, currentLang)}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>{T.activityLevelHelper}</FormHelperText>
+          </FormControl>
+
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="diet-type-label">{T.dietTypeLabel}</InputLabel>
+            <Select
+              labelId="diet-type-label"
+              name="dietType"
+              value={formData.dietType || ''}
+              onChange={handleSelectChange}
+              label={T.dietTypeLabel}
+            >
+              {dietTypeOptionsList.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {getLocalizedOptionLabel(option, currentLang)}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>{T.dietTypeHelper}</FormHelperText>
+          </FormControl>
+        </>
+      )}
+      {currentStep === 3 && renderStep3Content()}
+      {currentStep === 4 && (
+        <>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="pregnancy-status-label">
+              {T.pregnancyStatusLabel}
+            </InputLabel>
+            <Select
+              labelId="pregnancy-status-label"
+              name="pregnancyLactationStatus"
+              value={formData.pregnancyLactationStatus || ''}
+              onChange={handleSelectChange}
+              label={T.pregnancyStatusLabel}
+            >
+              {pregnancyOptionsList.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {getLocalizedOptionLabel(option, currentLang)}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>{T.pregnancyStatusHelper}</FormHelperText>
+          </FormControl>
+
+          {/* Cuisine Preferences Accordion */}
+          <Accordion sx={{ mb: 2 }}>
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              aria-controls="cuisine-preferences-content"
+              id="cuisine-preferences-header"
+            >
+              <Typography variant="h6">{T.preferredCuisineLabel}</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <FormGroup>
+                {cuisinePreferenceOptions.map((option) => (
+                  <FormControlLabel
+                    key={option.value}
+                    control={
+                      <Checkbox
+                        checked={selectedCuisinePreferences.includes(
+                          option.value,
+                        )}
+                        onChange={() =>
+                          handleCheckboxChange(
+                            option.value,
+                            selectedCuisinePreferences,
+                            setSelectedCuisinePreferences,
+                          )
+                        }
                       />
-                    )
-                  })()}
-                <ProfileListItem
-                  label={T.goalLabel}
-                  value={
-                    formData.goal ? T.goalOptions[formData.goal] : undefined
-                  }
-                />
-                <ProfileListItem
-                  label={T.activityLevelLabel}
-                  value={
-                    formData.activityLevel
-                      ? T.activityLevelOptions[formData.activityLevel]
-                      : undefined
-                  }
-                />
-                <ProfileListItem
-                  label={T.dietTypeLabel}
-                  value={
-                    formData.dietType
-                      ? T.dietTypeOptions[formData.dietType]
-                      : undefined
-                  }
-                />
-                <ProfileListItem
-                  label={T.healthConditionsLabel}
-                  value={formData.healthConditions}
-                />
-                <ProfileListItem
-                  label={T.foodAllergiesLabel}
-                  value={formData.foodAllergies}
-                />
-                <ProfileListItem
-                  label={T.ethicalConsiderationsLabel}
-                  value={formData.ethicalFoodConsiderations}
-                />
-                <ProfileListItem
-                  label={T.pregnancyStatusLabel}
-                  value={
-                    formData.pregnancyLactationStatus
-                      ? T.pregnancyOptions[formData.pregnancyLactationStatus]
-                      : undefined
-                  }
-                />
-                <ProfileListItem
-                  label={T.preferredCuisineLabel}
-                  value={formData.preferredCuisine}
-                />
-                <ProfileListItem
-                  label={T.preferredFlavorProfilesLabel}
-                  value={formData.preferredFlavorProfiles}
-                />
-                {calculatedCalories && (
-                  <ProfileListItem
-                    label={T.calculatedCaloriesLabel}
-                    value={`${calculatedCalories} kcal`}
+                    }
+                    label={getLocalizedOptionLabel(option, currentLang)}
                   />
-                )}
-              </CardContent>
-            </Card>
-          </>
-        )
-      default:
-        return null
-    }
-  }
+                ))}
+              </FormGroup>
+              {selectedCuisinePreferences.includes('other') && (
+                <TextField
+                  fullWidth
+                  margin="normal"
+                  size="small"
+                  label={
+                    currentLang === 'th'
+                      ? 'ระบุวัฒนธรรมอาหารอื่นๆ'
+                      : 'Specify other cuisines'
+                  }
+                  value={otherCuisinePreference}
+                  onChange={(e) =>
+                    handleOtherInputChange(
+                      e.target.value,
+                      setOtherCuisinePreference,
+                      selectedCuisinePreferences,
+                      setSelectedCuisinePreferences,
+                    )
+                  }
+                  placeholder={
+                    currentLang === 'th'
+                      ? 'เช่น เกาหลี, เวียดนาม, เม็กซิกัน'
+                      : 'e.g. Korean, Vietnamese, Mexican'
+                  }
+                />
+              )}
+            </AccordionDetails>
+          </Accordion>
+
+          {/* Flavor Preferences Accordion */}
+          <Accordion sx={{ mb: 2 }}>
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              aria-controls="flavor-preferences-content"
+              id="flavor-preferences-header"
+            >
+              <Typography variant="h6">
+                {T.preferredFlavorProfilesLabel}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <FormGroup>
+                {flavorPreferenceOptions.map((option) => (
+                  <FormControlLabel
+                    key={option.value}
+                    control={
+                      <Checkbox
+                        checked={selectedFlavorPreferences.includes(
+                          option.value,
+                        )}
+                        onChange={() =>
+                          handleCheckboxChange(
+                            option.value,
+                            selectedFlavorPreferences,
+                            setSelectedFlavorPreferences,
+                          )
+                        }
+                      />
+                    }
+                    label={getLocalizedOptionLabel(option, currentLang)}
+                  />
+                ))}
+              </FormGroup>
+              {selectedFlavorPreferences.includes('other') && (
+                <TextField
+                  fullWidth
+                  margin="normal"
+                  size="small"
+                  label={
+                    currentLang === 'th'
+                      ? 'ระบุรสชาติอื่นๆ'
+                      : 'Specify other flavors'
+                  }
+                  value={otherFlavorPreference}
+                  onChange={(e) =>
+                    handleOtherInputChange(
+                      e.target.value,
+                      setOtherFlavorPreference,
+                      selectedFlavorPreferences,
+                      setSelectedFlavorPreferences,
+                    )
+                  }
+                  placeholder={
+                    currentLang === 'th'
+                      ? 'เช่น เปรี้ยว, ขม, หอม'
+                      : 'e.g. sour, bitter, aromatic'
+                  }
+                />
+              )}
+            </AccordionDetails>
+          </Accordion>
+        </>
+      )}
+      {currentStep === 5 && (
+        <>
+          <TextField
+            label={T.weightLabel}
+            name="weightKg"
+            type="number"
+            value={formData.weightKg || ''}
+            onChange={handleInputChange}
+            fullWidth
+            margin="normal"
+            helperText={T.weightHelper}
+            InputProps={{ inputProps: { min: 0, step: 0.1 } }}
+          />
+          <TextField
+            label={T.heightLabel}
+            name="heightCm"
+            type="number"
+            value={formData.heightCm || ''}
+            onChange={handleInputChange}
+            fullWidth
+            margin="normal"
+            helperText={T.heightHelper}
+            InputProps={{ inputProps: { min: 0, step: 1 } }}
+          />
+          {calculatedBmi && (
+            <Typography variant="body1" sx={{ mt: 1 }}>
+              {T.bmiCalculatedLabel} {calculatedBmi} (
+              {getBmiStatus(calculatedBmi, currentLang)})
+            </Typography>
+          )}
+        </>
+      )}
+      {currentStep === 6 && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            {T.summaryTitle}
+          </Typography>
+          <ProfileListItem
+            label={T.nicknameLabel}
+            value={formData.displayName}
+          />
+          <ProfileListItem
+            label={T.birthdateLabel}
+            value={
+              formData.birthDate
+                ? format(parseISO(formData.birthDate), 'PPP', {
+                    locale: currentLang === 'th' ? th : enUS,
+                  })
+                : ''
+            }
+          />
+          <ProfileListItem
+            label={T.ageLabel}
+            value={
+              calculatedAge !== undefined
+                ? `${calculatedAge} ${currentLang === 'th' ? 'ปี' : 'years'}`
+                : ''
+            }
+          />
+          <ProfileListItem
+            label={T.genderLabel}
+            value={getGenderDisplay(formData.gender)}
+          />
+          <ProfileListItem
+            label={T.weightLabel}
+            value={formData.weightKg ? `${formData.weightKg} kg` : ''}
+          />
+          <ProfileListItem
+            label={T.heightLabel}
+            value={formData.heightCm ? `${formData.heightCm} cm` : ''}
+          />
+          {calculatedBmi && (
+            <ProfileListItem
+              label={T.bmiLabel}
+              value={`${calculatedBmi} (${getBmiStatus(calculatedBmi, currentLang)})`}
+            />
+          )}
+          <ProfileListItem
+            label={T.goalLabel}
+            value={getGoalDisplay(formData.goal)}
+          />
+          <ProfileListItem
+            label={T.activityLevelLabel}
+            value={getActivityLevelDisplay(formData.activityLevel)}
+          />
+          <ProfileListItem
+            label={T.dietTypeLabel}
+            value={getDietTypeDisplay(formData.dietType)}
+          />
+          <ProfileListItem
+            label={T.healthConditionsLabel}
+            value={
+              selectedHealthConditions.length > 0
+                ? selectedHealthConditions
+                    .map((value) => {
+                      if (value === 'other') {
+                        return otherHealthCondition
+                      }
+                      const option = healthConditionOptions.find(
+                        (opt) => opt.value === value,
+                      )
+                      return option
+                        ? getLocalizedOptionLabel(option, currentLang)
+                        : value
+                    })
+                    .filter(Boolean)
+                    .join(', ')
+                : formData.healthConditions?.join(', ')
+            }
+          />
+          <ProfileListItem
+            label={T.foodAllergiesLabel}
+            value={
+              selectedFoodAllergies.length > 0
+                ? selectedFoodAllergies
+                    .map((value) => {
+                      if (value === 'other') {
+                        return otherFoodAllergy
+                      }
+                      const option = foodAllergyOptions.find(
+                        (opt) => opt.value === value,
+                      )
+                      return option
+                        ? getLocalizedOptionLabel(option, currentLang)
+                        : value
+                    })
+                    .filter(Boolean)
+                    .join(', ')
+                : formData.foodAllergies?.join(', ')
+            }
+          />
+          <ProfileListItem
+            label={T.ethicalConsiderationsLabel}
+            value={
+              selectedEthicalConsiderations.length > 0
+                ? selectedEthicalConsiderations
+                    .map((value) => {
+                      if (value === 'other') {
+                        return otherEthicalConsideration
+                      }
+                      const option = ethicalConsiderationOptions.find(
+                        (opt) => opt.value === value,
+                      )
+                      return option
+                        ? getLocalizedOptionLabel(option, currentLang)
+                        : value
+                    })
+                    .filter(Boolean)
+                    .join(', ')
+                : formData.ethicalFoodConsiderations?.join(', ')
+            }
+          />
+          <ProfileListItem
+            label={T.pregnancyStatusLabel}
+            value={getPregnancyStatusDisplay(formData.pregnancyLactationStatus)}
+          />
+          <ProfileListItem
+            label={T.preferredCuisineLabel}
+            value={
+              selectedCuisinePreferences.length > 0
+                ? selectedCuisinePreferences
+                    .map((value) => {
+                      if (value === 'other') {
+                        return otherCuisinePreference
+                      }
+                      const option = cuisinePreferenceOptions.find(
+                        (opt) => opt.value === value,
+                      )
+                      return option
+                        ? getLocalizedOptionLabel(option, currentLang)
+                        : value
+                    })
+                    .filter(Boolean)
+                    .join(', ')
+                : formData.preferredCuisine?.join(', ')
+            }
+          />
+          <ProfileListItem
+            label={T.preferredFlavorProfilesLabel}
+            value={
+              selectedFlavorPreferences.length > 0
+                ? selectedFlavorPreferences
+                    .map((value) => {
+                      if (value === 'other') {
+                        return otherFlavorPreference
+                      }
+                      const option = flavorPreferenceOptions.find(
+                        (opt) => opt.value === value,
+                      )
+                      return option
+                        ? getLocalizedOptionLabel(option, currentLang)
+                        : value
+                    })
+                    .filter(Boolean)
+                    .join(', ')
+                : formData.preferredFlavorProfiles?.join(', ')
+            }
+          />
+
+          {formData?.targetWeightKg !== undefined && (
+            <ProfileListItem
+              label={T.targetWeightLabel}
+              value={formData.targetWeightKg ?? '-'}
+            />
+          )}
+          {formData?.calculatedTdee !== undefined && (
+            <ProfileListItem
+              label={T.calculatedCaloriesLabel}
+              value={
+                formData.calculatedTdee
+                  ? `${formData.calculatedTdee} kcal`
+                  : '-'
+              }
+            />
+          )}
+        </Box>
+      )}
+
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
+        {currentStep === 6 && (
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={() => {
+              void handleSave()
+            }}
+            disabled={isSavingProfile}
+            sx={{ mr: 1 }}
+          >
+            {isSavingProfile ? (
+              <CircularProgress size={24} />
+            ) : (
+              T.saveChangesButton
+            )}
+          </Button>
+        )}
+        {currentStep > 1 && (
+          <Button onClick={handlePrevStep} sx={{ mr: 1 }}>
+            {T.backButton}
+          </Button>
+        )}
+        {currentStep < 6 && isEditMode && (
+          <Button variant="contained" onClick={handleNextStep}>
+            {T.nextButton}
+          </Button>
+        )}
+      </Box>
+
+      {saveSuccess && (
+        <Alert severity="success" sx={{ mt: 2 }}>
+          {T.profileUpdatedSuccess}
+        </Alert>
+      )}
+      {saveError && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {saveError}
+        </Alert>
+      )}
+    </Paper>
+  )
+
+  const renderDisplayModeContent = () =>
+    userProfileFromApi ? (
+      <Card>
+        <CardContent>
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <Typography variant="h5">
+              {userProfileFromApi.displayName || T.userProfileTitle}
+            </Typography>
+            <IconButton
+              onClick={() => {
+                setIsEditMode(true)
+                setCurrentStep(1)
+              }}
+              color="primary"
+            >
+              <EditIcon />
+            </IconButton>
+          </Box>
+          <ProfileListItem
+            label={T.nicknameLabel}
+            value={userProfileFromApi.displayName}
+          />
+          {userProfileFromApi.birthDate && (
+            <ProfileListItem
+              label={T.birthdateLabel}
+              value={format(parseISO(userProfileFromApi.birthDate), 'PPP', {
+                locale: currentLang === 'th' ? th : enUS,
+              })}
+            />
+          )}
+          <ProfileListItem
+            label={T.ageLabel}
+            value={
+              userProfileFromApi.age !== undefined
+                ? `${userProfileFromApi.age} ${currentLang === 'th' ? 'ปี' : 'years'}`
+                : '-'
+            }
+          />
+          <ProfileListItem
+            label={T.genderLabel}
+            value={getGenderDisplay(userProfileFromApi.gender)}
+          />
+          <ProfileListItem
+            label={T.weightLabel}
+            value={
+              userProfileFromApi.weightKg
+                ? `${userProfileFromApi.weightKg} kg`
+                : '-'
+            }
+          />
+          <ProfileListItem
+            label={T.heightLabel}
+            value={
+              userProfileFromApi.heightCm
+                ? `${userProfileFromApi.heightCm} cm`
+                : '-'
+            }
+          />
+          {userProfileFromApi.weightKg &&
+            userProfileFromApi.heightCm &&
+            (() => {
+              const bmiVal = (
+                userProfileFromApi.weightKg /
+                (userProfileFromApi.heightCm / 100) ** 2
+              ).toFixed(1)
+              return (
+                <ProfileListItem
+                  label={T.bmiLabel}
+                  value={`${bmiVal} (${getBmiStatus(bmiVal, currentLang)})`}
+                />
+              )
+            })()}
+          <ProfileListItem
+            label={T.goalLabel}
+            value={getGoalDisplay(userProfileFromApi.goal)}
+          />
+          <ProfileListItem
+            label={T.activityLevelLabel}
+            value={getActivityLevelDisplay(userProfileFromApi.activityLevel)}
+          />
+          <ProfileListItem
+            label={T.dietTypeLabel}
+            value={getDietTypeDisplay(userProfileFromApi.dietType)}
+          />
+          <ProfileListItem
+            label={T.healthConditionsLabel}
+            value={userProfileFromApi.healthConditions?.join(', ')}
+          />
+          <ProfileListItem
+            label={T.foodAllergiesLabel}
+            value={userProfileFromApi.foodAllergies?.join(', ')}
+          />
+          <ProfileListItem
+            label={T.pregnancyStatusLabel}
+            value={getPregnancyStatusDisplay(
+              userProfileFromApi.pregnancyLactationStatus,
+            )}
+          />
+
+          {userProfileFromApi?.targetWeightKg !== undefined && (
+            <ProfileListItem
+              label={T.targetWeightLabel}
+              value={userProfileFromApi.targetWeightKg ?? '-'}
+            />
+          )}
+          {userProfileFromApi?.calculatedTdee !== undefined && (
+            <ProfileListItem
+              label={T.calculatedCaloriesLabel}
+              value={
+                userProfileFromApi.calculatedTdee
+                  ? `${userProfileFromApi.calculatedTdee} kcal`
+                  : '-'
+              }
+            />
+          )}
+        </CardContent>
+      </Card>
+    ) : (
+      !isLoadingProfile && <Typography>{T.noApiProfileData}</Typography>
+    )
 
   return (
     <LocalizationProvider
@@ -1320,247 +2560,70 @@ function App() {
       adapterLocale={currentLang === 'th' ? th : enUS}
     >
       <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Container maxWidth="sm" sx={{ mt: 2, mb: 4 }}>
-          <Typography variant="h4" component="h1" gutterBottom align="center">
-            {T.userProfileTitle}
-          </Typography>
-
-          {lineLiffProfile && (
-            <Box sx={{ mb: 2, textAlign: 'center' }}>
-              {lineLiffProfile.pictureUrl && (
-                <img
-                  src={lineLiffProfile.pictureUrl}
-                  alt="LINE Profile"
-                  style={{
-                    width: 100,
-                    height: 100,
-                    borderRadius: '50%',
-                    marginBottom: '10px',
-                  }}
-                />
+        <LiffIdHandler>
+          <CssBaseline />
+          <AppBar position="static">
+            <Toolbar>
+              {lineProfile && lineProfile.pictureUrl && (
+                <IconButton sx={{ p: 0, mr: 1 }}>
+                  <img
+                    src={lineProfile.pictureUrl}
+                    alt={lineProfile.displayName}
+                    style={{ width: 32, height: 32, borderRadius: '50%' }}
+                  />
+                </IconButton>
               )}
-              <Typography variant="h6">
-                {T.welcomeMessage.replace(
-                  '{name}',
-                  lineLiffProfile.displayName,
-                )}
+              <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+                {lineProfile ? lineProfile.displayName : T.appName}
               </Typography>
-            </Box>
-          )}
-
-          <Box sx={{ p: 2, border: '1px dashed grey', mt: 2, borderRadius: 2 }}>
-            {isEditMode ? (
-              <Box
-                component="form"
-                sx={{ mt: 1, mb: 1 }}
-                noValidate
-                autoComplete="off"
-              >
-                <Typography variant="subtitle1" align="center" gutterBottom>
-                  {T.stepOutOf
-                    .replace('{current}', String(currentStep))
-                    .replace('{total}', String(totalSteps))}
-                </Typography>
-                {renderStepContent()}
-              </Box>
-            ) : userProfileFromApi ? (
-              <>
-                <Typography align="center" gutterBottom variant="subtitle1">
-                  {T.userProfileTitle}
-                </Typography>
-                <List
-                  dense
-                  sx={{
-                    bgcolor: 'background.paper',
-                    borderRadius: '4px',
-                    border: '1px solid #e0e0e0',
-                  }}
-                >
-                  <ProfileListItem
-                    label={T.languageLabel}
-                    value={
-                      userProfileFromApi.language === 'th'
-                        ? 'ภาษาไทย'
-                        : 'English'
-                    }
-                  />
-                  <ProfileListItem
-                    label={T.nicknameLabel}
-                    value={userProfileFromApi.displayName}
-                  />
-                  <ProfileListItem
-                    label={T.ageLabel}
-                    value={userProfileFromApi.age}
-                  />
-                  <ProfileListItem
-                    label={T.genderLabel}
-                    value={
-                      userProfileFromApi.gender
-                        ? getGenderDisplay(userProfileFromApi.gender)
-                        : undefined
-                    }
-                  />
-                  <ProfileListItem
-                    label={T.weightLabel}
-                    value={userProfileFromApi.weightKg}
-                  />
-                  <ProfileListItem
-                    label={T.heightLabel}
-                    value={userProfileFromApi.heightCm}
-                  />
-                  {userProfileFromApi.weightKg &&
-                    userProfileFromApi.heightCm &&
-                    (() => {
-                      const bmiVal = (
-                        userProfileFromApi.weightKg! /
-                        (userProfileFromApi.heightCm! / 100) ** 2
-                      ).toFixed(2)
-                      return (
-                        <ProfileListItem
-                          label={T.bmiLabel}
-                          value={`${bmiVal} (${getBmiStatus(bmiVal, currentLang)})`}
-                        />
-                      )
-                    })()}
-                  <ProfileListItem
-                    label={T.goalLabel}
-                    value={
-                      userProfileFromApi.goal
-                        ? T.goalOptions[userProfileFromApi.goal]
-                        : undefined
-                    }
-                  />
-                  <ProfileListItem
-                    label={T.activityLevelLabel}
-                    value={
-                      userProfileFromApi.activityLevel
-                        ? T.activityLevelOptions[
-                            userProfileFromApi.activityLevel
-                          ]
-                        : undefined
-                    }
-                  />
-                  <ProfileListItem
-                    label={T.dietTypeLabel}
-                    value={
-                      userProfileFromApi.dietType
-                        ? T.dietTypeOptions[userProfileFromApi.dietType]
-                        : undefined
-                    }
-                  />
-                  <ProfileListItem
-                    label={T.healthConditionsLabel}
-                    value={userProfileFromApi.healthConditions}
-                  />
-                  <ProfileListItem
-                    label={T.foodAllergiesLabel}
-                    value={userProfileFromApi.foodAllergies}
-                  />
-                  <ProfileListItem
-                    label={T.ethicalConsiderationsLabel}
-                    value={userProfileFromApi.ethicalFoodConsiderations}
-                  />
-                  <ProfileListItem
-                    label={T.pregnancyStatusLabel}
-                    value={
-                      userProfileFromApi.pregnancyLactationStatus
-                        ? T.pregnancyOptions[
-                            userProfileFromApi.pregnancyLactationStatus
-                          ]
-                        : undefined
-                    }
-                  />
-                  <ProfileListItem
-                    label={T.preferredCuisineLabel}
-                    value={userProfileFromApi.preferredCuisine}
-                  />
-                  <ProfileListItem
-                    label={T.preferredFlavorProfilesLabel}
-                    value={userProfileFromApi.preferredFlavorProfiles}
-                  />
-                </List>
-              </>
-            ) : (
-              <Typography align="center" color="textSecondary">
-                {T.noApiProfileData}
-              </Typography>
-            )}
-          </Box>
-
-          <Stack
-            direction="row"
-            spacing={2}
-            justifyContent="center"
-            sx={{ mt: 3 }}
-          >
-            {isEditMode ? (
-              <>
-                {currentStep > 1 && (
-                  <Button
-                    variant="outlined"
-                    onClick={handlePrevStep}
-                    disabled={isLoadingApi}
-                  >
-                    {T.backButton}
-                  </Button>
-                )}
-                {currentStep < totalSteps ? (
-                  <Button
-                    variant="contained"
-                    onClick={handleNextStep}
-                    disabled={isLoadingApi}
-                  >
-                    {T.nextButton}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handleSave}
-                    disabled={isLoadingApi}
-                  >
-                    {isLoadingApi ? (
-                      <CircularProgress size={24} />
-                    ) : (
-                      T.saveChangesButton
-                    )}
-                  </Button>
-                )}
+              {!isEditMode && userProfileFromApi && (
                 <Button
-                  variant="text"
-                  onClick={handleEditToggle}
-                  disabled={isLoadingApi}
-                  sx={{ ml: currentStep === 1 ? 'auto' : undefined }}
+                  color="inherit"
+                  onClick={() => void goToNutritionReport()}
                 >
-                  {T.cancelButton}
+                  {T.nutritionReportTitle}
                 </Button>
-              </>
-            ) : (
-              <Button
-                variant="contained"
-                onClick={handleEditToggle}
-                disabled={isLoadingApi}
-              >
-                {T.editProfileButton}
-              </Button>
+              )}
+            </Toolbar>
+          </AppBar>
+          <Container component="main" maxWidth="md" sx={{ mt: 2, mb: 2 }}>
+            {profileError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {profileError}
+              </Alert>
             )}
-          </Stack>
-
-          {liff.isInClient() && (
-            <Box sx={{ textAlign: 'center', mt: 3 }}>
-              <button
-                onClick={() => liff.closeWindow()}
-                style={{ padding: '10px 20px', fontSize: '16px' }}
-              >
-                Close LIFF App
-              </button>
-            </Box>
-          )}
-        </Container>
+            <Suspense fallback={<CircularProgress />}>
+              <Routes>
+                <Route
+                  path="/"
+                  element={
+                    isEditMode
+                      ? renderEditModeContent()
+                      : renderDisplayModeContent()
+                  }
+                />
+                <Route
+                  path="/nutrition-report"
+                  element={<NutritionReportMain />}
+                />
+                <Route path="/daily-report" element={<NutritionReportMain />} />
+              </Routes>
+            </Suspense>
+          </Container>
+        </LiffIdHandler>
       </ThemeProvider>
     </LocalizationProvider>
   )
 }
 
-export default App
+const AppWithRouter: React.FC = () => {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/*" element={<App />} />
+      </Routes>
+    </Router>
+  )
+}
+
+export default AppWithRouter

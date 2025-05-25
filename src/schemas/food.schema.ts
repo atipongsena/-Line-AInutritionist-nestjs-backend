@@ -23,6 +23,22 @@ class LocalizedDescription {
   en?: string
 }
 
+// Added VitaminMineralDetail sub-schema and its exported schema first
+@Schema({ _id: false })
+export class VitaminMineralDetail {
+  @Prop({ required: true })
+  value: number
+
+  @Prop({ required: true })
+  unit: string
+
+  @Prop()
+  dv?: number
+}
+// Export the schema for VitaminMineralDetail
+export const VitaminMineralDetailSchema =
+  SchemaFactory.createForClass(VitaminMineralDetail)
+
 // Sub-schema for nutrition facts
 @Schema({ _id: false })
 class Nutrition {
@@ -46,6 +62,24 @@ class Nutrition {
 
   @Prop({ default: 0 })
   sodium?: number
+
+  @Prop({ default: 0 })
+  saturated_fat?: number
+
+  @Prop({ default: 0 })
+  cholesterol?: number
+
+  @Prop({ default: 0 })
+  water?: number
+
+  @Prop({ default: 0 })
+  omega3?: number
+
+  @Prop({ type: Map, of: VitaminMineralDetailSchema, default: {} })
+  vitamins?: Record<string, VitaminMineralDetail>
+
+  @Prop({ type: Map, of: VitaminMineralDetailSchema, default: {} })
+  minerals?: Record<string, VitaminMineralDetail>
 }
 
 // Sub-schema for serving information

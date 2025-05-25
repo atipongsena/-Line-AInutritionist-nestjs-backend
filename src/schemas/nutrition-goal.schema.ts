@@ -36,9 +36,19 @@ export class DailyNutrientGoals implements ConsumedNutrientValues {
   @Prop({ default: 250 }) carbs: number
   @Prop({ default: 65 }) fat: number
   @Prop({ default: 25 }) fiber?: number
-  @Prop({ default: 50 }) sugar?: number
-  @Prop({ default: 2300 }) sodium?: number
-  @Prop({ default: 2000 }) water?: number // in ml
+  @Prop({ default: 50 }) sugar?: number // Typically for added sugars, max limit
+  @Prop({ default: 2300 }) sodium?: number // Max limit
+  @Prop({ default: 2000 }) water?: number // in ml, will be refined
+  @Prop() cholesterol?: number // Max limit, in mg
+  @Prop() saturated_fat?: number // Max limit, in g
+  @Prop() omega3?: number // Recommended intake, in g (e.g., ALA)
+
+  @Prop({
+    type: MongooseSchema.Types.Map,
+    of: { goal: Number, unit: String, dv: Number },
+    default: () => new Map(),
+  })
+  micronutrients?: Map<string, { goal?: number; unit?: string; dv?: number }>
 }
 
 // Sub-schema for Meal Distribution (can be percentage or calories)
@@ -178,16 +188,31 @@ export class NutritionGoal {
   aiGenerated?: boolean
 
   calculateBMR(): number {
-    if (!this.weight || !this.height || !this.age || !this.gender) return 0
-    if (this.gender === 'male') {
-      return (
-        88.362 + 13.397 * this.weight + 4.799 * this.height - 5.677 * this.age
+    if (!this.weight || !this.height || !this.age || !this.gender) {
+      console.warn(
+        '[BMR Calculation] Missing required fields for BMR calculation.',
       )
-    } else {
-      return (
-        447.593 + 9.247 * this.weight + 3.098 * this.height - 4.33 * this.age
-      )
+      return 0
     }
+
+    // Mifflin-St Jeor Equation:
+    // For men: BMR = (10 * weight in kg) + (6.25 * height in cm) - (5 * age in years) + 5
+    // For women: BMR = (10 * weight in kg) + (6.25 * height in cm) - (5 * age in years) - 161
+    let bmr: number
+    if (this.gender === 'male') {
+      bmr = 10 * this.weight + 6.25 * this.height - 5 * this.age + 5
+    } else if (this.gender === 'female') {
+      bmr = 10 * this.weight + 6.25 * this.height - 5 * this.age - 161
+    } else {
+      // For 'other' or unspecified genders, using the female formula as an approximation for BMR.
+      // This is a simplification and may not be accurate for all individuals.
+      // Ideally, specific guidelines or user input for metabolic rate would be used.
+      console.warn(
+        `[BMR Calculation] Gender is '${this.gender}'. Using female formula as an approximation for BMR.`,
+      )
+      bmr = 10 * this.weight + 6.25 * this.height - 5 * this.age - 161
+    }
+    return Math.round(bmr)
   }
 
   calculateTDEE(): number {
@@ -208,11 +233,26 @@ export class NutritionGoal {
     const tdee = this.calculateTDEE()
     switch (this.healthGoal) {
       case 'lose_weight':
-        return tdee - 500
+        return (
+          tdee -
+          (this.weight_goal?.weekly_rate
+            ? (this.weight_goal.weekly_rate * 7700) / 7
+            : 500)
+        ) // Approx 7700 kcal per kg fat
       case 'gain_weight':
-        return tdee + 500
+        return (
+          tdee +
+          (this.weight_goal?.weekly_rate
+            ? (this.weight_goal.weekly_rate * 7700) / 7
+            : 500)
+        )
       case 'build_muscle':
-        return tdee + 300
+        return (
+          tdee +
+          (this.weight_goal?.weekly_rate
+            ? (this.weight_goal.weekly_rate * 7700) / 7
+            : 300)
+        ) // Building muscle also requires surplus
       default:
         return tdee
     }
@@ -273,19 +313,60 @@ export class NutritionGoal {
     const proteinGoal = Math.round((calorieGoal * proteinRatio) / 4)
     const carbGoal = Math.round((calorieGoal * carbRatio) / 4)
     const fatGoal = Math.round((calorieGoal * fatRatio) / 9)
-    const fiberGoal = Math.round((this.weight * 0.14 * 1000) / 100)
-    const sugarGoal = Math.round(carbGoal * 0.1)
-    const sodiumGoal = 2300
+    // Consider revising this if too high. Standard recommendations are 25-38g.
+    // For example, a fixed 25g for women, 38g for men, or 14g per 1000 kcal.
+    // Let's use 14g per 1000 kcal as a more dynamic approach.
+    const calculatedFiberGoal = Math.round((calorieGoal / 1000) * 14)
+
+    // Aim for <10% of carbs from added sugar (this is an approximation)
+    // More precisely, <10% of total calories from added sugar.
+    const calculatedSugarGoal = Math.round((calorieGoal * 0.1) / 4) // <10% of total calories, converted to grams.
+
+    const sodiumGoal = 2300 // mg, general recommendation for max intake
+
+    // Water Goal Calculation
+    let baseWaterGoal = this.weight * 30 // ml per kg of body weight (assuming this.weight is in kg)
+    switch (this.activityLevel) {
+      case 'light':
+        baseWaterGoal *= 1.1
+        break
+      case 'moderate':
+        baseWaterGoal *= 1.2
+        break
+      case 'active':
+        baseWaterGoal *= 1.3
+        break
+      case 'very_active':
+        baseWaterGoal *= 1.4
+        break
+    }
+    const waterGoal = Math.round(baseWaterGoal)
+
+    // Cholesterol, Saturated Fat, Trans Fat, Omega-3 Goals
+    const cholesterolGoal = 300 // mg, max recommended
+    const saturatedFatGoal = Math.round((calorieGoal * 0.1) / 9) // <10% of total calories from saturated fat, converted to grams
+
+    let omega3Goal = 1.1 // g/day for ALA (female adult)
+    if (this.gender === 'male') {
+      omega3Goal = 1.6 // g/day for ALA (male adult)
+    } else if (this.gender !== 'female') {
+      // For 'other' genders, use average or prompt for more specific needs if possible in a different context.
+      // Using average of male and female for now.
+      omega3Goal = (1.1 + 1.6) / 2
+    }
 
     this.daily_goals = {
       calories: calorieGoal,
       protein: proteinGoal,
       carbs: carbGoal,
       fat: fatGoal,
-      fiber: fiberGoal,
-      sugar: sugarGoal,
+      fiber: calculatedFiberGoal, // Using new calculation
+      sugar: calculatedSugarGoal, // Using new calculation based on total calories
       sodium: sodiumGoal,
-      water: this.daily_goals?.water || 2000,
+      water: waterGoal,
+      cholesterol: cholesterolGoal,
+      saturated_fat: saturatedFatGoal,
+      omega3: parseFloat(omega3Goal.toFixed(1)),
     }
 
     const dist = this.meal_distribution || new MealDistribution()

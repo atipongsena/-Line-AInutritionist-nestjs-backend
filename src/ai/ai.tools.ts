@@ -3,18 +3,19 @@ import OpenAI from 'openai'
 // -------------------- FOOD ANALYSIS TOOL ---------------------
 export const FOOD_ANALYSIS_SCHEMA = {
   type: 'object',
+  strict: true,
   properties: {
     food_name: {
       type: 'string',
-      description: 'ชื่ออาหารที่วิเคราะห์',
+      description: 'ชื่ออาหารที่วิเคราะห์ (ในภาษาของผู้ใช้)',
     },
     portion: {
       type: 'string',
-      description: "ปริมาณหรือขนาดของอาหาร เช่น '1 จาน (320 กรัม)",
+      description: 'ปริมาณหรือขนาดของอาหาร เช่น "1 จาน (320 กรัม)"',
     },
     components: {
       type: 'array',
-      description: 'ส่วนประกอบของอาหาร',
+      description: 'ส่วนประกอบของอาหาร ผลรวม percentage ต้องเท่ากับ 100',
       items: {
         type: 'object',
         properties: {
@@ -28,14 +29,15 @@ export const FOOD_ANALYSIS_SCHEMA = {
           },
           unit: {
             type: 'string',
-            description: 'หน่วยของปริมาณ เช่น กรัม (g), มิลลิลิตร (ml)',
+            description: 'หน่วยของปริมาณ',
           },
           percentage: {
             type: 'number',
-            description: 'เปอร์เซ็นต์ของส่วนประกอบเทียบกับทั้งหมด',
+            description: 'เปอร์เซ็นต์ของส่วนประกอบเทียบกับทั้งหมด (0-100)',
           },
         },
         required: ['name', 'amount', 'unit', 'percentage'],
+        additionalProperties: false,
       },
     },
     calories: {
@@ -66,10 +68,6 @@ export const FOOD_ANALYSIS_SCHEMA = {
       type: 'number',
       description: 'ปริมาณไขมันอิ่มตัวในหน่วยกรัม',
     },
-    trans_fat: {
-      type: 'number',
-      description: 'ปริมาณไขมันทรานส์ในหน่วยกรัม',
-    },
     omega3: {
       type: 'number',
       description: 'ปริมาณโอเมก้า-3 ในหน่วยกรัม',
@@ -84,184 +82,30 @@ export const FOOD_ANALYSIS_SCHEMA = {
     },
     water: {
       type: 'number',
-      description: 'ปริมาณน้ำในหน่วยกรัม',
+      description: 'ปริมาณน้ำในหน่วยมิลลิลิตร',
     },
-    vitamin_a: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน A และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_c: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน C และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_d: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน D และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_e: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน E และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_k: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน K และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b1: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description:
-        'ปริมาณวิตามิน B1 (Thiamine) และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b2: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description:
-        'ปริมาณวิตามิน B2 (Riboflavin) และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b3: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description:
-        'ปริมาณวิตามิน B3 (Niacin) และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b5: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description:
-        'ปริมาณวิตามิน B5 (Pantothenic Acid) และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b6: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน B6 และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b9: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description:
-        'ปริมาณวิตามิน B9 (Folate) และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    vitamin_b12: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณวิตามิน B12 และเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    calcium: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณแคลเซียมและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    iron: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณเหล็กและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    magnesium: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณแมกนีเซียมและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    potassium: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณโพแทสเซียมและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    zinc: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณสังกะสีและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    phosphorus: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณฟอสฟอรัสและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
-    selenium: {
-      type: 'object',
-      properties: {
-        value: { type: 'number' },
-        unit: { type: 'string' },
-        dv: { type: 'number' },
-      },
-      description: 'ปริมาณซีลีเนียมและเปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
-    },
+    // Vitamins - Using the original flat structure for compatibility
+    vitamin_a: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_c: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_d: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_e: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_k: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b1: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b2: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b3: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b5: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b6: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b9: { $ref: '#/definitions/VitaminMineralDetail' },
+    vitamin_b12: { $ref: '#/definitions/VitaminMineralDetail' },
+    // Minerals
+    calcium: { $ref: '#/definitions/VitaminMineralDetail' },
+    iron: { $ref: '#/definitions/VitaminMineralDetail' },
+    magnesium: { $ref: '#/definitions/VitaminMineralDetail' },
+    potassium: { $ref: '#/definitions/VitaminMineralDetail' },
+    zinc: { $ref: '#/definitions/VitaminMineralDetail' },
+    phosphorus: { $ref: '#/definitions/VitaminMineralDetail' },
+    selenium: { $ref: '#/definitions/VitaminMineralDetail' },
+    // Health information
     health_benefits: {
       type: 'string',
       description: 'ประโยชน์ต่อสุขภาพของอาหารนี้',
@@ -286,7 +130,6 @@ export const FOOD_ANALYSIS_SCHEMA = {
     'fiber',
     'sugar',
     'saturated_fat',
-    'trans_fat',
     'omega3',
     'cholesterol',
     'sodium',
@@ -314,6 +157,28 @@ export const FOOD_ANALYSIS_SCHEMA = {
     'health_cautions',
     'recommendation',
   ],
+  additionalProperties: false,
+  definitions: {
+    VitaminMineralDetail: {
+      type: 'object',
+      properties: {
+        value: {
+          type: 'number',
+          description: 'ปริมาณสารอาหาร',
+        },
+        unit: {
+          type: 'string',
+          description: 'หน่วยของปริมาณ',
+        },
+        dv: {
+          type: 'number',
+          description: 'เปอร์เซ็นต์ของค่าที่แนะนำต่อวัน',
+        },
+      },
+      required: ['value', 'unit', 'dv'],
+      additionalProperties: false,
+    },
+  },
 } as const
 
 export const foodAnalysisTool: OpenAI.Chat.ChatCompletionTool = {
@@ -329,6 +194,7 @@ export const foodAnalysisTool: OpenAI.Chat.ChatCompletionTool = {
 // -------------------- NUTRITION GOAL TOOL ---------------------
 export const NUTRITION_GOAL_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     bmr: {
       type: 'number',
@@ -340,6 +206,7 @@ export const NUTRITION_GOAL_SCHEMA = {
     },
     daily_goals: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         calories: {
           type: 'number',
@@ -357,23 +224,12 @@ export const NUTRITION_GOAL_SCHEMA = {
           type: 'number',
           description: 'เป้าหมายไขมันต่อวัน (กรัม)',
         },
-        fiber: {
-          type: 'number',
-          description: 'เป้าหมายใยอาหารต่อวัน (กรัม)',
-        },
-        sugar_max: {
-          type: 'number',
-          description: 'ปริมาณน้ำตาลสูงสุดที่แนะนำต่อวัน (กรัม)',
-        },
-        water: {
-          type: 'number',
-          description: 'เป้าหมายการดื่มน้ำต่อวัน (มิลลิลิตร)',
-        },
       },
       required: ['calories', 'protein', 'carbs', 'fat'],
     },
     macro_distribution: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         protein_percent: {
           type: 'integer',
@@ -392,28 +248,14 @@ export const NUTRITION_GOAL_SCHEMA = {
     },
     meal_recommendations: {
       type: 'object',
-      description: 'คำแนะนำแคลอรี่สำหรับแต่ละมื้อ',
       additionalProperties: {
         type: 'number',
       },
+      description: 'คำแนะนำแคลอรี่สำหรับแต่ละมื้อ',
     },
     health_advice: {
       type: 'string',
       description: 'คำแนะนำสุขภาพสำหรับเป้าหมายนี้',
-    },
-    food_recommendations: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-      description: 'รายการอาหารที่แนะนำ',
-    },
-    foods_to_avoid: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-      description: 'รายการอาหารที่ควรหลีกเลี่ยง',
     },
   },
   required: [
@@ -439,6 +281,7 @@ export const nutritionGoalTool: OpenAI.Chat.ChatCompletionTool = {
 // -------------------- EATING PATTERN TOOL ---------------------
 export const EATING_PATTERN_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     calories_trend: {
       type: 'string',
@@ -449,14 +292,11 @@ export const EATING_PATTERN_SCHEMA = {
       type: 'number',
       description: 'แคลอรี่เฉลี่ยต่อวัน',
     },
-    calorie_consistency: {
-      type: 'number',
-      description: 'ความสม่ำเสมอของการบริโภคแคลอรี่ (0-1)',
-    },
     meal_timings: {
       type: 'array',
       items: {
         type: 'object',
+        additionalProperties: false,
         properties: {
           meal_name: {
             type: 'string',
@@ -475,12 +315,9 @@ export const EATING_PATTERN_SCHEMA = {
       },
       description: 'เวลาเฉลี่ยในการรับประทานอาหารแต่ละมื้อ',
     },
-    most_skipped_meal: {
-      type: 'string',
-      description: 'มื้อที่มักจะข้ามบ่อยที่สุด',
-    },
     nutrient_balance: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         protein_balance: {
           type: 'number',
@@ -494,20 +331,8 @@ export const EATING_PATTERN_SCHEMA = {
           type: 'number',
           description: 'ความสมดุลของไขมัน (% เทียบกับเป้าหมาย)',
         },
-        fiber_balance: {
-          type: 'number',
-          description: 'ความสมดุลของใยอาหาร (% เทียบกับเป้าหมาย)',
-        },
       },
       required: ['protein_balance', 'carbs_balance', 'fat_balance'],
-    },
-    eating_window_hours: {
-      type: 'number',
-      description: 'ช่วงเวลาที่กินอาหารในแต่ละวัน (ชั่วโมง)',
-    },
-    late_night_eating_frequency: {
-      type: 'number',
-      description: 'ความถี่ของการกินอาหารดึก (0-1)',
     },
     identified_patterns: {
       type: 'array',
@@ -515,13 +340,6 @@ export const EATING_PATTERN_SCHEMA = {
         type: 'string',
       },
       description: 'รูปแบบพฤติกรรมการกินที่ระบุได้',
-    },
-    problematic_behaviors: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-      description: 'พฤติกรรมที่มีปัญหา',
     },
     improvement_suggestions: {
       type: 'array',
@@ -556,9 +374,39 @@ export const eatingPatternTool: OpenAI.Chat.ChatCompletionTool = {
   },
 }
 
+// -------------------- FOOD HISTORY TOOL ---------------------
+export const FOOD_HISTORY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    days: {
+      type: 'number',
+      description:
+        'Number of days to retrieve food logs (default: 30, recommended range: 1-90)',
+    },
+    limit: {
+      type: 'number',
+      description:
+        'Maximum number of food logs to retrieve (default: 100, recommended range: 1-500)',
+    },
+  },
+  required: ['days', 'limit'],
+} as const
+
+export const foodHistoryTool: OpenAI.Chat.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'get_food_history',
+    description:
+      'Retrieves user food logs for eating pattern analysis. Use this before analyzing eating patterns to get the most recent food consumption data.',
+    parameters: FOOD_HISTORY_SCHEMA,
+  },
+}
+
 // -------------------- MEAL RECOMMENDATION TOOL ---------------------
 export const MEAL_RECOMMENDATION_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     meal_type: {
       type: 'string',
@@ -568,6 +416,7 @@ export const MEAL_RECOMMENDATION_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
+        additionalProperties: false,
         properties: {
           name: {
             type: 'string',
@@ -597,28 +446,12 @@ export const MEAL_RECOMMENDATION_SCHEMA = {
             type: 'string',
             description: 'ขนาดที่แนะนำ',
           },
-          benefits: {
-            type: 'array',
-            items: {
-              type: 'string',
-            },
-            description: 'ประโยชน์ต่อสุขภาพ',
-          },
           ingredients: {
             type: 'array',
             items: {
               type: 'string',
             },
             description: 'ส่วนประกอบหลัก',
-          },
-          preparation_time: {
-            type: 'string',
-            description: 'เวลาในการเตรียม',
-          },
-          cooking_difficulty: {
-            type: 'string',
-            enum: ['ง่าย', 'ปานกลาง', 'ยาก'],
-            description: 'ระดับความยากในการทำ',
           },
         },
         required: [
@@ -654,13 +487,6 @@ export const MEAL_RECOMMENDATION_SCHEMA = {
       type: 'string',
       description: 'คำแนะนำเพิ่มเติม',
     },
-    alternatives: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-      description: 'ทางเลือกอื่นๆ',
-    },
   },
   required: [
     'meal_type',
@@ -683,215 +509,111 @@ export const mealRecommendationTool: OpenAI.Chat.ChatCompletionTool = {
   },
 }
 
-// -------------------- BARCODE ANALYSIS TOOL ---------------------
-export const BARCODE_ANALYSIS_SCHEMA = {
+// -------------------- CONVERSATIONAL FOOD HISTORY TOOL ---------------------
+export const CONVERSATIONAL_FOOD_HISTORY_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
-    barcode_type: {
+    query_type: {
       type: 'string',
-      description: 'ประเภทของบาร์โค้ด',
+      enum: [
+        'recent_meals',
+        'specific_date',
+        'date_range',
+        'meal_type_analysis',
+        'nutrition_summary',
+        'eating_patterns',
+        'food_frequency',
+        'calorie_trends',
+        'comparison',
+        'general_question',
+      ],
+      description: 'ประเภทของคำถามที่ user ถาม',
     },
-    barcode_value: {
-      type: 'string',
-      description: 'ค่าของบาร์โค้ด',
-    },
-    food_info: {
+    time_period: {
       type: 'object',
       properties: {
-        product_name: {
+        days: {
+          type: 'number',
+          description: 'จำนวนวันที่ต้องการดูข้อมูล (1-90 วัน)',
+        },
+        specific_date: {
           type: 'string',
-          description: 'ชื่อผลิตภัณฑ์',
+          description: 'วันที่เฉพาะ (YYYY-MM-DD format)',
         },
-        brand: {
+        start_date: {
           type: 'string',
-          description: 'แบรนด์',
+          description: 'วันที่เริ่มต้น (YYYY-MM-DD format)',
         },
-        serving_size: {
+        end_date: {
           type: 'string',
-          description: 'ขนาดหนึ่งหน่วยบริโภค',
+          description: 'วันที่สิ้นสุด (YYYY-MM-DD format)',
         },
-        servings_per_container: {
-          type: 'number',
-          description: 'จำนวนหน่วยบริโภคต่อบรรจุภัณฑ์',
-        },
-        calories: {
-          type: 'number',
-          description: 'แคลอรี่ต่อหนึ่งหน่วยบริโภค',
-        },
-        protein: {
-          type: 'number',
-          description: 'โปรตีนต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        carbs: {
-          type: 'number',
-          description: 'คาร์โบไฮเดรตต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        fat: {
-          type: 'number',
-          description: 'ไขมันต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        fiber: {
-          type: 'number',
-          description: 'ใยอาหารต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        sugar: {
-          type: 'number',
-          description: 'น้ำตาลต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        saturated_fat: {
-          type: 'number',
-          description: 'ไขมันอิ่มตัวต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        trans_fat: {
-          type: 'number',
-          description: 'ไขมันทรานส์ต่อหนึ่งหน่วยบริโภค (กรัม)',
-        },
-        cholesterol: {
-          type: 'number',
-          description: 'คอเลสเตอรอลต่อหนึ่งหน่วยบริโภค (มิลลิกรัม)',
-        },
-        sodium: {
-          type: 'number',
-          description: 'โซเดียมต่อหนึ่งหน่วยบริโภค (มิลลิกรัม)',
-        },
-        vitamins_minerals: {
-          type: 'object',
-          description: 'วิตามินและแร่ธาตุ (% ของค่าที่แนะนำต่อวัน)',
-          additionalProperties: {
-            type: 'number',
+      },
+      description: 'ช่วงเวลาที่ต้องการวิเคราะห์',
+    },
+    filters: {
+      type: 'object',
+      properties: {
+        meal_types: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['breakfast', 'lunch', 'dinner', 'snack'],
           },
+          description: 'ประเภทมื้ออาหารที่ต้องการกรอง',
         },
-        ingredients: {
+        food_names: {
           type: 'array',
           items: {
             type: 'string',
           },
-          description: 'ส่วนประกอบ',
+          description: 'ชื่ออาหารที่ต้องการค้นหา',
         },
-        allergens: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-          description: 'สารก่อภูมิแพ้',
+        min_calories: {
+          type: 'number',
+          description: 'แคลอรี่ขั้นต่ำ',
         },
-        storage_instructions: {
-          type: 'string',
-          description: 'คำแนะนำในการเก็บรักษา',
-        },
-        expiration_date: {
-          type: 'string',
-          description: 'วันหมดอายุ',
+        max_calories: {
+          type: 'number',
+          description: 'แคลอรี่สูงสุด',
         },
       },
-      required: [
-        'product_name',
-        'brand',
-        'serving_size',
-        'calories',
-        'protein',
-        'carbs',
-        'fat',
-        'ingredients',
-      ],
+      description: 'เงื่อนไขการกรองข้อมูล',
     },
-    nutritional_rating: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 5,
-      description: 'คะแนนคุณค่าทางโภชนาการ (1-5)',
-    },
-    health_benefits: {
+    analysis_focus: {
       type: 'array',
       items: {
         type: 'string',
+        enum: [
+          'calories',
+          'protein',
+          'carbs',
+          'fat',
+          'fiber',
+          'meal_timing',
+          'food_variety',
+          'portion_sizes',
+          'eating_frequency',
+          'nutritional_balance',
+        ],
       },
-      description: 'ประโยชน์ต่อสุขภาพ',
+      description: 'จุดเน้นในการวิเคราะห์',
     },
-    health_concerns: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-      description: 'ข้อกังวลด้านสุขภาพ',
-    },
-    personalized_advice: {
+    user_question: {
       type: 'string',
-      description: 'คำแนะนำเฉพาะบุคคล',
-    },
-    alternatives: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-      description: 'ทางเลือกอื่นที่ดีกว่า',
+      description: 'คำถามเดิมของ user เพื่อให้ AI เข้าใจบริบท',
     },
   },
-  required: [
-    'barcode_type',
-    'barcode_value',
-    'food_info',
-    'nutritional_rating',
-    'health_benefits',
-    'health_concerns',
-    'personalized_advice',
-  ],
+  required: ['query_type', 'user_question'],
 } as const
 
-export const barcodeAnalysisTool: OpenAI.Chat.ChatCompletionTool = {
+export const conversationalFoodHistoryTool: OpenAI.Chat.ChatCompletionTool = {
   type: 'function',
   function: {
-    name: 'analyze_barcode_data',
+    name: 'answer_food_history_question',
     description:
-      'Analyzes data from a food product barcode, including nutrition, ingredients, and provides initial advice. Extracts information as if from a product label or packaging.',
-    parameters: BARCODE_ANALYSIS_SCHEMA,
+      'ตอบคำถามเกี่ยวกับประวัติการกินของ user โดยดึงข้อมูลและวิเคราะห์ตามที่ user ถาม สามารถตอบคำถามเช่น "เมื่อวานกินอะไรบ้าง", "สัปดาห์นี้กินโปรตีนเท่าไหร่", "เดือนที่แล้วกินข้าวบ่อยแค่ไหน" เป็นต้น',
+    parameters: CONVERSATIONAL_FOOD_HISTORY_SCHEMA,
   },
 }
-
-// -------------------- WEB SEARCH REQUEST TOOL ---------------------
-export const WEB_SEARCH_REQUEST_SCHEMA = {
-  type: 'object',
-  properties: {
-    search_query: {
-      type: 'string',
-      description:
-        'A specific and detailed search query to find information about a food product on the web. Should include product name, brand, type, and any other identifying details from packaging or user query.',
-    },
-    product_name: {
-      type: 'string',
-      description:
-        'The name of the product for which web search is being requested.',
-    },
-    details_from_image_or_text: {
-      type: 'string',
-      description:
-        'Key details or observations from the image or user text that prompt the web search (e.g., "unclear packaging", "unknown brand", "user asking for specific nutrient not in database").',
-    },
-    language: {
-      type: 'string',
-      description:
-        'The language code (e.g., "th", "en") for the search query and expected results. Defaults to "en" if not specified.',
-    },
-  },
-  required: ['search_query', 'product_name', 'details_from_image_or_text'],
-}
-
-export const requestProductInfoFromWebTool: OpenAI.Chat.ChatCompletionTool = {
-  type: 'function',
-  function: {
-    name: 'request_product_information_from_web',
-    description:
-      'Requests additional information about a food product by formulating a web search query. Use this when you cannot identify the product, find its nutritional details from the provided image/text, your existing knowledge, or other available tools.',
-    parameters: WEB_SEARCH_REQUEST_SCHEMA,
-  },
-}
-
-// Array of all tools to be used by the AI service
-export const allTools: OpenAI.Chat.ChatCompletionTool[] = [
-  foodAnalysisTool,
-  nutritionGoalTool,
-  eatingPatternTool,
-  mealRecommendationTool,
-  barcodeAnalysisTool,
-  requestProductInfoFromWebTool,
-]

@@ -95,6 +95,18 @@ export class UserService {
     return this.mapUserDocumentToDto(savedUser)
   }
 
+  async getUserDocumentByLineId(
+    lineUserId: string,
+  ): Promise<UserDocument | null> {
+    this.logger.log(`Getting user document for ${lineUserId}`)
+    const user = await this.userModel.findOne({ lineUserId }).exec()
+    if (!user) {
+      this.logger.warn(`User document for ${lineUserId} not found.`)
+      return null
+    }
+    return user
+  }
+
   async getUserProfile(lineUserId: string): Promise<UserProfileDto | null> {
     this.logger.log(`Getting profile for ${lineUserId}`)
     const user = await this.userModel

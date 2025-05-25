@@ -1,19 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common'
-import { OpenaiService } from '../openai/openai.service'
-import OpenAI from 'openai'
+import { OpenAI } from 'openai'
+import {
+  OpenaiService,
+  OpenaiResponseCreateParams,
+  OpenaiResponseInputMessage,
+  ResponsesApiContentItem,
+  hasOutputArray,
+  hasOutputText,
+  hasUsage,
+  isResponsesApiMessage,
+} from '../openai/openai.service'
 import { APIError } from 'openai/error'
 import {
-  foodAnalysisTool as importedFoodAnalysisTool,
-  nutritionGoalTool as importedNutritionGoalTool,
-  eatingPatternTool as importedEatingPatternTool,
-  mealRecommendationTool as importedMealRecommendationTool,
-  barcodeAnalysisTool as importedBarcodeAnalysisTool,
-  requestProductInfoFromWebTool as importedRequestProductInfoFromWebTool,
+  eatingPatternTool,
+  foodAnalysisTool,
+  foodHistoryTool,
+  mealRecommendationTool,
+  nutritionGoalTool,
+  conversationalFoodHistoryTool,
 } from './ai.tools'
 import { ConversationHistoryService } from '../conversation-history/conversation-history.service'
 import { AnalysisCacheService } from '../analysis-cache/analysis-cache.service'
-import { FoodAnalysisData } from '../line/flex.messages'
 import { UserProfileDto } from '../user/user.interface' // Import UserProfileDto
+import { AI_CONFIG, AiTaskType, OpenAiChatParameters } from './ai.config' // Added import
+import { PromptCachingService } from './prompt-caching.service' // Added for prompt optimization
+import { MetaPromptsService } from './meta-prompts.service' // Added for advanced prompting
+import { FoodLogService } from '../food-log/food-log.service' // Added for food history retrieval
 
 // Define the new result type for non-food images
 export interface NonFoodDescriptionResult {
@@ -56,7 +68,6 @@ export interface FoodAnalysisToolResult {
   fiber?: number
   sugar?: number
   saturated_fat?: number
-  trans_fat?: number
   omega3?: number
   cholesterol?: number
   sodium?: number
@@ -83,6 +94,9 @@ export interface FoodAnalysisToolResult {
   health_benefits: string
   health_cautions: string
   recommendation: string
+  confidence_score?: number // Added
+  tags?: string[] // Added
+  imageUrl?: string // Added imageUrl
 }
 
 export interface FoodComponentDetail {
@@ -125,6 +139,97 @@ export interface NutritionGoalToolResult {
   food_recommendations?: string[]
   foods_to_avoid?: string[]
   // Removed status and message, AI will generate final response text
+}
+
+// --- FOOD HISTORY TOOL ---
+// Args for get_food_history tool
+export interface FoodHistoryArgs {
+  days?: number // Number of days to retrieve (default: 30, max: 90)
+  limit?: number // Maximum number of logs (default: 100, max: 500)
+}
+
+// Result from handleGetFoodHistory, returns array of food logs for AI analysis
+export interface FoodHistoryToolResult {
+  food_logs: Array<{
+    timestamp: string // ISO string for easier JSON handling
+    mealType: string
+    foodName: string
+    calories: number
+    protein: number
+    carbs: number
+    fat: number
+    fiber?: number
+  }>
+  summary: {
+    total_logs: number
+    days_covered: number
+    date_range: {
+      start: string // ISO string
+      end: string // ISO string
+    }
+    meal_types_distribution: {
+      breakfast: number
+      lunch: number
+      dinner: number
+      snack: number
+      other: number
+    }
+  }
+  message: string // Human-readable summary for AI context
+}
+
+// --- CONVERSATIONAL FOOD HISTORY TOOL ---
+export interface ConversationalFoodHistoryArgs {
+  query_type:
+    | 'recent_meals'
+    | 'specific_date'
+    | 'date_range'
+    | 'meal_type_analysis'
+    | 'nutrition_summary'
+    | 'eating_patterns'
+    | 'food_frequency'
+    | 'calorie_trends'
+    | 'comparison'
+    | 'general_question'
+  time_period?: {
+    days?: number
+    specific_date?: string
+    start_date?: string
+    end_date?: string
+  }
+  filters?: {
+    meal_types?: ('breakfast' | 'lunch' | 'dinner' | 'snack')[]
+    food_names?: string[]
+    min_calories?: number
+    max_calories?: number
+  }
+  analysis_focus?: (
+    | 'calories'
+    | 'protein'
+    | 'carbs'
+    | 'fat'
+    | 'fiber'
+    | 'meal_timing'
+    | 'food_variety'
+    | 'portion_sizes'
+    | 'eating_frequency'
+    | 'nutritional_balance'
+  )[]
+  user_question: string
+}
+
+export interface ConversationalFoodHistoryResult {
+  answer: string
+  data_summary: {
+    total_logs_analyzed: number
+    date_range: {
+      start: string
+      end: string
+    }
+    key_insights: string[]
+  }
+  recommendations?: string[]
+  follow_up_suggestions?: string[]
 }
 
 // --- EATING PATTERN TOOL ---
@@ -215,69 +320,6 @@ export interface MealRecommendationToolResult {
   alternatives?: string[] // Alternative food items or meal ideas
 }
 
-// --- BARCODE ANALYSIS TOOL ---
-// Args for analyze_barcode_data (AI sends barcode data or product identifier)
-export interface BarcodeAnalysisArgs {
-  barcode_type?: string // e.g., EAN_13, UPC_A
-  barcode_value: string // The actual barcode string
-  // AI might also send product_name if it could identify it before calling the tool
-  product_name_from_ai?: string
-}
-
-// Result from handleAnalyzeBarcodeData, matching BARCODE_ANALYSIS_SCHEMA
-export interface BarcodeAnalysisToolResult {
-  barcode_type: string
-  barcode_value: string
-  food_info: {
-    product_name: string
-    brand?: string
-    serving_size?: string
-    servings_per_container?: number
-    calories: number // Per serving
-    protein: number // g, per serving
-    carbs: number // g, per serving
-    fat: number // g, per serving
-    fiber?: number // g, per serving
-    sugar?: number // g, per serving
-    saturated_fat?: number // g, per serving
-    trans_fat?: number // g, per serving
-    cholesterol?: number // mg, per serving
-    sodium?: number // mg, per serving
-    vitamins_minerals?: Record<string, number> // e.g., { VitaminC_DV: 10, Iron_DV: 15 } (% DV)
-    ingredients: string[]
-    allergens?: string[]
-    storage_instructions?: string
-    // expiration_date is too dynamic for a generic tool result, AI can mention if found on package
-  }
-  nutritional_rating: number // 1-5 (1=Poor, 5=Excellent)
-  health_benefits?: string[]
-  health_concerns?: string[]
-  personalized_advice: string
-  alternatives?: string[] // Healthier alternative products or food types
-}
-
-// --- WEB SEARCH REQUEST TOOL TYPES ---
-// Args for request_product_information_from_web tool (input AI provides to the tool)
-export interface WebSearchRequestArgs {
-  search_query: string
-  product_name: string
-  details_from_image_or_text: string
-  language?: string
-}
-
-// Result of the request_product_information_from_web tool handler
-// This signals to the calling system (assistant) that a web search is needed.
-export interface WebSearchRequestToolResult {
-  status:
-    | 'web_search_required'
-    | 'web_search_not_needed_already_found'
-    | 'error_creating_query'
-  search_query_for_assistant?: string // The query to be used by the assistant for web search
-  original_product_name?: string
-  message_to_user_while_searching?: string // A message to show the user
-  error_message?: string // If status is error
-}
-
 // Type for a generic tool handler function
 interface ToolHandler<ArgsDto, ResultDto> {
   (
@@ -300,27 +342,43 @@ export interface EmbeddingResult {
   modelUsed: string
 }
 
+// เพิ่ม interface ใหม่หลัง line 116
+export interface EnhancedAnalysisComponents {
+  personalizedAdvice: string
+  identifiedPatterns: string[]
+  improvementSuggestions: string[]
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name)
 
   // Available tools mapping - ensure names match exactly what AI is trained to use
   private readonly availableTools = {
-    [importedFoodAnalysisTool.function.name]: importedFoodAnalysisTool,
-    [importedNutritionGoalTool.function.name]: importedNutritionGoalTool,
-    [importedEatingPatternTool.function.name]: importedEatingPatternTool,
-    [importedMealRecommendationTool.function.name]:
-      importedMealRecommendationTool,
-    [importedBarcodeAnalysisTool.function.name]: importedBarcodeAnalysisTool,
-    [importedRequestProductInfoFromWebTool.function.name]:
-      importedRequestProductInfoFromWebTool,
+    [foodAnalysisTool.function.name]: foodAnalysisTool,
+    [nutritionGoalTool.function.name]: nutritionGoalTool,
+    [eatingPatternTool.function.name]: eatingPatternTool,
+    [mealRecommendationTool.function.name]: mealRecommendationTool,
+    [foodHistoryTool.function.name]: foodHistoryTool,
+    [conversationalFoodHistoryTool.function.name]:
+      conversationalFoodHistoryTool,
   }
 
   constructor(
     private readonly openaiService: OpenaiService,
     private readonly conversationHistoryService: ConversationHistoryService, // Injected service
     private readonly analysisCacheService: AnalysisCacheService, // Added injection
-  ) {}
+    private readonly promptCachingService: PromptCachingService, // Added for prompt optimization
+    private readonly metaPromptsService: MetaPromptsService, // Added for advanced prompting
+    private readonly foodLogService: FoodLogService, // Added for food history retrieval
+  ) {
+    // Validate configuration on startup
+    if (!this.openaiService.getGpt41DeploymentName()) {
+      this.logger.warn(
+        'GPT-4.1 deployment not configured. Some features may be limited.',
+      )
+    }
+  }
 
   // --- Query Classification and Model Selection ---
   private classifyQueryInternal(
@@ -365,12 +423,10 @@ export class AiService {
       'อาการ',
       'แพ้',
       'ข้อจำกัด',
-      'สุขภาพ',
       'condition',
       'symptom',
       'allergy',
       'restriction',
-      'health',
     ]
     for (const keyword of healthKeywords) {
       if (query.toLowerCase().includes(keyword.toLowerCase())) {
@@ -385,7 +441,10 @@ export class AiService {
       userProfile.healthConditions &&
       userProfile.healthConditions.length > 0 &&
       !userProfile.healthConditions.some(
-        (c) => c.toLowerCase() === 'none' || c.trim() === '',
+        (c) =>
+          c.toLowerCase() === 'none' ||
+          c.toLowerCase() === 'ไม่มี' ||
+          c.trim() === '',
       )
     ) {
       score += 5
@@ -395,20 +454,13 @@ export class AiService {
       userProfile.foodAllergies &&
       userProfile.foodAllergies.length > 0 &&
       !userProfile.foodAllergies.some(
-        (a) => a.toLowerCase() === 'none' || a.trim() === '',
+        (a) =>
+          a.toLowerCase() === 'none' ||
+          a.toLowerCase() === 'ไม่มีแพ้' ||
+          a.trim() === '',
       )
     ) {
       score += 4
-      healthRelated = true
-    }
-    if (
-      userProfile.foodAllergies &&
-      userProfile.foodAllergies.length > 0 &&
-      !userProfile.foodAllergies.some(
-        (r) => r.toLowerCase() === 'none' || r.trim() === '',
-      )
-    ) {
-      score += 3
       healthRelated = true
     }
 
@@ -417,7 +469,7 @@ export class AiService {
       complexityLevel = 2
     } else if (score >= 7 && score < 10) {
       complexityLevel = 3
-    } else if (score >= 10) {
+    } else if (score >= 20) {
       complexityLevel = 4
     }
 
@@ -439,187 +491,212 @@ export class AiService {
     query: string,
     userProfile: UserProfileDto,
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
-  ): { deploymentName: string; complexityLevel: number; score: number } {
-    const { complexityLevel, score } = this.classifyQueryInternal(
-      query,
-      userProfile,
-    )
+    taskType: AiTaskType, // Changed from isFoodAnalysisTask
+  ): {
+    deploymentName: string
+    complexityLevel: number
+    score: number
+    params: OpenAiChatParameters // Changed from temperature to params
+  } {
+    const {
+      complexityLevel,
+      score,
+      healthRelated,
+    } = // healthRelated is kept for model selection logic
+      this.classifyQueryInternal(query, userProfile)
 
     let useFullModel = false
+
+    // Determine base model (full or mini) - This logic remains largely the same
     if (complexityLevel === 4) {
       useFullModel = true
       this.logger.log(
-        `High complexity (level 4, score ${score}) detected, selecting gpt-4.1.`,
+        `High complexity (level 4, score ${score}), selecting gpt-4.1 for task: ${taskType}`,
       )
-    } else if (timeConstraint === 'accurate' && complexityLevel >= 3) {
-      useFullModel = true
+    } else if (complexityLevel === 3) {
+      if (timeConstraint === 'accurate') {
+        useFullModel = true
+      }
       this.logger.log(
-        `'accurate' constraint with complexity level ${complexityLevel} (score ${score}), selecting gpt-4.1.`,
+        `Complexity level 3 (score ${score}), healthRelated: ${healthRelated}, timeConstraint: '${timeConstraint}'. Task: ${taskType}. Use full model: ${useFullModel}`,
       )
-    } else if (timeConstraint === 'fast' && complexityLevel >= 3) {
-      this.logger.log(
-        `'fast' constraint with complexity level ${complexityLevel} (score ${score}), prioritizing gpt-4.1-mini.`,
-      )
-      // Keep useFullModel as false
     } else {
+      // Complexity level 1 or 2, generally use mini model unless 'accurate' constraint bumps it up
       this.logger.log(
-        `Complexity level ${complexityLevel} (score ${score}) and time constraint '${timeConstraint}', selecting gpt-4.1-mini.`,
+        `Complexity level ${complexityLevel} (score ${score}), normally selecting gpt-4.1-mini for task: ${taskType}`,
       )
     }
 
-    const gpt4DeploymentName = this.openaiService.getGpt4DeploymentName()
-    const gpt35DeploymentName = this.openaiService.getGpt35DeploymentName()
+    // Adjust useFullModel based on constraints if not already determined by high complexity
+    if (
+      !useFullModel &&
+      timeConstraint === 'accurate' &&
+      complexityLevel >= 2
+    ) {
+      useFullModel = true
+      this.logger.log(
+        `'accurate' constraint with complexity level ${complexityLevel}, overriding to gpt-4.1 for task: ${taskType}`,
+      )
+    } else if (
+      useFullModel &&
+      timeConstraint === 'fast' &&
+      complexityLevel < 4
+    ) {
+      useFullModel = false
+      this.logger.log(
+        `'fast' constraint with complexity level ${complexityLevel}, overriding to gpt-4.1-mini for task: ${taskType}`,
+      )
+    }
 
-    // Fallback logic if a specific deployment name is not configured
-    // Assuming gpt4 is "full" and gpt35 is "mini"
+    const gpt41DeploymentName = this.openaiService.getGpt41DeploymentName()
+    const gpt41_miniDeploymentName =
+      this.openaiService.getGpt41_miniModelDeployment()
     let deploymentName: string
+
     if (useFullModel) {
-      if (gpt4DeploymentName) {
-        deploymentName = gpt4DeploymentName
-      } else if (gpt35DeploymentName) {
+      if (gpt41DeploymentName) {
+        deploymentName = gpt41DeploymentName
+      } else if (gpt41_miniDeploymentName) {
         this.logger.warn(
-          'GPT-4 preferred but not configured, falling back to GPT-3.5.',
+          'GPT-4.1 preferred but not configured, falling back to GPT-4.1 (mini).',
         )
-        deploymentName = gpt35DeploymentName
-        useFullModel = false // Reflect that we are not using the full model
+        deploymentName = gpt41_miniDeploymentName
+        // useFullModel = false; // Reflect that we are not using the full model (already handled)
       } else {
         this.logger.error(
-          'Neither GPT-4 nor GPT-3.5 deployments are configured.',
+          'Neither GPT-4.1 nor GPT-4.1 (mini) deployments are configured لیے task: ${taskType}',
         )
-        throw new Error('No suitable OpenAI model deployments are configured.')
+        throw new Error(
+          'No suitable OpenAI model deployments are configured for this task.',
+        )
       }
     } else {
-      // Prefer mini model (GPT-3.5)
-      if (gpt35DeploymentName) {
-        deploymentName = gpt35DeploymentName
-      } else if (gpt4DeploymentName) {
+      if (gpt41_miniDeploymentName) {
+        deploymentName = gpt41_miniDeploymentName
+      } else if (gpt41DeploymentName) {
         this.logger.warn(
-          'GPT-3.5 preferred but not configured, falling back to GPT-4.',
+          'GPT-4.1 (mini) preferred but not configured, falling back to GPT-4.1 for task: ${taskType}',
         )
-        deploymentName = gpt4DeploymentName
-        // useFullModel could be set to true here if we want to track it, but deploymentName is key
+        deploymentName = gpt41DeploymentName
       } else {
         this.logger.error(
-          'Neither GPT-3.5 nor GPT-4 deployments are configured.',
+          'Neither GPT-4.1 (mini) nor GPT-4.1 deployments are configured for task: ${taskType}',
         )
-        throw new Error('No suitable OpenAI model deployments are configured.')
+        throw new Error(
+          'No suitable OpenAI model deployments are configured for this task.',
+        )
       }
+    }
+
+    // Get parameters from config
+    const taskParams = AI_CONFIG.taskSpecificParameters[taskType] || {}
+    const defaultParams = AI_CONFIG.defaultParameters
+    const finalParams: OpenAiChatParameters = {
+      ...defaultParams,
+      ...taskParams, // Task-specific params override defaults
     }
 
     this.logger.log(
-      `Selected model deployment: ${deploymentName} (Full model used: ${useFullModel})`,
+      `Selected model for task ${taskType}: ${deploymentName} (Full model used: ${useFullModel}). Parameters: ${JSON.stringify(finalParams)}`,
     )
-    return { deploymentName, complexityLevel, score }
+    return { deploymentName, complexityLevel, score, params: finalParams }
   }
 
   // --- System Prompt Creation Methods ---
   private createFoodAnalysisSystemPrompt(
     userProfile: UserProfileDto,
     language: string, // Language now taken from userProfile if available, else default
+    imageUrl?: string,
+    foodDescription?: string,
   ): string {
-    const lang = userProfile.language || language || 'th'
-    const {
-      goal,
-      gender,
-      age,
-      weightKg,
-      heightCm,
-      dietType,
-      activityLevel,
-      healthConditions,
-      foodAllergies,
-      pregnancyLactationStatus,
-      ethicalFoodConsiderations,
-      preferredCuisine,
-      preferredFlavorProfiles,
-    } = userProfile
+    // Use new prompt optimization services
+    const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
+      AiTaskType.FoodAnalysis,
+      userProfile,
+      {
+        hasImage: !!imageUrl,
+        description: foodDescription,
+      },
+    )
 
-    let bmi = 'not specified'
-    if (userProfile.weightKg && userProfile.heightCm) {
-      // Changed
-      bmi = (userProfile.weightKg / (userProfile.heightCm / 100) ** 2).toFixed(
-        1,
+    const staticInstructions = `คุณเป็นนักโภชนาการ AI ที่เชี่ยวชาญในการวิเคราะห์อาหารไทยและนานาชาติ
+
+AGENTIC WORKFLOW REMINDERS:
+- คุณเป็น agent: ทำงานต่อไปจนกว่าจะแก้ปัญหาได้สมบูรณ์
+- ใช้เครื่องมือ - อย่าเดา
+- วางแผนก่อนเรียกใช้ function แต่ละครั้ง
+
+ภารกิจหลัก: วิเคราะห์อาหารและให้คำแนะนำทางโภชนาการที่แม่นยำและเหมาะสมกับบุคคล
+
+การจัดการภาพที่ไม่ใช่อาหาร:
+หากพบว่าภาพที่ส่งมาไม่ใช่อาหาร (เช่น สัตว์, ของใช้, คน, ธรรมชาติ, บรรจุภัณฑ์):
+- ตอบกลับอย่างเป็นกันเองและมีอารมณ์ขัน
+- เรียกชื่อของผู้ใช้: "${userProfile.displayName || 'คุณ'}"
+- แซวเบาๆ ในรูปแบบที่เป็นมิตรและตลก
+- เชิญชวนให้ส่งภาพอาหารแทน
+- อย่าใช้เครื่องมือ extract_food_analysis เมื่อไม่ใช่อาหาร
+
+ตัวอย่างการตอบกลับ non-food ที่เป็นกันเอง:
+**สำหรับสัตว์**: "ฮ่าๆ ${userProfile.displayName || 'คุณ'} ส่งรูป[ชื่อสัตว์]มาให้วิเคราะห์โภชนาการเหรอ 😄 น่ารักมากเลย แต่ผมวิเคราะห์แต่อาหารได้นะครับ! ถ้าเป็นอาหารสัตว์เลี้ยงอาจจะช่วยได้นิดหน่อย แต่ถ้าเป็นอาหารคนล่ะ ลองส่งรูปข้าวผัดหรือส้มตำมาให้ดูสิครับ 🍽️"
+
+**สำหรับของใช้**: "อุ๊ปส์! ${userProfile.displayName || 'คุณ'} ส่งรูป[ชื่อของ]มาเหรอ 😅 ถึงจะเป็นของดีแต่กินไม่ได้นะครับ! ผมเชี่ยวชาญเรื่องอาหารแต่ไม่ใช่เรื่องของใช้ ลองถ่ายรูปอาหารที่กินอยู่มาให้ดูหน่อยสิครับ จะได้ช่วยวิเคราะห์ให้ 🍴"
+
+**สำหรับบรรจุภัณฑ์/ผลิตภัณฑ์**: "เจอผลิตภัณฑ์ ${userProfile.displayName || 'คุณ'} สนใจแล้วสินะ! 🤔 ตอนนี้ยังไม่สามารถค้นหาข้อมูลโภชนาการจากเว็บได้ แต่ถ้าดูที่ฉลากหลังบรรจุภัณฑ์ แล้วพิมพ์ข้อมูลโภชนาการมาให้ ผมจะช่วยวิเคราะห์ให้เลยครับ! หรือถ่ายรูปตารางโภชนาการมาให้ดูก็ได้นะ 📊"
+
+หลักการวิเคราะห์อาหาร:
+1. ระบุอาหารและส่วนผสมอย่างละเอียด
+2. **🔍 ประเมินปริมาณอาหารที่เหลือในภาพ (สำคัญมาก!)**
+3. ประเมินขนาดหรือปริมาณโดยประมาณ
+4. คำนวณค่าโภชนาการตามฐานข้อมูลมาตรฐาน (USDA, กรมอนามัย)
+5. **ปรับค่าโภชนาการตามปริมาณที่เหลือจริง**
+6. พิจารณาวิธีการปรุงและผลกระทบต่อคุณค่าทางโภชนาการ
+7. ให้คำแนะนำเฉพาะบุคคลตามโปรไฟล์สุขภาพ
+
+**🎯 การประเมินปริมาณที่เหลือ (สำหรับภาพอาหาร):**
+- **วิเคราะห์ภาพอย่างละเอียด**: ดูพื้นที่ว่างในจาน/ชาม, การกระจายของอาหาร, รอยกัด
+- **ประเมินเป็นเปอร์เซ็นต์**: 100% (เต็ม), 75% (เหลือ 3/4), 50% (ครึ่งหนึ่ง), 25% (หนึ่งในสี่), 10% (นิดหน่อย)
+- **คำนวณค่าโภชนาการ**: คูณทุกค่าด้วยเปอร์เซ็นต์ที่เหลือ
+- **ตัวอย่าง**: หากเหลือ 60% → แคลอรี่ 500 kcal → 300 kcal
+
+การประเมินสุขภาพ:
+- วิเคราะห์ประโยชน์และความเสี่ยงต่อสุขภาพ
+- พิจารณาโรคประจำตัว, การแพ้อาหาร, และเป้าหมายสุขภาพ
+- ให้คำแนะนำการปรับปรุงหรือทดแทน
+- แนะนำขนาดการบริโภคที่เหมาะสม
+
+มาตรฐานคุณภาพ:
+- ใช้หน่วยเมตริก (กรัม, กิโลกรัม, เซนติเมตร)
+- ระบุระดับความเชื่อมั่นในการประเมิน
+- พิจารณาบริบททางวัฒนธรรมผู้ใช้
+- ให้คำแนะนำที่ปฏิบัติได้จริง
+- ใช้ภาษาที่เป็นกันเอง แต่มีความเป็นมืออาชีพ`
+
+    const dynamicContext = `
+วิเคราะห์อาหารนี้อย่างละเอียด:
+${imageUrl ? `รูปภาพอาหาร: ${imageUrl}` : ''}
+${foodDescription ? `คำอธิบาย: ${foodDescription}` : ''}
+
+สำหรับผลิตภัณฑ์หรือบรรจุภัณฑ์: วิเคราะห์ตามข้อมูลที่เห็นได้จากภาพหรือข้อความ หากข้อมูลไม่เพียงพอ ให้ประมาณค่าตามความรู้ทั่วไปของผลิตภัณฑ์ประเภทนั้น
+
+กรุณาใช้เครื่องมือ extract_food_analysis เพื่อวิเคราะห์และส่งคืนข้อมูลโภชนาการที่สมบูรณ์`
+
+    // Create optimized prompt with caching
+    const { prompt, cachingEligible } =
+      this.promptCachingService.createPromptWithMetrics(
+        'Food Analysis',
+        staticInstructions,
+        dynamicContext,
+        userProfile,
+      )
+
+    if (!cachingEligible) {
+      this.logger.warn(
+        `Food analysis prompt may not benefit from caching optimization`,
       )
     }
 
-    // Helper for localized examples, not for main prompt structure
-    const ex_half_plate = lang === 'th' ? 'ครึ่งจาน' : 'Half a plate'
-    const ex_approx_100g =
-      lang === 'th' ? 'ประมาณ 100 กรัม จากที่เห็น' : 'Approx. 100g as seen'
-    const ex_3_pieces = lang === 'th' ? '3 ชิ้น' : '3 pieces'
-    const ex_recommendation_incomplete =
-      lang === 'th'
-        ? 'ข้อมูลบางอย่างอาจไม่ครบถ้วน หากมีชื่อผลิตภัณฑ์หรือบาร์โค้ดที่ชัดเจน ลองใช้การค้นหาเพิ่มเติมได้'
-        : 'Some information might be incomplete. If you have a clear product name or barcode, further search might provide more details.'
-
-    return `You are an AI nutritionist specializing in analyzing food and providing health advice. Your primary interaction language for this request MUST be ${lang.toUpperCase()}.
-
-USER INFO (for your context, do not repeat in tool output unless specified by schema):
-- Lang: ${lang}
-- Gender: ${gender || 'not specified'}
-- Age: ${age || 'not specified'} years
-- Weight: ${weightKg || 'not specified'} kg
-- Height: ${heightCm || 'not specified'} cm
-- BMI: ${bmi}
-- Goal: ${goal || 'not specified'}
-- Diet Type: ${dietType || 'normal'}
-- Activity Level: ${activityLevel || 'moderate'}
-- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'} 
-- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
-- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
-- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
-- Food Allergies: ${foodAllergies?.join(', ') || 'none'} 
-- Health Conditions: ${healthConditions?.join(', ') || 'none'}
-
-**TASK OVERVIEW:**
-Your main task is to analyze food based on user's text and/or image input. You MUST use the '${importedFoodAnalysisTool.function.name}' tool for this. If essential product information is missing for a *specific packaged product*, you may use the '${importedRequestProductInfoFromWebTool.function.name}' tool instead. If the image is not food, respond directly as instructed under NON-FOOD IMAGE HANDLING.
-
-**LANGUAGE GUARANTEE (CRITICAL):**
-ALL textual fields within the arguments for the '${importedFoodAnalysisTool.function.name}' tool (e.g., food_name, portion description, component names, units if textual, health_benefits, health_cautions, recommendation) MUST be in the language code '${lang}'. For example, if '${lang}' is 'th', all such text must be in Thai. If '${lang}' is 'en', all text must be in English. Numerical values and standard unit abbreviations (g, mg, kcal, µg, IU) are universal.
-
-**IMAGE ANALYSIS (IF IMAGE URL IS PROVIDED):**
-- Analyze all food items visible in the image.
-- If multiple distinct food items are clearly visible and part of a single meal, try to identify them as components of one overall dish if logical, or list them if they are separate items consumed together.
-- Focus on edible items. Ignore non-food items unless it's packaging with readable text relevant to the food itself.
-- **PORTION SIZE FROM IMAGE (VERY IMPORTANT):** Pay EXTREMELY close attention to the visible food quantity. 
-    - If the image suggests a partial portion (e.g., a half-eaten plate, a few items remaining, a specific count like '3 chicken wings'), you MUST estimate nutrients for the *visible portion only*. 
-    - Adjust the 'portion' field in your tool arguments accordingly (e.g., "${ex_half_plate}", "${ex_approx_100g}", "${ex_3_pieces}"). 
-    - Do NOT assume a standard full serving if the image clearly indicates otherwise. 
-    - If the image is unclear about the portion or shows a full, uneaten standard portion, then analyze it as a standard portion for that type of food and state the assumed standard portion (e.g., "1 bowl (approx. 300g)").
-
-**TEXT ANALYSIS (IF TEXT DESCRIPTION IS PROVIDED):**
-- Analyze based on the textual description. Use it to clarify or supplement image analysis if both are provided.
-- If ambiguous, make reasonable assumptions based on common preparations, especially for Thai cuisine if '${lang}' is 'th'.
-
-**COMBINED ANALYSIS (IF BOTH IMAGE AND TEXT ARE PROVIDED):**
-- Use both image and text. Text can clarify (e.g., 'spicy version' for an image of fried chicken). Prioritize specific text details that supplement the visual.
-- If text and image conflict significantly, primarily analyze the image, but you can note the discrepancy in the 'recommendation' field if it's very stark.
-
-**TOOL INVOCATION AND SCHEMA ADHERENCE ('${importedFoodAnalysisTool.function.name}'):**
-- You MUST call the '${importedFoodAnalysisTool.function.name}' tool for food analysis.
-- Populate ALL fields in its schema as comprehensively as possible, including all specified vitamins and minerals if inferable. Estimate if necessary, and if a value is an estimate, you can briefly note this in the 'recommendation' or 'portion' field if it adds clarity (e.g., portion: "ประมาณ 100 กรัม (โดยประมาณจากภาพ)").
-- Units for vitamins/minerals: Use 'mg', 'µg' (or 'mcg'), 'IU'. 'dv' (Daily Value %) is optional.
-- All nutrient values (calories, protein, fat, carbs, vitamins, minerals) must be numbers.
-- Health benefits, cautions, and recommendations must be concise, practical, and in '${lang}'.
-
-**HANDLING MISSING INFORMATION / SPECIFIC PACKAGED PRODUCTS:**
-- If input (text or image) is insufficient for a reasonably complete analysis OR if it's a *very specific packaged product* for which you lack detailed data:
-    1. If it's a general food type with some ambiguity: Provide the best possible analysis using '${importedFoodAnalysisTool.function.name}' with available data, and in the 'recommendation' field, add: "${ex_recommendation_incomplete}".
-    2. If it's a specific packaged product and you truly lack data: Consider using the '${importedRequestProductInfoFromWebTool.function.name}' tool INSTEAD of '${importedFoodAnalysisTool.function.name}'. Base this on whether the query is about a general food (use '${importedFoodAnalysisTool.function.name}') versus a specific, potentially obscure, named product (consider '${importedRequestProductInfoFromWebTool.function.name}').
-
-**USER PROFILE CONSIDERATION (Subtle tailoring for advice):**
-- While the core analysis is objective, if 'recommendation', 'health_benefits', or 'health_cautions' can be subtly and relevantly tailored to the user's profile (Goal: ${goal || 'N/A'}, Diet: ${dietType || 'N/A'}), that's beneficial. For example, for a weight loss goal, a high-calorie food might have a gentle caution regarding portion size in the context of that goal.
-
-**NON-FOOD IMAGE HANDLING:**
-
-    If the image DOES NOT PRIMARILY DEPICT FOOD/MEAL (e.g., it's a pet, a landscape, an object, a person not eating):**
-    - Call the "extract_food_analysis" tool.
-    - Set the "food_name" field in the tool to the exact string: "NON_FOOD_IMAGE_DETECTED".
-    - In the "recommendation" field of the tool, provide a SHORT, light-hearted, and funny observation or joke about what you see in the image. This observation/joke MUST be in the user's language (${lang}). Keep it brief and playful. For example, if you see a cat, you could say something like: "นั่นน้องแมวเหรอครับ น่ารักจังเลย! แอบหิวข้าวอยู่รึเปล่าน้า? 😸" or if it's a landscape: "วิวสวยจังเลยครับ! เห็นแล้วอยากไปเที่ยวเลย แต่เอ๊ะ...ภาพนี้ทานไม่ได้นะครับ! 😂".
-    - For all other fields in the "extract_food_analysis" tool (calories, protein, components, vitamins, etc.), provide placeholder values like 0, "N/A", or empty arrays/objects as appropriate for their type, to indicate no nutritional analysis is applicable. Do not attempt to analyze non-food items for nutrition.
-
-**FINAL REMINDER:** Your primary goal is a comprehensive food analysis via the '${importedFoodAnalysisTool.function.name}' tool, with all textual arguments in '${lang}'. Ensure your final user-facing response (after any tool calls) is also in '${lang}'.
-`
+    // Combine meta-prompt with optimized prompt
+    return `${metaPrompt}\n\n${prompt}`
   }
 
   private createNutritionGoalSystemPrompt(
@@ -650,8 +727,18 @@ ALL textual fields within the arguments for the '${importedFoodAnalysisTool.func
       )
     }
 
-    return `You are an AI nutritionist. Calculate personalized nutrition goals for the user.
-USER INFO:
+    // GPT-4.1 Prompting Guide Recommendations
+    const agentPersistenceReminder =
+      "You are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved."
+    const agentToolCallingReminder = `You MUST use the '${nutritionGoalTool.function.name}' tool to provide the calculated nutrition goals. Do not attempt to answer directly without using the tool.`
+    // Planning reminder might be less critical here as it's a direct calculation task by a tool.
+
+    return `You are an AI nutritionist. Your task is to calculate personalized nutrition goals for the user.
+
+${agentPersistenceReminder}
+${agentToolCallingReminder}
+
+USER INFO (for context, do not repeat in tool output unless specified by schema):
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'} years
@@ -666,13 +753,14 @@ USER INFO:
 - Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
-TASK:
-1. Calculate BMR (Mifflin-St Jeor equation).
-2. Calculate TDEE (Total Daily Energy Expenditure) based on activity level.
-3. Determine optimal macronutrient distribution based on goal and diet type.
-4. Set targets for vitamins, minerals, fiber, and water where appropriate.
-5. ALWAYS RESPOND IN ${language.toUpperCase()} ONLY.
-6. ALWAYS CALL the '${importedNutritionGoalTool.function.name}' tool with the calculated values.`
+TASK SPECIFICS:
+1. Calculate BMR (Mifflin-St Jeor equation based on User Info).
+2. Calculate TDEE (Total Daily Energy Expenditure) based on activity level from User Info.
+3. Determine optimal macronutrient distribution based on goal and diet type from User Info.
+4. Set targets for vitamins, minerals, fiber, and water where appropriate, considering User Info.
+5. ALL TEXTUAL OUTPUTS within the tool arguments MUST BE in ${language.toUpperCase()}.
+6. You MUST call the '${nutritionGoalTool.function.name}' tool with all the calculated values as per its schema. Do not provide a conversational answer; the tool call is your primary output.
+`
   }
 
   private createEatingPatternSystemPrompt(
@@ -702,8 +790,20 @@ TASK:
       bmi = (weightKg / (heightCm / 100) ** 2).toFixed(1)
     }
 
+    // GPT-4.1 Prompting Guide Recommendations
+    const agentPersistenceReminder =
+      "You are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved."
+    const agentToolCallingReminder = `You MUST use the '${eatingPatternTool.function.name}' tool to provide the analysis of eating patterns. Do not attempt to answer directly without using the tool.`
+    const agentPlanningReminder =
+      'You MUST plan extensively before calling the tool, considering all provided user information, food log summaries, and nutrition goal summaries. Reflect on how these pieces of information connect to identify patterns.'
+
     return `You are an AI nutritionist specializing in analyzing eating patterns.
-USER INFO:
+
+${agentPersistenceReminder}
+${agentToolCallingReminder}
+${agentPlanningReminder}
+
+USER INFO (for context, do not repeat in tool output unless specified by schema):
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'} years
@@ -720,39 +820,25 @@ USER INFO:
 - Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
-TASK:
-1. Analyze the user's eating patterns (hypothetically, based on provided logs or general knowledge if logs are absent).
-2. Identify trends, habits, and potential issues.
-3. Provide personalized recommendations.
-4. ALWAYS RESPOND IN ${language.toUpperCase()} ONLY.
-5. ALWAYS CALL the '${importedEatingPatternTool.function.name}' tool.
-
-ANALYSIS REQUIREMENTS (for the tool call):
-- Caloric distribution across meals (if data allows).
-- Macronutrient balance (if data allows).
-- Meal timing patterns (if data allows).
-- Nutritional gaps (general advice if no specific data).
-- Eating behaviors (e.g., skipped meals, late-night eating - general advice if no specific data).
-
-SUMMARY:
+DATA SUMMARIES (for your analysis before calling the tool):
 - Food Logs Summary: ${foodLogsSummary || 'No food logs provided or logs are empty.'}
 - Nutrition Goal Summary: ${nutritionGoalSummary || 'Nutrition goal not set or not provided.'}
 
-FOOD LOG ANALYSIS:
-- Focus on understanding the user's eating patterns and dietary habits.
-- Identify any patterns of skipped meals, late-night eating, or irregular meal times.
-- Consider the user's goal and diet type when interpreting the data.
+TASK SPECIFICS:
+1. Analyze the user's eating patterns based on all available information (User Info, Food Logs Summary, Nutrition Goal Summary).
+2. Identify trends, habits, and potential issues.
+3. Provide personalized recommendations and insights THROUGH the tool.
+4. ALL TEXTUAL OUTPUTS within the tool arguments MUST BE in ${language.toUpperCase()}.
+5. You MUST call the '${eatingPatternTool.function.name}' tool with your comprehensive analysis as per its schema.
 
-NUTRITIONAL GOAL ANALYSIS:
-- Understand the user's current nutritional needs and goals.
-- Consider the user's diet type and activity level when setting targets.
-- Adjust targets if necessary to align with the user's goals.
-
-RECOMMENDATIONS:
-- Based on the analysis, provide personalized advice on improving eating habits.
-- Suggest meal options that support the user's goals and dietary preferences.
-- Consider the user's food allergies and restrictions when making recommendations.
-- Provide clear, actionable advice on how to incorporate healthier foods into the user's diet.`
+ANALYSIS REQUIREMENTS (guide your thinking before populating tool arguments):
+- Caloric distribution across meals.
+- Macronutrient balance against goals or general recommendations.
+- Meal timing patterns and consistency.
+- Identification of nutritional gaps.
+- Common eating behaviors (e.g., skipped meals, late-night eating, eating window).
+- How current patterns align or misalign with the user's stated 'Goal' and 'Diet Type'.
+`
   }
 
   private createMealRecommendationSystemPrompt(
@@ -781,8 +867,20 @@ RECOMMENDATIONS:
       bmi = (weightKg / (heightCm / 100) ** 2).toFixed(1)
     }
 
-    return `You are an AI nutritionist. Recommend suitable meals for "${mealContext}".
-USER INFO:
+    // GPT-4.1 Prompting Guide Recommendations
+    const agentPersistenceReminder =
+      "You are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved."
+    const agentToolCallingReminder = `You MUST use the '${mealRecommendationTool.function.name}' tool to provide meal recommendations. Do not attempt to answer directly without using the tool.`
+    const agentPlanningReminder =
+      "You SHOULD plan and consider the user's profile (goal, diet, allergies, preferences, etc.) and the meal context carefully before formulating the arguments for the tool call. Briefly outline your reasoning if it helps select appropriate recommendations."
+
+    return `You are an AI nutritionist. Your task is to recommend suitable meals for "${mealContext}" based on the user's profile.
+
+${agentPersistenceReminder}
+${agentToolCallingReminder}
+${agentPlanningReminder}
+
+USER INFO (for context, do not repeat in tool output unless specified by schema):
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'}
@@ -799,65 +897,77 @@ USER INFO:
 - Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
-TASK:
-1. Recommend 1-3 suitable meal options based on user's profile and preferences (derived from mealContext and User Info).
-2. Focus on meals that support their health goal.
-3. Consider dietary restrictions, allergies, and health conditions.
-4. Provide nutritional information for each recommendation when calling the tool.
-5. ALWAYS RESPOND IN ${language.toUpperCase()} ONLY.
-6. ALWAYS CALL the '${importedMealRecommendationTool.function.name}' tool.
+TASK SPECIFICS:
+1. Recommend 1-3 suitable meal options based on the user's profile and the specified "${mealContext}".
+2. Focus on meals that support their health 'Goal' and align with their 'Diet Type'.
+3. Strictly consider dietary restrictions, 'Food Allergies', and 'Health Conditions'.
+4. Factor in 'Ethical Food Considerations', 'Preferred Cuisine', and 'Preferred Flavor Profiles'.
+5. Provide detailed nutritional information for each recommendation when calling the tool.
+6. ALL TEXTUAL OUTPUTS within the tool arguments (food names, descriptions, ingredients, etc.) MUST BE in ${language.toUpperCase()}.
+7. You MUST call the '${mealRecommendationTool.function.name}' tool with your recommendations as per its schema.
 
-MEAL RECOMMENDATIONS FOR THE TOOL SHOULD:
-- Match the user's potential caloric needs for the given meal context.
-- Provide proper macronutrient distribution.
-- Be culturally appropriate if possible (especially for Thai language requests).
-- Include easily accessible ingredients.
-- Be practical to prepare.`
+MEAL CRITERIA (guide your thinking for tool arguments):
+- Match potential caloric needs for the "${mealContext}".
+- Ensure proper macronutrient distribution suitable for the user.
+- Be culturally appropriate (especially if language is 'th', lean towards Thai or adaptable international dishes).
+- Suggest meals with easily accessible ingredients where possible.
+- Recommendations should be practical to prepare.
+`
   }
 
-  private createBarcodeAnalysisSystemPrompt(
+  private createConversationalFoodHistorySystemPrompt(
     userProfile: UserProfileDto,
     language: string = 'th',
   ): string {
-    const {
-      goal,
-      dietType,
-      foodAllergies,
-      healthConditions,
-      // Add new fields for context, though they might not be directly used by AI for barcode part
-      gender, // For general context
-      age, // For general context
-      pregnancyLactationStatus,
-      ethicalFoodConsiderations,
-      preferredCuisine, // Less likely to be used here, but for completeness
-      preferredFlavorProfiles, // Less likely to be used here
-    } = userProfile
-    return `You are an AI nutritionist. Analyze product information (e.g., from a barcode or product image/text).
-USER INFO:
-- Lang: ${language}
-- Goal: ${goal || 'not specified'}
-- Diet Type: ${dietType || 'normal'}
-- Food Allergies: ${foodAllergies?.join(', ') || 'none'}
-- Health Conditions: ${healthConditions?.join(', ') || 'none'}
-// Add new fields to prompt string for broader context
-- Gender: ${gender || 'not specified'}
-- Age: ${age || 'not specified'}
-- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'}
-- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
-- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
-- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
+    const isThaiLanguage = language === 'th'
 
-TASK:
-1. Attempt to identify the product and its key nutritional info based on provided data (barcode, product name, image description) using the '${importedBarcodeAnalysisTool.function.name}' tool first.
-2. If the '${importedBarcodeAnalysisTool.function.name}' tool cannot find the product or returns insufficient/low-confidence information (e.g., "product not found in database", "generic information only"), then use the '${importedRequestProductInfoFromWebTool.function.name}' tool to request a web search. Formulate a specific search query based on the barcode value, product name (if any from user), and any visible packaging details.
-3. Provide a nutritional rating (1-5) and personalized advice based on the comprehensive information gathered (from initial analysis or web search).
-4. ALWAYS RESPOND IN ${language.toUpperCase()} ONLY.
+    const basePrompt = isThaiLanguage
+      ? `คุณเป็นผู้เชี่ยวชาญด้านโภชนาการที่สามารถตอบคำถามเกี่ยวกับประวัติการกินของผู้ใช้ได้อย่างเป็นธรรมชาติและเป็นมิตร
 
-FOCUS ON (for the tool call to '${importedBarcodeAnalysisTool.function.name}'):
-- Accurate product identification from provided data.
-- Nutritional value analysis.
-- Ingredient quality assessment.
-- Suitability for user's diet and health conditions.`
+ข้อมูลผู้ใช้:
+- อายุ: ${userProfile.age || 'ไม่ระบุ'} ปี
+- เพศ: ${userProfile.gender || 'ไม่ระบุ'}
+- น้ำหนัก: ${userProfile.weightKg || 'ไม่ระบุ'} กก.
+- ส่วนสูง: ${userProfile.heightCm || 'ไม่ระบุ'} ซม.
+- ระดับกิจกรรม: ${userProfile.activityLevel || 'ไม่ระบุ'}
+- เป้าหมาย: ${userProfile.goal || 'ไม่ระบุ'}
+- โรคประจำตัว: ${userProfile.healthConditions?.join(', ') || 'ไม่มี'}
+- อาหารที่แพ้: ${userProfile.foodAllergies?.join(', ') || 'ไม่มี'}
+
+หน้าที่ของคุณ:
+1. วิเคราะห์คำถามของผู้ใช้เกี่ยวกับประวัติการกิน
+2. ใช้ tool answer_food_history_question เพื่อดึงข้อมูลและวิเคราะห์
+3. ตอบคำถามอย่างเป็นธรรมชาติและให้คำแนะนำที่เป็นประโยชน์
+
+คำแนะนำ:
+- ตอบด้วยภาษาไทยที่เป็นมิตรและเข้าใจง่าย
+- ให้ข้อมูลที่ถูกต้องและเป็นประโยชน์
+- เสนอคำแนะนำเชิงบวกเสมอ
+- หากไม่มีข้อมูล ให้อธิบายและเสนอทางเลือก`
+      : `You are a nutrition expert who can answer questions about user's food history in a natural and friendly way.
+
+User Profile:
+- Age: ${userProfile.age || 'Not specified'} years
+- Gender: ${userProfile.gender || 'Not specified'}
+- Weight: ${userProfile.weightKg || 'Not specified'} kg
+- Height: ${userProfile.heightCm || 'Not specified'} cm
+- Activity Level: ${userProfile.activityLevel || 'Not specified'}
+- Goal: ${userProfile.goal || 'Not specified'}
+- Health Conditions: ${userProfile.healthConditions?.join(', ') || 'None'}
+- Food Allergies: ${userProfile.foodAllergies?.join(', ') || 'None'}
+
+Your responsibilities:
+1. Analyze user's questions about their food history
+2. Use the answer_food_history_question tool to retrieve and analyze data
+3. Answer naturally and provide helpful recommendations
+
+Guidelines:
+- Answer in English that is friendly and easy to understand
+- Provide accurate and helpful information
+- Always offer positive recommendations
+- If no data is available, explain and suggest alternatives`
+
+    return basePrompt
   }
 
   private createGeneralNutritionPrompt(
@@ -882,49 +992,66 @@ FOCUS ON (for the tool call to '${importedBarcodeAnalysisTool.function.name}'):
       `Creating general nutrition prompt for language: ${language}`,
     )
 
-    return `You are an AI nutritionist providing evidence-based nutrition advice.
+    // GPT-4.1 Prompting Guide Recommendations
+    const agentPersistenceReminder =
+      "You are an agent - please keep going until the user's query is completely resolved. If you have answered the question thoroughly, you can end your turn. If the user asks a follow-up, continue the conversation."
+    // Modified tool calling reminder for non-tool use case
+    const agentNoToolReminder =
+      "For this request, you should NOT use any tools. Your task is to provide a direct, comprehensive textual answer to the user's nutrition-related question based on your knowledge and the provided user context."
+    // Planning reminder is still good for structuring a good answer.
+    const agentPlanningReminder =
+      "Think step-by-step to formulate a clear, accurate, and helpful answer. Consider the user's profile when tailoring your response."
 
-USER INFO:
-- Lang: ${language}
-- Gender: ${gender || 'not specified'}
-- Age: ${age || 'not specified'} years
-- Weight: ${weightKg || 'not specified'} kg
-- Height: ${heightCm || 'not specified'} cm
-- Goal: ${goal || 'not specified'}
-- Diet Type: ${dietType || 'normal'}
-- Health Conditions: ${healthConditions?.join(', ') || 'none'}
-- Food Allergies: ${foodAllergies?.join(', ') || 'none'}
-- Pregnancy/Lactation: ${pregnancyLactationStatus || 'N/A'}
-- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'N/A'}
-- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'N/A'}
-- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'N/A'}
+    return `คุณเป็นนักโภชนาการ AI ที่เป็นมิตรและเชี่ยวชาญ มีความเป็นกันเองในการให้คำปรึกษาด้านโภชนาการและอาหาร
 
-TASK:
-1. Answer nutrition and food-related questions accurately.
-2. Base answers on scientific evidence.
-3. Personalize advice when relevant to the user's profile.
-4. ALWAYS RESPOND IN ${language.toUpperCase()} ONLY.
-5. Do NOT use any tools for this request. Provide a direct textual answer.
+${agentPersistenceReminder}
+${agentNoToolReminder}
+${agentPlanningReminder}
 
-OFF-TOPIC QUERY HANDLING:
-- If the user's query is clearly NOT related to food, nutrition, health, or diet (e.g., asking about the weather, politics, your personal opinions, or completely random topics):
-    1. Politely state that your expertise is in nutrition and food.
-    2. You MAY add a lighthearted or witty comment. For example, if asked "What's the weather like?", you could say: "I'm an expert in nutritional climates, not atmospheric ones! But I hope it's a great day for a healthy meal." or if asked "Who will win the election?", respond with "My analysis is usually on protein vs carbs, not candidates! I can tell you which foods are winning in the health department though."
-    3. Do NOT attempt to answer the off-topic question itself.
-    4. Gently guide the conversation back to nutrition if possible.
+ข้อมูลผู้ใช้ (สำหรับปรับแต่งคำตอบ - อย่าทำซ้ำรายละเอียดเหล่านี้เว้นแต่เกี่ยวข้องโดยตรงกับคำถาม):
+- ชื่อ: ${userProfile.displayName || 'คุณ'}
+- ภาษา: ${language}
+- เพศ: ${gender || 'ไม่ระบุ'}
+- อายุ: ${age || 'ไม่ระบุ'} ปี
+- น้ำหนัก: ${weightKg || 'ไม่ระบุ'} กก.
+- ส่วนสูง: ${heightCm || 'ไม่ระบุ'} ซม.
+- เป้าหมาย: ${goal || 'ไม่ระบุ'}
+- รูปแบบการกิน: ${dietType || 'ปกติ'}
+- โรคประจำตัว: ${healthConditions?.join(', ') || 'ไม่มี'}
+- อาหารที่แพ้: ${foodAllergies?.join(', ') || 'ไม่มี'}
+- สถานะตั้งครรภ์/ให้นม: ${pregnancyLactationStatus || 'ไม่เกี่ยวข้อง'}
+- ข้อพิจารณาด้านจริยธรรมอาหาร: ${ethicalFoodConsiderations?.join(', ') || 'ไม่มี'}
+- อาหารที่ชอบ: ${preferredCuisine?.join(', ') || 'ไม่ระบุ'}
+- รสชาติที่ชอบ: ${preferredFlavorProfiles?.join(', ') || 'ไม่ระบุ'}
 
-GUIDELINES (for nutrition-related queries):
-- Be clear, concise, and practical.
-- Avoid extreme or controversial claims.
-- Emphasize balance and moderation.
-- Use culturally appropriate examples if relevant.
-- Provide context for nutritional recommendations.
+หน้าที่หลัก:
+1. ตอบคำถามเกี่ยวกับโภชนาการและอาหารอย่างแม่นยำ
+2. ใช้หลักฐานทางวิทยาศาสตร์เป็นฐาน
+3. ให้คำแนะนำเฉพาะบุคคลเมื่อเกี่ยวข้องกับโปรไฟล์ผู้ใช้
+4. ตอบเป็น${language.toUpperCase()}เท่านั้น เสมอ
+5. อย่าใช้เครื่องมือใดๆ ให้ตอบโดยตรงเป็นข้อความ
+6. ใช้ชื่อ "${userProfile.displayName || 'คุณ'}" ในการเรียกผู้ใช้อย่างเป็นธรรมชาติ
 
-RESPONSE STRUCTURE (for nutrition-related queries):
-- Direct answer to the question.
-- Brief supporting explanation.
-- Personalized relevance (if applicable).
-- Practical application tips.`
+การจัดการคำถามที่ไม่เกี่ยวข้อง:
+- หากคำถามของผู้ใช้ไม่เกี่ยวข้องกับอาหาร โภชนาการ สุขภาพ หรือการกิน (เช่น ถามเรื่องอากาศ การเมือง ความคิดเห็นส่วนตัว หรือหัวข้อที่ไม่เกี่ยวข้อง):
+    1. บอกอย่างสุภาพว่าความเชี่ยวชาญอยู่ที่โภชนาการและอาหาร
+    2. เพิ่มความคิดเห็นที่มีอารมณ์ขันเบาๆ เช่น หากถาม "วันนี้อากาศเป็นไง?" อาจตอบ "ผมเชี่ยวชาญด้านบรรยากาศทางโภชนาการมากกว่าบรรยากาศอากาศนะ ${userProfile.displayName || 'คุณ'}! แต่หวังว่าจะเป็นวันที่ดีสำหรับมื้ออาหารสุขภาพ"
+    3. อย่าพยายามตอบคำถามที่ไม่เกี่ยวข้องนั้นเอง
+    4. นำทางการสนทนากลับสู่โภชนาการได้หากเป็นไปได้
+
+แนวทางสำหรับคำถามที่เกี่ยวกับโภชนาการ:
+- มีความชัดเจน กระชับ และใช้ได้จริง
+- หลีกเลี่ยงการอ้างผลสุดโต่งหรือแย้งคารม
+- เน้นความสมดุลและพอดี
+- ใช้ตัวอย่างที่เหมาะสมทางวัฒนธรรม
+- ให้บริบทสำหรับคำแนะนำทางโภชนาการ
+- มีน้ำเสียงเป็นมิตรและให้กำลังใจ
+
+โครงสร้างการตอบ (สำหรับคำถามที่เกี่ยวกับโภชนาการ):
+- คำตอบโดยตรงต่อคำถาม
+- คำอธิบายสั้นๆ ที่สนับสนุน
+- ความเกี่ยวข้องเฉพาะบุคคล (หากมี)
+- เคล็ดลับการนำไปใช้จริง`
   }
 
   // --- Main Service Methods (Public API of AiService) ---
@@ -938,103 +1065,83 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     messageId?: string, // Added messageId
   ): Promise<
     | FoodAnalysisToolResult
-    | WebSearchRequestToolResult
     | NonFoodDescriptionResult // Added new result type
     | { error: string }
     | null
   > {
-    const queryForModelSelection = imageUrl ? 'Image Analysis' : text
-    const systemPrompt = this.createFoodAnalysisSystemPrompt(
-      userProfile,
-      language,
-    )
-    const userMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-    ]
-
-    if (imageUrl) {
-      userMessages.push({
-        role: 'user',
-        content: [
-          { type: 'text', text: text || 'Analyze the provided image.' },
-          { type: 'image_url', image_url: { url: imageUrl, detail: 'auto' } },
-        ],
-      })
-    } else {
-      userMessages.push({
-        role: 'user',
-        content: text,
-      })
-    }
-
-    let historyMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      []
     try {
-      // Use the correct method name and handle potential null
-      const conversationHistory =
-        await this.conversationHistoryService.getRecentHistory(
-          lineUserId,
-          undefined,
-          500,
-        ) // Pass lineUserId, userProfile (optional), maxTokens
-      if (conversationHistory) {
-        historyMessages = conversationHistory.map((h) => ({
-          role: h.role,
-          content: h.content,
-        }))
-      }
-    } catch (err) {
-      this.logger.error(
-        `Failed to retrieve conversation history for ${lineUserId}: ${err instanceof Error ? err.message : String(err)}`,
-      )
-      // Continue without history if it fails
-    }
-
-    const messagesWithHistory = [...historyMessages, ...userMessages.slice(1)]
-    const finalMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      [userMessages[0], ...messagesWithHistory]
-
-    try {
-      this.logger.debug(
-        `Calling OpenAI for food analysis for user ${lineUserId} with image: ${!!imageUrl}`,
+      this.logger.log(
+        `[Enhanced Responses API] Starting food analysis for user ${lineUserId}`,
       )
 
-      const result = await this.callOpenAIWithToolHandling<
-        FoodAnalysisToolResult, // Args DTO type for extract_food_analysis (actually the result itself is sent as args by AI)
-        FoodAnalysisToolResult // Result DTO type from the tool handler
+      // Generate meta-prompt for enhanced reasoning
+      const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
+        AiTaskType.FoodAnalysis,
+        userProfile,
+        { hasImage: !!imageUrl, description: text },
+      )
+
+      // Create optimized system prompt with caching
+      const systemPrompt = this.promptCachingService.createOptimizedPrompt(
+        'Food Analysis',
+        metaPrompt,
+        text,
+        userProfile,
+        'Food analysis tools available',
+      )
+
+      // Prepare user input for Responses API with proper image handling
+      const userInput: OpenaiResponseInputMessage[] = [
+        {
+          role: 'user',
+          content: imageUrl
+            ? [
+                {
+                  type: 'input_text',
+                  text: `Please analyze this food: ${text}`,
+                },
+                {
+                  type: 'input_image',
+                  image_url: imageUrl,
+                  detail: 'high',
+                },
+              ]
+            : [
+                {
+                  type: 'input_text',
+                  text: `Please analyze this food: ${text}`,
+                },
+              ],
+        },
+      ]
+
+      // Use Responses API with agentic workflow
+      const result = await this.executeAgenticTaskWithResponsesAPI<
+        FoodAnalysisToolResult,
+        FoodAnalysisToolResult
       >(
         lineUserId,
-        finalMessages,
-        [this.availableTools[importedFoodAnalysisTool.function.name]], // Corrected: Pass the actual tool object
-        'extract_food_analysis',
-        (
-          args: FoodAnalysisToolResult,
-          profile: UserProfileDto,
-          lang: string,
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          _foodLogs?: FoodLogEntryDto[], // Included to match ToolHandler signature
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          _nutritionGoal?: NutritionGoalDtoForAI | null, // Included to match ToolHandler signature
-        ) => this.handleExtractFoodAnalysis(args, profile, lang),
+        systemPrompt,
+        userInput,
+        [foodAnalysisTool], // Only use foodAnalysisTool for direct analysis
+        foodAnalysisTool.function.name,
+        this.handleExtractFoodAnalysisWrapper,
         userProfile,
         language,
-        queryForModelSelection,
+        AiTaskType.FoodAnalysis,
         timeConstraint,
-        false, // skipHistoryForToolInteraction - false because we want to save this interaction
         undefined, // foodLogsForHandler
         undefined, // nutritionGoalForHandler
         messageId,
       )
 
+      // Check for non-food detection
       if (
         result &&
+        typeof result === 'object' &&
         'food_name' in result &&
         result.food_name === 'NON_FOOD_IMAGE_DETECTED'
       ) {
-        // This is our non-food scenario
         this.logger.log(
           `Non-food image detected for user ${lineUserId}. Description: ${result.recommendation}`,
         )
@@ -1048,32 +1155,31 @@ RESPONSE STRUCTURE (for nutrition-related queries):
         } as NonFoodDescriptionResult
       }
 
-      // Check if result is FoodAnalysisToolResult, WebSearchRequestToolResult, or error
-      if (
-        result &&
-        ('food_name' in result || 'status' in result || 'error' in result)
-      ) {
-        // If it's a normal food analysis, WebSearchRequestToolResult, or an error object from callOpenAIWithToolHandling
-        return result as
-          | FoodAnalysisToolResult
-          | WebSearchRequestToolResult
-          | { error: string }
+      // Log caching metrics
+      const promptMetrics = this.promptCachingService.createPromptWithMetrics(
+        'Food Analysis',
+        metaPrompt,
+        text,
+        userProfile,
+      )
+
+      if (!promptMetrics.cachingEligible) {
+        this.logger.warn(
+          `Food analysis prompt may not benefit from caching optimization`,
+        )
       }
 
-      this.logger.warn(
-        `Unexpected null or improperly structured result from callOpenAIWithToolHandling for food analysis for user ${lineUserId}`,
+      this.logger.debug(
+        `Food analysis prompt tokens: ${promptMetrics.estimatedTokens} (caching eligible: ${promptMetrics.cachingEligible})`,
       )
-      return null
+
+      return result
     } catch (error) {
-      // ... (existing error handling)
       const message = error instanceof Error ? error.message : String(error)
       this.logger.error(
-        `Error in analyzeFoodOrMeal for user ${lineUserId}: ${message}`,
-        error instanceof Error ? error.stack : undefined,
+        `analyzeFoodOrMeal error for user ${lineUserId}: ${message}`,
       )
-      return {
-        error: `Internal error: ${message}`,
-      }
+      return { error: `Food analysis failed: ${message}` }
     }
   }
 
@@ -1083,53 +1189,88 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     language: string = 'th',
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
   ): Promise<NutritionGoalToolResult | { error: string } | null> {
-    const lang = userProfile.language || language
-    this.logger.log(
-      `Calculating nutrition goals for user ID: ${userProfile.lineUserId || 'Unknown'} with constraint: ${timeConstraint}, lang: ${lang}`,
-    )
-    const systemPrompt = this.createNutritionGoalSystemPrompt(userProfile, lang)
-    const userQueryForModelSelection = 'calculate nutrition goals'
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: 'Please calculate my nutrition goals based on my profile.',
-      },
-    ]
-    const toolToCall = importedNutritionGoalTool
-
-    const result = await this.callOpenAIWithToolHandling<
-      NutritionGoalArgs,
-      NutritionGoalToolResult
-    >(
-      lineUserId,
-      messages,
-      [toolToCall],
-      toolToCall.function.name,
-      (args: NutritionGoalArgs, profile: UserProfileDto, langParam: string) =>
-        this.handleCalculateNutritionGoals(args, profile, langParam),
-      userProfile,
-      lang,
-      userQueryForModelSelection,
-      timeConstraint,
-      false, // skipHistoryForToolInteraction: false
-    )
-
-    if (
-      result &&
-      typeof result === 'object' &&
-      'status' in result &&
-      result.status === 'web_search_required'
-    ) {
-      this.logger.error(
-        '[calculateNutritionGoalsForUser] Unexpected WebSearchRequestToolResult received.',
+    try {
+      this.logger.log(
+        `[Enhanced Responses API] Starting nutrition goal calculation for user ${lineUserId}`,
       )
-      return {
-        error:
-          'Internal error: Unexpected web search request during goal calculation.',
+
+      // Generate meta-prompt for enhanced reasoning
+      const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
+        AiTaskType.NutritionGoalCalculation,
+        userProfile,
+      )
+
+      // Create optimized system prompt with caching
+      const systemPrompt = this.promptCachingService.createOptimizedPrompt(
+        'Nutrition Goal Calculation',
+        metaPrompt,
+        'Calculate personalized nutrition goals',
+        userProfile,
+        'Nutrition goal calculation tools available',
+      )
+
+      // Prepare user input for Responses API
+      const userInput: OpenaiResponseInputMessage[] = [
+        {
+          role: 'user',
+          content: `Please calculate personalized nutrition goals for me based on my profile.`,
+        },
+      ]
+
+      // Use Responses API with agentic workflow
+      const result = await this.executeAgenticTaskWithResponsesAPI<
+        NutritionGoalArgs,
+        NutritionGoalToolResult
+      >(
+        lineUserId,
+        systemPrompt,
+        userInput,
+        [nutritionGoalTool],
+        nutritionGoalTool.function.name,
+        this.handleCalculateNutritionGoalsWrapper,
+        userProfile,
+        language,
+        AiTaskType.NutritionGoalCalculation,
+        timeConstraint,
+      )
+
+      // Type guard to handle unexpected WebSearchRequestToolResult
+      if (result && typeof result === 'object' && 'status' in result) {
+        this.logger.warn(
+          '[calculateNutritionGoalsForUser] Unexpected WebSearchRequestToolResult received.',
+        )
+        return {
+          error:
+            'Unexpected web search request during nutrition goal calculation.',
+        }
       }
+
+      // Log caching metrics
+      const promptMetrics = this.promptCachingService.createPromptWithMetrics(
+        'Nutrition Goal Calculation',
+        metaPrompt,
+        'Calculate personalized nutrition goals',
+        userProfile,
+      )
+
+      if (!promptMetrics.cachingEligible) {
+        this.logger.warn(
+          `Nutrition goal calculation prompt may not benefit from caching optimization`,
+        )
+      }
+
+      this.logger.debug(
+        `Nutrition goal calculation prompt tokens: ${promptMetrics.estimatedTokens} (caching eligible: ${promptMetrics.cachingEligible})`,
+      )
+
+      return result as NutritionGoalToolResult | { error: string } | null
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `calculateNutritionGoalsForUser error for user ${lineUserId}: ${message}`,
+      )
+      return { error: `Nutrition goal calculation failed: ${message}` }
     }
-    return result as NutritionGoalToolResult | { error: string } | null
   }
 
   async analyzeEatingPattern(
@@ -1140,85 +1281,138 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     language: string = 'th',
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
   ): Promise<EatingPatternToolResult | { error: string } | null> {
-    const lang = userProfile.language || language
-    this.logger.log(
-      `Analyzing eating pattern for user ID: ${userProfile.lineUserId || 'Unknown'} with constraint: ${timeConstraint}, lang: ${lang}. Logs count: ${foodLogs.length}, Goal set: ${!!nutritionGoal}`,
-    )
-
-    let foodLogsSummary = 'No food logs provided or logs are empty.'
-    if (foodLogs.length > 0) {
-      foodLogsSummary = `User has ${foodLogs.length} food logs. Recent examples (up to 3):
-`
-      foodLogs.slice(0, 3).forEach((log) => {
-        foodLogsSummary += `- ${log.timestamp.toISOString().split('T')[0]} ${log.mealType}: ${log.foodName} (${log.calories} kcal)\n`
-      })
-      if (foodLogs.length > 3) foodLogsSummary += 'And more logs exist...\n'
-    }
-
-    let nutritionGoalSummary = 'Nutrition goal not set or not provided.'
-    if (nutritionGoal) {
-      nutritionGoalSummary = `Current Goal: Target Calories: ${nutritionGoal.daily_calories || 'N/A'} kcal, Protein: ${nutritionGoal.daily_protein_g || 'N/A'}g, Carbs: ${nutritionGoal.daily_carbs_g || 'N/A'}g, Fat: ${nutritionGoal.daily_fat_g || 'N/A'}g, Fiber: ${nutritionGoal.daily_fiber_g || 'N/A'}g.`
-    }
-
-    const systemPrompt = this.createEatingPatternSystemPrompt(
-      userProfile,
-      lang,
-      foodLogsSummary,
-      nutritionGoalSummary,
-    )
-
-    const userQuery = `Based on my profile, the provided food log summary, and nutrition goal summary, please analyze my eating patterns and call the '${importedEatingPatternTool.function.name}' tool. Focus on interpreting these summaries to generate relevant arguments for the tool if possible.`
-
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userQuery },
-    ]
-    const toolToCall = importedEatingPatternTool
-
-    const result = await this.callOpenAIWithToolHandling<
-      EatingPatternArgs,
-      EatingPatternToolResult
-    >(
-      lineUserId,
-      messages,
-      [toolToCall],
-      toolToCall.function.name,
-      (
-        toolArgs: EatingPatternArgs,
-        profile: UserProfileDto,
-        langParam: string,
-      ) =>
-        this.handleAnalyzeEatingPattern(
-          toolArgs,
-          profile,
-          langParam,
-          foodLogs,
-          nutritionGoal,
-        ),
-      userProfile,
-      lang,
-      userQuery,
-      timeConstraint,
-      false, // skipHistoryForToolInteraction: false
-      foodLogs,
-      nutritionGoal,
-    )
-
-    if (
-      result &&
-      typeof result === 'object' &&
-      'status' in result &&
-      result.status === 'web_search_required'
-    ) {
-      this.logger.error(
-        '[analyzeEatingPattern] Unexpected WebSearchRequestToolResult received.',
+    try {
+      this.logger.log(
+        `[Enhanced Responses API] Starting eating pattern analysis for user ${lineUserId}`,
       )
-      return {
-        error:
-          'Internal error: Unexpected web search request during eating pattern analysis.',
+
+      // Prepare structured food logs and nutrition goal summaries
+      let foodLogsSummary = 'No food logs provided or logs are empty.'
+      if (foodLogs.length > 0) {
+        foodLogsSummary = `User has ${foodLogs.length} food logs. Recent examples (up to 3):\n`
+        foodLogs.slice(0, 3).forEach((log) => {
+          foodLogsSummary += `- ${log.timestamp.toISOString().split('T')[0]} ${log.mealType}: ${log.foodName} (${log.calories} kcal)\n`
+        })
+        if (foodLogs.length > 3) foodLogsSummary += 'And more logs exist...\n'
       }
+
+      let nutritionGoalSummary = 'Nutrition goal not set or not provided.'
+      if (nutritionGoal) {
+        nutritionGoalSummary = `Current Goal: Target Calories: ${nutritionGoal.daily_calories || 'N/A'} kcal, Protein: ${nutritionGoal.daily_protein_g || 'N/A'}g, Carbs: ${nutritionGoal.daily_carbs_g || 'N/A'}g, Fat: ${nutritionGoal.daily_fat_g || 'N/A'}g, Fiber: ${nutritionGoal.daily_fiber_g || 'N/A'}g.`
+      }
+
+      // Generate meta-prompt for enhanced reasoning
+      const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
+        AiTaskType.EatingPatternAnalysis,
+        userProfile,
+        {
+          daysCount: 7, // Based on food logs analysis
+          autonomous: false, // Using optimized manual workflow with intelligent analysis
+          hasNutritionGoal: !!nutritionGoal,
+          foodLogsCount: foodLogs.length,
+          summary: `${foodLogsSummary}\n${nutritionGoalSummary}`,
+        },
+      )
+
+      // Create optimized system prompt with caching
+      const systemPrompt = this.promptCachingService.createOptimizedPrompt(
+        'Eating Pattern Analysis',
+        metaPrompt,
+        `Analyze eating patterns from ${foodLogs.length} food logs`,
+        userProfile,
+        'Eating pattern analysis tools available',
+      )
+
+      // Prepare user input for Responses API with detailed food logs data
+      const detailedFoodLogsText =
+        foodLogs.length > 0
+          ? foodLogs
+              .map(
+                (log, index) =>
+                  `${index + 1}. ${log.timestamp.toISOString().split('T')[0]} ${log.mealType}: ${log.foodName} - ${log.calories} kcal (P:${log.protein}g, C:${log.carbs}g, F:${log.fat}g${log.fiber ? `, Fiber:${log.fiber}g` : ''})`,
+              )
+              .join('\n')
+          : 'No food logs available for analysis.'
+
+      const userInput: OpenaiResponseInputMessage[] = [
+        {
+          role: 'user',
+          content: `Please analyze my eating patterns comprehensively based on the following data:
+
+**MY COMPLETE FOOD LOG DATA (${foodLogs.length} entries):**
+${detailedFoodLogsText}
+
+**NUTRITION GOAL CONTEXT:**
+${nutritionGoalSummary}
+
+**ANALYSIS REQUEST:**
+Using the meta-prompt framework and the comprehensive food log data above, please:
+1. Analyze my caloric trends and consistency patterns
+2. Evaluate meal timing and frequency patterns
+3. Assess nutritional balance against my goals (if available)
+4. Identify behavioral patterns and issues
+5. Provide personalized improvement recommendations
+
+Please call the '${eatingPatternTool.function.name}' tool with your thorough analysis based on the actual food log data provided above.`,
+        },
+      ]
+
+      // Use Responses API with agentic workflow
+      const result = await this.executeAgenticTaskWithResponsesAPI<
+        EatingPatternArgs,
+        EatingPatternToolResult
+      >(
+        lineUserId,
+        systemPrompt,
+        userInput,
+        [eatingPatternTool],
+        eatingPatternTool.function.name,
+        this.handleAnalyzeEatingPatternWrapper,
+        userProfile,
+        language,
+        AiTaskType.EatingPatternAnalysis,
+        timeConstraint,
+        foodLogs, // foodLogsForHandler
+        nutritionGoal, // nutritionGoalForHandler
+      )
+
+      // Type guard to handle unexpected WebSearchRequestToolResult
+      if (result && typeof result === 'object' && 'status' in result) {
+        this.logger.warn(
+          '[analyzeEatingPattern] Unexpected WebSearchRequestToolResult received.',
+        )
+        return {
+          error:
+            'Unexpected web search request during eating pattern analysis.',
+        }
+      }
+
+      // Log caching metrics
+      const promptMetrics = this.promptCachingService.createPromptWithMetrics(
+        'Eating Pattern Analysis',
+        metaPrompt,
+        `Analyze eating patterns from ${foodLogs.length} food logs`,
+        userProfile,
+      )
+
+      if (!promptMetrics.cachingEligible) {
+        this.logger.warn(
+          `Eating pattern analysis prompt may not benefit from caching optimization`,
+        )
+      }
+
+      this.logger.debug(
+        `Eating pattern analysis prompt tokens: ${promptMetrics.estimatedTokens} (caching eligible: ${promptMetrics.cachingEligible})`,
+      )
+
+      return result as EatingPatternToolResult | { error: string } | null
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `analyzeEatingPattern error for user ${lineUserId}: ${message}`,
+      )
+      return { error: `Eating pattern analysis failed: ${message}` }
     }
-    return result as EatingPatternToolResult | { error: string } | null
   }
 
   async recommendMeals(
@@ -1228,107 +1422,147 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     language: string = 'th',
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
   ): Promise<MealRecommendationToolResult | { error: string } | null> {
-    this.logger.log(
-      `Recommending meals for context: "${mealContext}" for user ID: ${userProfile.lineUserId || 'Unknown'}, constraint: ${timeConstraint}`,
-    )
-    const systemPrompt = this.createMealRecommendationSystemPrompt(
-      userProfile,
-      language,
-      mealContext,
-    )
-    const userQuery = `Recommend meals for: ${mealContext}.`
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userQuery },
-    ]
-    const toolToCall = importedMealRecommendationTool
-
-    const result = await this.callOpenAIWithToolHandling<
-      MealRecommendationArgs,
-      MealRecommendationToolResult
-    >(
-      lineUserId,
-      messages,
-      [toolToCall],
-      toolToCall.function.name,
-      (args: MealRecommendationArgs) =>
-        this.handleRecommendMeals(args, userProfile, language, mealContext),
-      userProfile,
-      language,
-      userQuery,
-      timeConstraint,
-      false, // skipHistoryForToolInteraction: false
-    )
-
-    if (
-      result &&
-      typeof result === 'object' &&
-      'status' in result &&
-      result.status === 'web_search_required'
-    ) {
-      this.logger.error(
-        '[recommendMeals] Unexpected WebSearchRequestToolResult received.',
+    try {
+      this.logger.log(
+        `[Enhanced Responses API] Starting meal recommendation for user ${lineUserId}, context: "${mealContext}"`,
       )
-      return {
-        error:
-          'Internal error: Unexpected web search request during meal recommendation.',
+
+      // Generate meta-prompt for enhanced reasoning
+      const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
+        AiTaskType.MealRecommendation,
+        userProfile,
+        {
+          mealContext,
+          language,
+          userPreferences: userProfile.goal || 'general health',
+        },
+      )
+
+      // Create optimized system prompt with caching
+      const systemPrompt = this.promptCachingService.createOptimizedPrompt(
+        'Meal Recommendation',
+        metaPrompt,
+        `Generate meal recommendations for: ${mealContext}`,
+        userProfile,
+        'Meal recommendation tools available',
+      )
+
+      // Prepare user input for Responses API
+      const userInput: OpenaiResponseInputMessage[] = [
+        {
+          role: 'user',
+          content: `Please recommend meals for: ${mealContext}. 
+
+Consider my dietary preferences, health goals, and nutritional needs based on my profile. 
+
+Please call the '${mealRecommendationTool.function.name}' tool to provide detailed meal recommendations with nutritional information.`,
+        },
+      ]
+
+      // Use Responses API with agentic workflow
+      const result = await this.executeAgenticTaskWithResponsesAPI<
+        MealRecommendationArgs,
+        MealRecommendationToolResult
+      >(
+        lineUserId,
+        systemPrompt,
+        userInput,
+        [mealRecommendationTool],
+        mealRecommendationTool.function.name,
+        this.handleRecommendMealsWrapper,
+        userProfile,
+        language,
+        AiTaskType.MealRecommendation,
+        timeConstraint,
+        undefined, // foodLogsForHandler
+        undefined, // nutritionGoalForHandler
+      )
+
+      // Type guard to handle unexpected WebSearchRequestToolResult
+      if (result && typeof result === 'object' && 'status' in result) {
+        this.logger.warn(
+          '[recommendMeals] Unexpected WebSearchRequestToolResult received.',
+        )
+        return {
+          error: 'Unexpected web search request during meal recommendation.',
+        }
       }
+
+      // Log caching metrics
+      const promptMetrics = this.promptCachingService.createPromptWithMetrics(
+        'Meal Recommendation',
+        metaPrompt,
+        `Generate meal recommendations for: ${mealContext}`,
+        userProfile,
+      )
+
+      if (!promptMetrics.cachingEligible) {
+        this.logger.warn(
+          `Meal recommendation prompt may not benefit from caching optimization`,
+        )
+      }
+
+      this.logger.debug(
+        `Meal recommendation prompt tokens: ${promptMetrics.estimatedTokens} (caching eligible: ${promptMetrics.cachingEligible})`,
+      )
+
+      return result as MealRecommendationToolResult | { error: string } | null
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `recommendMeals error for user ${lineUserId}: ${message}`,
+      )
+      return { error: `Meal recommendation failed: ${message}` }
     }
-    return result as MealRecommendationToolResult | { error: string } | null
   }
 
-  async analyzeBarcode(
+  async answerFoodHistoryQuestion(
     lineUserId: string,
+    userQuery: string,
     userProfile: UserProfileDto,
-    barcodeDataOrProductInfo: string, // Can be barcode string or product name if AI thinks it found one
     language: string = 'th',
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
-    messageId?: string, // Added messageId
-  ): Promise<
-    | BarcodeAnalysisToolResult
-    | WebSearchRequestToolResult
-    | { error: string }
-    | null
-  > {
+  ): Promise<ConversationalFoodHistoryResult | { error: string } | null> {
     this.logger.log(
-      `Analyzing barcode for user ${lineUserId}, data: ${barcodeDataOrProductInfo}, lang: ${language}, messageId: ${messageId}`,
+      `Answering food history question for user: ${lineUserId}, query: ${userQuery.substring(0, 100)}...`,
     )
-    const systemPrompt = this.createBarcodeAnalysisSystemPrompt(
-      userProfile,
-      language,
-    )
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: `Please analyze the following barcode data or product information: ${barcodeDataOrProductInfo}`,
-      },
-    ]
 
-    return this.callOpenAIWithToolHandling<
-      BarcodeAnalysisArgs,
-      BarcodeAnalysisToolResult
-    >(
-      lineUserId,
-      messages,
-      [this.availableTools[importedBarcodeAnalysisTool.function.name]], // Corrected: Pass the actual tool object
-      'analyze_barcode_data',
-      (args, profile, lang) =>
-        this.handleAnalyzeBarcodeData(
-          args,
-          profile,
-          lang,
-          barcodeDataOrProductInfo, // Pass the original data to the handler
-        ),
-      userProfile,
-      language,
-      `Barcode: ${barcodeDataOrProductInfo}`,
-      timeConstraint,
-      false, // Don't skip history for barcode analysis unless decided otherwise
-      undefined,
-      undefined,
-      messageId, // Pass messageId
-    )
+    try {
+      const systemPrompt = this.createConversationalFoodHistorySystemPrompt(
+        userProfile,
+        language,
+      )
+
+      const result = await this.executeAgenticTaskWithResponsesAPI<
+        ConversationalFoodHistoryArgs,
+        ConversationalFoodHistoryResult
+      >(
+        lineUserId,
+        systemPrompt,
+        userQuery,
+        [conversationalFoodHistoryTool],
+        conversationalFoodHistoryTool.function.name,
+        this.handleConversationalFoodHistoryWrapper,
+        userProfile,
+        language,
+        AiTaskType.ConversationalFoodHistory,
+        timeConstraint,
+      )
+
+      if (result && 'error' in result) {
+        this.logger.error(`Error in answerFoodHistoryQuestion: ${result.error}`)
+        return result
+      }
+
+      return result as ConversationalFoodHistoryResult | null
+    } catch (error) {
+      this.logger.error(
+        `Error in answerFoodHistoryQuestion: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return {
+        error: `Failed to answer food history question: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      }
+    }
   }
 
   async answerGeneralNutritionQuestion(
@@ -1337,98 +1571,267 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     userProfile: UserProfileDto,
     language: string = 'th',
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
-    // skipHistoryForToolInteraction is not relevant here as it doesn't call callOpenAIWithToolHandling
   ): Promise<string | null> {
-    this.logger.log(
-      `Answering general nutrition question: "${userQuery.substring(0, 50)}..." for lang: ${language}, user: ${lineUserId}, constraint: ${timeConstraint}`,
-    )
-
-    const systemPrompt = this.createGeneralNutritionPrompt(
-      userProfile,
-      language,
-    )
-
-    // Before calling OpenAI for general questions, get conversation history.
-    let messagesForOpenAI: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userQuery },
-      ]
-
     try {
-      const history = await this.conversationHistoryService.getRecentHistory(
-        lineUserId,
+      this.logger.log(
+        `[RESPONSES API] Answering general nutrition question for user ${lineUserId}: "${userQuery.substring(0, 50)}...", lang: ${language}, constraint: ${timeConstraint}`,
+      )
+
+      // ✅ Control Method 1: Smart History Token Management
+      // จำกัด token สำหรับ conversation history ตาม timeConstraint
+      const maxHistoryTokens =
+        this.getMaxHistoryTokensByConstraint(timeConstraint)
+
+      const conversationHistory =
+        await this.conversationHistoryService.getRecentHistory(
+          lineUserId,
+          userProfile,
+          maxHistoryTokens, // ✅ Dynamic token limit based on performance requirement
+        )
+
+      // ✅ Control Method 2: Conversation Context Analysis
+      // วิเคราะห์ประเภทของการสนทนาเพื่อปรับ context length
+      const contextAnalysis = this.analyzeConversationContext(
+        conversationHistory,
+        userQuery,
+      )
+
+      // Generate meta-prompt for enhanced reasoning
+      const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
+        AiTaskType.GeneralNutritionQuery,
+        userProfile,
+        {
+          query: userQuery,
+          context: 'general_nutrition_consultation',
+          complexity: 'adaptive',
+          requiresPersonalization: 'high',
+          outputFormat: 'conversational_response',
+          conversationContext: contextAnalysis, // ✅ เพิ่ม context analysis
+        },
+      )
+
+      // Create optimized system prompt with caching
+      const rawSystemPrompt = this.createGeneralNutritionPrompt(
+        userProfile,
+        language,
+      )
+
+      const optimizedPrompt = this.promptCachingService.createOptimizedPrompt(
+        'general_nutrition_qa',
+        rawSystemPrompt,
+        userQuery,
         userProfile,
       )
-      if (history && history.length > 0) {
-        this.logger.log(
-          `Prepending ${history.length} messages from history for general Q&A for user ${lineUserId}.`,
-        )
-        messagesForOpenAI = [...history, ...messagesForOpenAI]
+
+      // Enhanced system prompt with agentic workflow and conversation context
+      let systemPrompt = `${metaPrompt}
+
+${optimizedPrompt}
+
+GENERAL NUTRITION Q&A INSTRUCTIONS:
+1. Provide accurate, evidence-based nutritional information
+2. Personalize advice based on user's health profile and goals
+3. Use clear, friendly language appropriate for general audience
+4. Include practical, actionable recommendations
+5. Address safety considerations and when to consult healthcare providers
+6. Maintain cultural sensitivity and dietary preferences
+7. **IMPORTANT**: Consider previous conversation context when answering
+
+USER QUERY: ${userQuery}`
+
+      // ✅ Control Method 3: Intelligent Context Inclusion
+      // เลือกข้อมูลจาก conversation history ที่เกี่ยวข้องที่สุด
+      const relevantContext = this.selectRelevantConversationContext(
+        conversationHistory,
+        userQuery,
+        contextAnalysis.isFollowUp,
+      )
+
+      if (relevantContext && relevantContext.length > 0) {
+        systemPrompt += `
+
+CONVERSATION CONTEXT:
+Recent relevant conversation:
+${relevantContext
+  .map(
+    (msg) =>
+      `${msg.role === 'user' ? 'ผู้ใช้' : 'AI'}: ${msg.content.substring(0, 200)}...`,
+  )
+  .join('\n')}
+
+Context Type: ${contextAnalysis.contextType}
+Is Follow-up: ${contextAnalysis.isFollowUp ? 'Yes' : 'No'}
+Previous Topic: ${contextAnalysis.previousTopic || 'None'}
+
+Based on this conversation history, provide a relevant and contextual response.`
+      } else {
+        systemPrompt += `
+
+CONVERSATION CONTEXT:
+- This is a ${contextAnalysis.isFollowUp ? 'follow-up' : 'new'} nutrition consultation
+- Context Type: ${contextAnalysis.contextType}
+- Provide helpful, accurate information while being engaging
+- Focus on practical advice the user can implement`
       }
 
-      // Add current user query to history
+      // ✅ บันทึกข้อความของผู้ใช้ใน conversation history
       await this.conversationHistoryService.addMessageToHistory(
         lineUserId,
         'user',
         userQuery,
       )
 
-      const { deploymentName, complexityLevel, score } =
-        this.selectModelInternal(userQuery, userProfile, timeConstraint)
-
-      this.logger.log(
-        `Using deployment: ${deploymentName} (Complexity Level: ${complexityLevel}, Score: ${score}) for general Q&A.`,
+      // Select optimal model and parameters based on query complexity
+      const modelConfig = this.selectModelInternal(
+        userQuery,
+        userProfile,
+        timeConstraint,
+        AiTaskType.GeneralNutritionQuery,
       )
 
-      const response = (await this.openaiService.getChatCompletion(
+      const { deploymentName } = modelConfig
+
+      // ✅ Control Method 4: Optimized Input Messages Construction
+      // สร้าง input messages พร้อม token management
+      const inputMessages = this.constructOptimizedInputMessages(
+        relevantContext,
+        userQuery,
+        maxHistoryTokens,
+      )
+
+      // ✅ Control Method 5: Dynamic Response Token Limits
+      // คำนวณ max_output_tokens ตาม context และ timeConstraint
+      const maxOutputTokens = this.calculateOptimalOutputTokens(
+        timeConstraint,
+        contextAnalysis,
+        userQuery.length,
+      )
+
+      // Call Responses API with optimized parameters
+      const response = await this.openaiService.createOpenaiResponse(
         deploymentName,
-        messagesForOpenAI,
         {
-          temperature: 0.5,
+          model: deploymentName,
+          instructions: systemPrompt,
+          input: inputMessages,
+          temperature: modelConfig.params.temperature,
+          max_output_tokens: maxOutputTokens, // ✅ Dynamic token limit
+          top_p: modelConfig.params.top_p,
+          // ✅ Control Method 6: Response ID Management for Long Conversations
+          // ใช้ previous_response_id เพื่อ maintain conversation state
+          previous_response_id: contextAnalysis.lastResponseId,
         },
-      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string } // Assertion here
-
-      if ('error' in response) {
-        this.logger.error(
-          `OpenAI call failed for general Q&A: ${response.error}`,
-        )
-        if (language === 'th') {
-          return `ขออภัยค่ะ เกิดข้อผิดพลาดในการสื่อสารกับ AI: ${response.error}`
-        }
-        return `Sorry, an error occurred while communicating with the AI: ${response.error}`
-      }
-
-      // At this point, response is OpenAI.Chat.Completions.ChatCompletion
-      this.logger.log('Received OpenAI response for general Q&A.')
-      const choice = response.choices[0]
-      if (choice && choice.message && choice.message.content) {
-        // Add AI's direct response to history
-        await this.conversationHistoryService.addMessageToHistory(
-          lineUserId,
-          'assistant',
-          choice.message.content,
-        )
-        return choice.message.content
-      } else {
-        this.logger.error(
-          'Invalid response structure from OpenAI for general Q&A.',
-        )
-        if (language === 'th') {
-          return 'ขออภัยค่ะ ไม่สามารถรับข้อมูลการตอบกลับที่ถูกต้องจาก AI ได้ในขณะนี้'
-        }
-        return 'Sorry, could not get a valid response from the AI at this moment.'
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      this.logger.error(
-        `Error in answerGeneralNutritionQuestion: ${message}`,
-        error instanceof Error ? error.stack : undefined,
       )
-      if (language === 'th') {
-        return 'ขออภัยค่ะ เกิดข้อผิดพลาดในการตอบคำถามของคุณในขณะนี้ โปรดลองอีกครั้งภายหลัง'
+
+      // **FIXED**: Check if error is not null instead of checking if error property exists
+      if (
+        response &&
+        typeof response === 'object' &&
+        'error' in response &&
+        response.error !== null
+      ) {
+        const errorMessage =
+          typeof response.error === 'string'
+            ? response.error
+            : JSON.stringify(response.error)
+        this.logger.error(
+          `OpenAI Responses API call failed for general Q&A: ${errorMessage}`,
+        )
+        return language === 'th'
+          ? `ขออภัยค่ะ เกิดข้อผิดพลาดในการสื่อสารกับ AI: ${errorMessage}`
+          : `Sorry, an error occurred while communicating with the AI: ${errorMessage}`
       }
-      return 'Sorry, an error occurred while answering your question. Please try again later.'
+
+      // Extract response text safely using type guards
+      let assistantResponse = ''
+      const apiResponse = response as unknown
+
+      // Try to extract from output_text first
+      if (hasOutputText(apiResponse)) {
+        assistantResponse = apiResponse.output_text
+      }
+
+      // If no output_text, try to extract from output array
+      if (!assistantResponse && hasOutputArray(apiResponse)) {
+        for (const outputItem of apiResponse.output) {
+          if (
+            isResponsesApiMessage(outputItem) &&
+            outputItem.role === 'assistant'
+          ) {
+            if (Array.isArray(outputItem.content)) {
+              const textContent = outputItem.content.find(
+                (content): content is ResponsesApiContentItem =>
+                  typeof content === 'object' &&
+                  content !== null &&
+                  'type' in content &&
+                  content.type === 'output_text' &&
+                  'text' in content &&
+                  typeof content.text === 'string',
+              )
+              if (textContent && textContent.text) {
+                assistantResponse = textContent.text
+                break
+              }
+            } else if (typeof outputItem.content === 'string') {
+              assistantResponse = outputItem.content
+              break
+            }
+          }
+        }
+      }
+
+      if (!assistantResponse) {
+        const errorMsg =
+          language === 'th'
+            ? 'ขออภัยค่ะ ไม่ได้รับการตอบกลับจาก AI'
+            : 'Sorry, no response received from AI'
+        this.logger.warn(
+          `No assistant response extracted from API response for user ${lineUserId}`,
+        )
+        return errorMsg
+      }
+
+      // ✅ Control Method 7: Response Processing with Token Tracking
+      // บันทึก response และ track token usage
+      let responseId: string | undefined
+
+      // Extract response ID for future reference (if available in response)
+      if (
+        hasUsage(apiResponse) &&
+        typeof apiResponse === 'object' &&
+        apiResponse !== null &&
+        'response_id' in apiResponse
+      ) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        const respId = (apiResponse as any).response_id
+        responseId = typeof respId === 'string' ? respId : undefined
+      }
+
+      // Log token usage for monitoring
+      if (hasUsage(apiResponse)) {
+        this.logger.log(
+          `[TOKEN USAGE] User: ${lineUserId}, Input: ${apiResponse.usage.input_tokens || 0}, Output: ${apiResponse.usage.output_tokens || 0}, Total: ${apiResponse.usage.total_tokens || 0}`,
+        )
+      }
+
+      // ✅ บันทึก AI response ใน conversation history โดยไม่ส่ง response ID เป็น analysisResult
+      await this.conversationHistoryService.addMessageToHistory(
+        lineUserId,
+        'assistant',
+        assistantResponse,
+        undefined, // analysisResult - ไม่มี analysis result สำหรับ general nutrition Q&A
+        responseId, // responseId - ส่งเป็น parameter สุดท้าย
+      )
+
+      return assistantResponse
+    } catch (error) {
+      this.logger.error(
+        `Error in answerGeneralNutritionQuestion for user ${lineUserId}:`,
+        error instanceof Error ? error.stack : error,
+      )
+      return language === 'th'
+        ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการตอบคำถาม โปรดลองใหม่อีกครั้ง'
+        : 'Sorry, an error occurred while answering your question. Please try again.'
     }
   }
 
@@ -1442,17 +1845,20 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     userProfile: UserProfileDto,
     language: string,
     queryForModelSelection: string,
+    taskType: AiTaskType, // Moved taskType to be before optional parameters
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
     skipHistoryForToolInteraction: boolean = false,
     foodLogsForHandler?: FoodLogEntryDto[],
     nutritionGoalForHandler?: NutritionGoalDtoForAI | null,
-    messageId?: string, // Added messageId, will be used now
-  ): Promise<
-    ResultDto | WebSearchRequestToolResult | { error: string } | null
-  > {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _messageId?: string, // Prefixed with underscore to indicate unused
+  ): Promise<ResultDto | NonFoodDescriptionResult | { error: string } | null> {
     this.logger.debug(
       `callOpenAIWithToolHandling initiated for user: ${lineUserId}, expectedTool: ${expectedToolName}`,
     )
+
+    // Note: _messageId parameter is kept for API compatibility
+    // but caching logic is handled in processResponsesAPIOutput method instead
 
     let messagesForOpenAI: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
       [...initialMessages]
@@ -1502,15 +1908,20 @@ RESPONSE STRUCTURE (for nutrition-related queries):
       }
       // Removed the warning for empty user message content as it might be intentional when skipping.
 
-      const { deploymentName: resolvedDeploymentName } =
-        this.selectModelInternal(
-          queryForModelSelection,
-          userProfile,
-          timeConstraint,
-        )
+      const {
+        deploymentName,
+        // complexityLevel, // Not used beyond this point in this function
+        // score, // Not used beyond this point in this function
+        params: resolvedParams,
+      } = this.selectModelInternal(
+        queryForModelSelection,
+        userProfile,
+        timeConstraint,
+        taskType,
+      )
 
       this.logger.debug(
-        `Calling OpenAI service for chat completion with deployment: ${resolvedDeploymentName}, language: ${language}`,
+        `Calling OpenAI service for chat completion with deployment: ${deploymentName}, language: ${language}, params: ${JSON.stringify(resolvedParams)}`,
       )
 
       const toolChoice = tools.find((t) => t.function.name === expectedToolName)
@@ -1520,12 +1931,18 @@ RESPONSE STRUCTURE (for nutrition-related queries):
           : undefined
 
       const response = (await this.openaiService.getChatCompletion(
-        resolvedDeploymentName,
+        deploymentName,
         messagesForOpenAI,
         {
           tools: tools,
           tool_choice: toolChoice,
+          temperature: resolvedParams.temperature,
+          max_tokens: resolvedParams.max_tokens,
+          top_p: resolvedParams.top_p,
+          presence_penalty: resolvedParams.presence_penalty,
+          frequency_penalty: resolvedParams.frequency_penalty,
         },
+        lineUserId, // Add userId for prompt caching optimization
       )) as OpenAI.Chat.Completions.ChatCompletion | { error: string } // Assertion here
 
       if ('error' in response) {
@@ -1542,6 +1959,20 @@ RESPONSE STRUCTURE (for nutrition-related queries):
 
       // At this point, response is OpenAI.Chat.Completions.ChatCompletion
       const responseMessage = response.choices[0]?.message
+
+      // Log token usage
+      if (response.usage) {
+        this.logger.log(
+          `Token usage for tool call (user: ${lineUserId}, model: ${deploymentName}, tool: ${expectedToolName}): ` +
+            `Prompt: ${response.usage.prompt_tokens}, ` +
+            `Completion (may be for tool args): ${response.usage.completion_tokens || 'N/A'}, ` +
+            `Total: ${response.usage.total_tokens}`,
+        )
+      } else {
+        this.logger.warn(
+          `No usage data in OpenAI response for tool call (user: ${lineUserId}, model: ${deploymentName}, tool: ${expectedToolName})`,
+        )
+      }
 
       if (
         responseMessage?.tool_calls &&
@@ -1577,42 +2008,11 @@ RESPONSE STRUCTURE (for nutrition-related queries):
 
         let result:
           | ResultDto
-          | WebSearchRequestToolResult
+          | NonFoodDescriptionResult
           | { error: string }
           | null = null
 
-        if (
-          toolCall.function.name ===
-          importedRequestProductInfoFromWebTool.function.name
-        ) {
-          try {
-            if (typeof toolCall.function.arguments === 'string') {
-              const toolArgs = JSON.parse(
-                toolCall.function.arguments,
-              ) as WebSearchRequestArgs
-              result = this.handleRequestProductInfoFromWeb(
-                toolArgs,
-                userProfile,
-                language,
-              )
-            } else {
-              this.logger.error(
-                `Tool arguments for ${importedRequestProductInfoFromWebTool.function.name} are not a string: ${typeof toolCall.function.arguments}`,
-              )
-              result = { error: 'Invalid tool arguments format.' }
-            }
-          } catch (e) {
-            this.logger.error(
-              `Error parsing arguments or handling ${importedRequestProductInfoFromWebTool.function.name}: ${e instanceof Error ? e.message : String(e)}`,
-            )
-            result = {
-              error:
-                language === 'th'
-                  ? `เกิดข้อผิดพลาดในการประมวลผลอาร์กิวเมนต์สำหรับ ${importedRequestProductInfoFromWebTool.function.name}`
-                  : `Error processing arguments for ${importedRequestProductInfoFromWebTool.function.name}`,
-            }
-          }
-        } else if (toolCall.function.name === expectedToolName) {
+        if (toolCall.function.name === expectedToolName) {
           try {
             if (typeof toolCall.function.arguments === 'string') {
               let argsString = toolCall.function.arguments
@@ -1657,34 +2057,8 @@ RESPONSE STRUCTURE (for nutrition-related queries):
                   nutritionGoalForHandler,
                 )
 
-                // CACHING LOGIC STARTS HERE
-                if (
-                  messageId &&
-                  result && // Ensure result is not null or error before caching
-                  !(typeof result === 'object' && 'error' in result) && // Not an error object
-                  !(
-                    typeof result === 'object' &&
-                    'status' in result &&
-                    (result as WebSearchRequestToolResult).status === // Type assertion for status check
-                      'web_search_required'
-                  ) && // Not a web search request
-                  expectedToolName === importedFoodAnalysisTool.function.name && // Specifically cache food analysis
-                  typeof (result as FoodAnalysisToolResult).food_name ===
-                    'string' // Basic check for FoodAnalysisToolResult structure
-                ) {
-                  this.logger.log(
-                    `Attempting to cache result for messageId: ${messageId}, tool: ${expectedToolName}`,
-                  )
-                  this.analysisCacheService.set(
-                    messageId,
-                    result as FoodAnalysisData, // Type assertion to FoodAnalysisData
-                  )
-                } else if (messageId) {
-                  this.logger.debug(
-                    `Skipping cache for messageId: ${messageId}, tool: ${expectedToolName}. Reason: Result type not cachable or condition not met. Result: ${JSON.stringify(result)}`,
-                  )
-                }
-                // CACHING LOGIC ENDS HERE
+                // NOTE: Caching logic is handled in processResponsesAPIOutput method
+                // to avoid variable scope issues in this generic method
               } catch (parseError) {
                 this.logger.error(
                   `Failed to parse cleaned JSON arguments for ${expectedToolName}. Original string: ${toolCall.function.arguments}. Cleaned string: ${argsString}`,
@@ -1695,20 +2069,14 @@ RESPONSE STRUCTURE (for nutrition-related queries):
                 result = {
                   error:
                     language === 'th'
-                      ? `เกิดข้อผิดพลาดในการประมวลผลข้อมูลจาก AI (JSON Parse Error หลัง clean): ${parseError instanceof Error ? parseError.message : String(parseError)}`
-                      : `Error processing data from AI (JSON Parse Error after clean): ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+                      ? `เกิดข้อผิดพลาดในการประมวลผลอาร์กิวเมนต์สำหรับ ${expectedToolName} (JSON Parse Error)`
+                      : `Error processing arguments for tool ${expectedToolName} (JSON Parse Error)`,
                 }
               }
 
               if (
                 result &&
                 !(typeof result === 'object' && 'error' in result) &&
-                !(
-                  typeof result === 'object' &&
-                  'status' in result &&
-                  (result as WebSearchRequestToolResult).status ===
-                    'web_search_required'
-                ) &&
                 !skipHistoryForToolInteraction // Modified condition
               ) {
                 await this.conversationHistoryService.addMessageToHistory(
@@ -1793,7 +2161,7 @@ RESPONSE STRUCTURE (for nutrition-related queries):
           }
         } else {
           this.logger.warn(
-            `AI called an unexpected tool: ${toolCall.function.name}. Expected: ${expectedToolName} or ${importedRequestProductInfoFromWebTool.function.name}`,
+            `AI called an unexpected tool: ${toolCall.function.name}. Expected: ${expectedToolName}`,
           )
           result = {
             error:
@@ -2032,48 +2400,533 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     }
   }
 
-  private handleAnalyzeEatingPattern(
+  private async handleAnalyzeEatingPattern(
     args: EatingPatternArgs,
     userProfile: UserProfileDto,
     language: string,
     foodLogs: FoodLogEntryDto[] = [], // Provide default empty array if undefined
     nutritionGoal: NutritionGoalDtoForAI | null = null, // Provide default null if undefined
-  ): EatingPatternToolResult {
+  ): Promise<EatingPatternToolResult> {
     this.logger.debug(
       `Handling analyze_eating_pattern for user ${userProfile.lineUserId || 'unknown'}, lang '${language}'. ` +
         `Args: ${JSON.stringify(args)}. Food logs count: ${foodLogs.length}. Goal set: ${!!nutritionGoal}`,
     )
 
-    // Basic calculations (can be expanded significantly)
+    if (foodLogs.length === 0) {
+      return {
+        calories_trend: 'insufficient_data',
+        average_daily_calories: 0,
+        identified_patterns: [],
+        problematic_behaviors: [],
+        improvement_suggestions: [
+          language === 'th'
+            ? 'เริ่มบันทึกอาหารเพื่อการวิเคราะห์ที่แม่นยำยิ่งขึ้น'
+            : 'Start logging your food for more accurate analysis',
+        ],
+        personalized_advice:
+          language === 'th'
+            ? 'ยังไม่มีข้อมูลการกินที่บันทึกไว้ กรุณาบันทึกอาหารอย่างสม่ำเสมอเพื่อการวิเคราะห์ที่ดีขึ้น'
+            : 'No food logs recorded yet. Please log your meals consistently for better analysis.',
+        basic_analysis_details: {
+          days_analyzed: 0,
+          total_logs: 0,
+          skipped_meal_counts: { breakfast: 0, lunch: 0, dinner: 0 },
+        },
+        calorie_consistency: undefined,
+        meal_timings: [],
+        most_skipped_meal: undefined,
+        nutrient_balance: undefined,
+        eating_window_hours: undefined,
+        late_night_eating_frequency: undefined,
+      }
+    }
+
+    // Real analysis implementation
     const daysAnalyzed = new Set(
       foodLogs.map((log) => new Date(log.timestamp).toDateString()),
     ).size
-    const totalLogs = foodLogs.length
-    // TODO: Implement more detailed analysis based on foodLogs and nutritionGoal as in original Node.js version.
+
+    // Calculate daily calories
+    const dailyCalories: { [date: string]: number } = {}
+    const mealCounts: { breakfast: number; lunch: number; dinner: number } = {
+      breakfast: 0,
+      lunch: 0,
+      dinner: 0,
+    }
+    const mealTimingData: { [mealType: string]: Date[] } = {}
+
+    foodLogs.forEach((log) => {
+      const date = new Date(log.timestamp).toDateString()
+      dailyCalories[date] = (dailyCalories[date] || 0) + log.calories
+
+      // Count meal types
+      const mealType = log.mealType.toLowerCase()
+      if (mealType.includes('breakfast')) mealCounts.breakfast++
+      else if (mealType.includes('lunch')) mealCounts.lunch++
+      else if (mealType.includes('dinner')) mealCounts.dinner++
+
+      // Track meal timings
+      if (!mealTimingData[mealType]) mealTimingData[mealType] = []
+      mealTimingData[mealType].push(new Date(log.timestamp))
+    })
+
+    const totalCalories = Object.values(dailyCalories).reduce(
+      (sum, cal) => sum + cal,
+      0,
+    )
+    const averageDailyCalories = Math.round(
+      totalCalories / Math.max(daysAnalyzed, 1),
+    )
+
+    // Calculate calorie trend (simple analysis)
+    const sortedDates = Object.keys(dailyCalories).sort()
+    let caloriesTrend:
+      | 'improving'
+      | 'stable'
+      | 'worsening'
+      | 'insufficient_data' = 'insufficient_data'
+
+    if (sortedDates.length >= 3) {
+      const firstHalf = sortedDates.slice(0, Math.floor(sortedDates.length / 2))
+      const secondHalf = sortedDates.slice(Math.floor(sortedDates.length / 2))
+
+      const firstHalfAvg =
+        firstHalf.reduce((sum, date) => sum + dailyCalories[date], 0) /
+        firstHalf.length
+      const secondHalfAvg =
+        secondHalf.reduce((sum, date) => sum + dailyCalories[date], 0) /
+        secondHalf.length
+
+      const difference = secondHalfAvg - firstHalfAvg
+      const changePercent = Math.abs(difference) / firstHalfAvg
+
+      if (changePercent < 0.1) {
+        caloriesTrend = 'stable'
+      } else if (userProfile.goal === 'lose_weight' && difference < 0) {
+        caloriesTrend = 'improving'
+      } else if (userProfile.goal === 'gain_weight' && difference > 0) {
+        caloriesTrend = 'improving'
+      } else if (
+        userProfile.goal === 'maintain_weight' &&
+        Math.abs(difference) < firstHalfAvg * 0.05
+      ) {
+        caloriesTrend = 'improving'
+      } else {
+        caloriesTrend = 'worsening'
+      }
+    }
+
+    // Calculate meal timings
+    const mealTimings = Object.entries(mealTimingData)
+      .map(([mealType, times]) => {
+        if (times.length === 0) return null
+
+        const avgHour =
+          times.reduce((sum, time) => sum + time.getHours(), 0) / times.length
+        const avgMinute =
+          times.reduce((sum, time) => sum + time.getMinutes(), 0) / times.length
+
+        return {
+          meal_name: mealType,
+          average_time: `${Math.floor(avgHour).toString().padStart(2, '0')}:${Math.floor(avgMinute).toString().padStart(2, '0')}`,
+          consistency: times.length / daysAnalyzed, // How consistently this meal is eaten
+        }
+      })
+      .filter(Boolean) as Array<{
+      meal_name: string
+      average_time: string
+      consistency: number
+    }>
+
+    // 🚀 Advanced pattern analysis
+    const identifiedPatterns: string[] = []
+    const problematicBehaviors: string[] = []
+    const improvementSuggestions: string[] = []
+
+    // 🔍 1. Basic calorie analysis
+    if (averageDailyCalories < 1200) {
+      problematicBehaviors.push(
+        language === 'th'
+          ? 'แคลอรี่ต่อวันต่ำเกินไป (น้อยกว่า 1200 kcal)'
+          : 'Daily calories too low (below 1200 kcal)',
+      )
+      improvementSuggestions.push(
+        language === 'th'
+          ? 'เพิ่มปริมาณอาหารหรือเลือกอาหารที่มีแคลอรี่สูงขึ้น'
+          : 'Increase food portions or choose higher-calorie foods',
+      )
+    } else if (averageDailyCalories > 2500) {
+      problematicBehaviors.push(
+        language === 'th'
+          ? 'แคลอรี่ต่อวันสูงเกินไป (มากกว่า 2500 kcal)'
+          : 'Daily calories too high (above 2500 kcal)',
+      )
+      improvementSuggestions.push(
+        language === 'th'
+          ? 'ลดปริมาณอาหารหรือเลือกอาหารที่มีแคลอรี่ต่ำกว่า'
+          : 'Reduce portion sizes or choose lower-calorie foods',
+      )
+    }
+
+    // 🔍 2. Weekend vs Weekday pattern analysis
+    const weekendLogs = foodLogs.filter((log) => {
+      const day = new Date(log.timestamp).getDay()
+      return day === 0 || day === 6 // Sunday = 0, Saturday = 6
+    })
+    const weekdayLogs = foodLogs.filter((log) => {
+      const day = new Date(log.timestamp).getDay()
+      return day >= 1 && day <= 5
+    })
+
+    if (weekendLogs.length > 0 && weekdayLogs.length > 0) {
+      const weekendAvgCalories =
+        weekendLogs.reduce((sum, log) => sum + log.calories, 0) /
+        weekendLogs.length
+      const weekdayAvgCalories =
+        weekdayLogs.reduce((sum, log) => sum + log.calories, 0) /
+        weekdayLogs.length
+      const weekendWeekdayDiff =
+        ((weekendAvgCalories - weekdayAvgCalories) / weekdayAvgCalories) * 100
+
+      if (Math.abs(weekendWeekdayDiff) > 20) {
+        if (weekendWeekdayDiff > 20) {
+          identifiedPatterns.push(
+            language === 'th'
+              ? `วันหยุดกินมากกว่าวันทำงาน ${Math.round(weekendWeekdayDiff)}%`
+              : `Weekend eating ${Math.round(weekendWeekdayDiff)}% higher than weekdays`,
+          )
+          problematicBehaviors.push(
+            language === 'th'
+              ? 'มีแนวโน้มกินมากเกินไปในวันหยุด'
+              : 'Tendency to overeat on weekends',
+          )
+          improvementSuggestions.push(
+            language === 'th'
+              ? 'พยายามควบคุมปริมาณอาหารในวันหยุดให้สอดคล้องกับวันทำงาน'
+              : 'Try to maintain consistent eating patterns on weekends',
+          )
+        } else {
+          identifiedPatterns.push(
+            language === 'th'
+              ? `วันทำงานกินมากกว่าวันหยุด ${Math.round(Math.abs(weekendWeekdayDiff))}%`
+              : `Weekday eating ${Math.round(Math.abs(weekendWeekdayDiff))}% higher than weekends`,
+          )
+        }
+      } else {
+        identifiedPatterns.push(
+          language === 'th'
+            ? 'รูปแบบการกินสม่ำเสมอระหว่างวันทำงานและวันหยุด'
+            : 'Consistent eating pattern between weekdays and weekends',
+        )
+      }
+    }
+
+    // 🔍 3. Late night eating analysis (emotional eating indicator)
+    const lateNightLogs = foodLogs.filter(
+      (log) => new Date(log.timestamp).getHours() >= 22,
+    )
+    const lateNightFrequency = lateNightLogs.length / Math.max(daysAnalyzed, 1)
+
+    if (lateNightFrequency > 0.3) {
+      // More than 30% of days
+      problematicBehaviors.push(
+        language === 'th'
+          ? `กินดึกบ่อยครั้ง (${Math.round(lateNightFrequency * 100)}% ของวัน)`
+          : `Frequent late-night eating (${Math.round(lateNightFrequency * 100)}% of days)`,
+      )
+      improvementSuggestions.push(
+        language === 'th'
+          ? 'หลีกเลี่ยงการกินหลัง 22:00 น. และหาทางจัดการความเครียดในรูปแบบอื่น'
+          : 'Avoid eating after 10 PM and find alternative stress management techniques',
+      )
+    } else if (lateNightFrequency <= 0.1) {
+      identifiedPatterns.push(
+        language === 'th'
+          ? 'ไม่ค่อยกินดึก แสดงถึงวินัยในการควบคุมตัวเองที่ดี'
+          : 'Minimal late-night eating shows good self-control',
+      )
+    }
+
+    // 🔍 4. Nutritional quality score calculation
+    const calculateNutritionalQualityScore = (): number => {
+      let score = 50 // Base score
+
+      // Protein adequacy (20 points max)
+      const avgDailyProtein =
+        foodLogs.reduce((sum, log) => sum + log.protein, 0) / daysAnalyzed
+      const proteinRatio = avgDailyProtein / (userProfile.weightKg || 70) // g per kg body weight
+      if (proteinRatio >= 1.2) score += 20
+      else if (proteinRatio >= 0.8) score += 15
+      else if (proteinRatio >= 0.6) score += 10
+
+      // Meal consistency (15 points max)
+      const mealConsistency =
+        (mealCounts.breakfast + mealCounts.lunch + mealCounts.dinner) /
+        (daysAnalyzed * 3)
+      score += mealConsistency * 15
+
+      // Calorie appropriateness (15 points max)
+      if (averageDailyCalories >= 1200 && averageDailyCalories <= 2500)
+        score += 15
+      else if (averageDailyCalories >= 1000 && averageDailyCalories <= 3000)
+        score += 10
+      else score += 5
+
+      return Math.min(Math.max(score, 0), 100)
+    }
+
+    const nutritionalQualityScore = calculateNutritionalQualityScore()
+
+    // 🔍 5. Eating window analysis
+    if (mealTimings.length >= 2) {
+      const eatingWindowHours =
+        Math.max(
+          ...mealTimings.map((t) => parseInt(t.average_time.split(':')[0])),
+        ) -
+        Math.min(
+          ...mealTimings.map((t) => parseInt(t.average_time.split(':')[0])),
+        )
+
+      if (eatingWindowHours <= 8) {
+        identifiedPatterns.push(
+          language === 'th'
+            ? `รูปแบบการกินแบบ Time-Restricted (${eatingWindowHours} ชั่วโมง)`
+            : `Time-restricted eating pattern (${eatingWindowHours} hours)`,
+        )
+      } else if (eatingWindowHours >= 14) {
+        problematicBehaviors.push(
+          language === 'th'
+            ? `ช่วงเวลาการกินยาวเกินไป (${eatingWindowHours} ชั่วโมง)`
+            : `Extended eating window (${eatingWindowHours} hours)`,
+        )
+        improvementSuggestions.push(
+          language === 'th'
+            ? 'พิจารณาจำกัดช่วงเวลาการกินให้อยู่ในช่วง 10-12 ชั่วโมง'
+            : 'Consider limiting eating window to 10-12 hours',
+        )
+      }
+    }
+
+    // 🔍 6. Meal frequency pattern analysis
+    if (mealCounts.breakfast < daysAnalyzed * 0.7) {
+      problematicBehaviors.push(
+        language === 'th'
+          ? 'ข้ามอาหารเช้าบ่อยครั้ง'
+          : 'Frequently skipping breakfast',
+      )
+      improvementSuggestions.push(
+        language === 'th'
+          ? 'พยายามทานอาหารเช้าให้สม่ำเสมอเพื่อเพิ่มพลังงานในตอนเช้า'
+          : 'Try to eat breakfast consistently for better morning energy',
+      )
+    }
+
+    // 🔍 7. Seasonal/Monthly pattern analysis (if we have enough historical data)
+    const currentMonth = new Date().getMonth()
+    const monthlyLogs = foodLogs.filter(
+      (log) => new Date(log.timestamp).getMonth() === currentMonth,
+    )
+    if (monthlyLogs.length > 0 && foodLogs.length > monthlyLogs.length) {
+      const monthlyAvgCalories =
+        monthlyLogs.reduce((sum, log) => sum + log.calories, 0) /
+        monthlyLogs.length
+      const otherMonthsLogs = foodLogs.filter(
+        (log) => new Date(log.timestamp).getMonth() !== currentMonth,
+      )
+      const otherMonthsAvgCalories =
+        otherMonthsLogs.reduce((sum, log) => sum + log.calories, 0) /
+        otherMonthsLogs.length
+
+      const monthlyDiff =
+        ((monthlyAvgCalories - otherMonthsAvgCalories) /
+          otherMonthsAvgCalories) *
+        100
+      if (Math.abs(monthlyDiff) > 15) {
+        identifiedPatterns.push(
+          language === 'th'
+            ? `เดือนนี้กิน${monthlyDiff > 0 ? 'มากกว่า' : 'น้อยกว่า'}เดือนอื่นๆ ${Math.round(Math.abs(monthlyDiff))}%`
+            : `This month eating ${monthlyDiff > 0 ? 'more' : 'less'} than other months by ${Math.round(Math.abs(monthlyDiff))}%`,
+        )
+      }
+    }
+
+    // 🔍 8. Basic pattern identification
+    if (daysAnalyzed >= 7) {
+      identifiedPatterns.push(
+        language === 'th'
+          ? `ทานอาหารเช้า ${Math.round((mealCounts.breakfast / daysAnalyzed) * 100)}% ของวัน`
+          : `Eating breakfast ${Math.round((mealCounts.breakfast / daysAnalyzed) * 100)}% of days`,
+      )
+
+      identifiedPatterns.push(
+        language === 'th'
+          ? `คะแนนคุณภาพโภชนาการ: ${Math.round(nutritionalQualityScore)}/100`
+          : `Nutritional quality score: ${Math.round(nutritionalQualityScore)}/100`,
+      )
+
+      // Add quality assessment
+      if (nutritionalQualityScore >= 80) {
+        identifiedPatterns.push(
+          language === 'th'
+            ? 'รูปแบบการกินมีคุณภาพดีมาก'
+            : 'Excellent eating pattern quality',
+        )
+      } else if (nutritionalQualityScore >= 60) {
+        identifiedPatterns.push(
+          language === 'th'
+            ? 'รูปแบบการกินมีคุณภาพปานกลาง มีที่ปรับปรุงได้'
+            : 'Moderate eating pattern quality with room for improvement',
+        )
+      } else {
+        problematicBehaviors.push(
+          language === 'th'
+            ? 'รูปแบบการกินต้องปรับปรุงอย่างเร่งด่วน'
+            : 'Eating pattern needs significant improvement',
+        )
+      }
+    }
+
+    // Calculate nutrient balance if nutrition goal is available
+    let nutrientBalance: EatingPatternToolResult['nutrient_balance'] = undefined
+    if (nutritionGoal) {
+      const totalProtein = foodLogs.reduce((sum, log) => sum + log.protein, 0)
+      const totalCarbs = foodLogs.reduce((sum, log) => sum + log.carbs, 0)
+      const totalFat = foodLogs.reduce((sum, log) => sum + log.fat, 0)
+      const totalFiber = foodLogs.reduce(
+        (sum, log) => sum + (log.fiber || 0),
+        0,
+      )
+
+      const avgDailyProtein = totalProtein / daysAnalyzed
+      const avgDailyCarbs = totalCarbs / daysAnalyzed
+      const avgDailyFat = totalFat / daysAnalyzed
+      const avgDailyFiber = totalFiber / daysAnalyzed
+
+      nutrientBalance = {
+        protein_balance: nutritionGoal.daily_protein_g
+          ? Math.round((avgDailyProtein / nutritionGoal.daily_protein_g) * 100)
+          : null,
+        carbs_balance: nutritionGoal.daily_carbs_g
+          ? Math.round((avgDailyCarbs / nutritionGoal.daily_carbs_g) * 100)
+          : null,
+        fat_balance: nutritionGoal.daily_fat_g
+          ? Math.round((avgDailyFat / nutritionGoal.daily_fat_g) * 100)
+          : null,
+        fiber_balance: nutritionGoal.daily_fiber_g
+          ? Math.round((avgDailyFiber / nutritionGoal.daily_fiber_g) * 100)
+          : null,
+      }
+    }
+
+    // 🤖 Generate AI-enhanced personalized advice
+    const basePersonalizedAdvice =
+      language === 'th'
+        ? `จากการวิเคราะห์ ${daysAnalyzed} วัน พบว่าคุณทานอาหารเฉลี่ย ${averageDailyCalories} แคลอรี่ต่อวัน แนวโน้มแคลอรี่: ${caloriesTrend === 'improving' ? 'ดีขึ้น' : caloriesTrend === 'stable' ? 'คงที่' : caloriesTrend === 'worsening' ? 'แย่ลง' : 'ข้อมูลไม่เพียงพอ'}`
+        : `Based on ${daysAnalyzed} days analysis, you consume an average of ${averageDailyCalories} calories per day. Calorie trend: ${caloriesTrend}`
+
+    // 🚀 Use AI to enhance all analysis components with personality and engagement
+    let finalPersonalizedAdvice = basePersonalizedAdvice
+    let finalIdentifiedPatterns = identifiedPatterns
+    let finalImprovementSuggestions = improvementSuggestions
+
+    try {
+      // 🤖 FULL AUTONOMOUS AI - ให้ AI สร้างทุกอย่างเอง
+      if (daysAnalyzed >= 1 && foodLogs.length >= 1) {
+        this.logger.log(
+          `🤖 Running FULL AUTONOMOUS AI Analysis: ${daysAnalyzed} days, ${foodLogs.length} logs`,
+        )
+
+        const autonomousResult = await this.generateFullAutonomousAnalysis(
+          foodLogs,
+          userProfile,
+          nutritionGoal,
+          language,
+          caloriesTrend,
+          averageDailyCalories,
+          nutritionalQualityScore,
+        )
+
+        if (autonomousResult) {
+          finalPersonalizedAdvice = autonomousResult.personalizedAdvice
+          finalIdentifiedPatterns = autonomousResult.identifiedPatterns
+          finalImprovementSuggestions = autonomousResult.improvementSuggestions
+
+          this.logger.log(`✨ Full Autonomous AI Analysis successful!`)
+        } else {
+          this.logger.warn(`⚠️ Autonomous AI failed, using manual fallback`)
+        }
+      } else {
+        this.logger.warn(
+          `⚠️ Insufficient data for AI analysis - days: ${daysAnalyzed}, logs: ${foodLogs.length}`,
+        )
+      }
+    } catch (aiError) {
+      this.logger.warn(`❌ Autonomous AI analysis failed: ${aiError}`)
+      // ใช้ manual fallback
+    }
 
     return {
-      calories_trend: 'insufficient_data',
-      average_daily_calories: 0,
-      // ... (other fields as placeholders or based on minimal calculation)
-      identified_patterns: [],
-      problematic_behaviors: [],
-      improvement_suggestions: [],
-      personalized_advice:
-        language === 'th'
-          ? 'ข้อมูลไม่เพียงพอสำหรับการวิเคราะห์รูปแบบการกินโดยละเอียด'
-          : 'Insufficient data for detailed eating pattern analysis.',
+      calories_trend: caloriesTrend,
+      average_daily_calories: averageDailyCalories,
+      calorie_consistency:
+        sortedDates.length > 1
+          ? 1 -
+            (Math.max(...Object.values(dailyCalories)) -
+              Math.min(...Object.values(dailyCalories))) /
+              averageDailyCalories
+          : undefined,
+      meal_timings: mealTimings,
+      most_skipped_meal:
+        mealCounts.breakfast < mealCounts.lunch &&
+        mealCounts.breakfast < mealCounts.dinner
+          ? 'breakfast'
+          : mealCounts.lunch < mealCounts.dinner
+            ? 'lunch'
+            : mealCounts.dinner < mealCounts.breakfast
+              ? 'dinner'
+              : undefined,
+      nutrient_balance: nutrientBalance,
+      eating_window_hours:
+        mealTimings.length > 1
+          ? Math.max(
+              ...mealTimings.map((t) => parseInt(t.average_time.split(':')[0])),
+            ) -
+            Math.min(
+              ...mealTimings.map((t) => parseInt(t.average_time.split(':')[0])),
+            )
+          : undefined,
+      late_night_eating_frequency:
+        foodLogs.filter((log) => new Date(log.timestamp).getHours() >= 22)
+          .length / foodLogs.length,
+      identified_patterns: finalIdentifiedPatterns,
+      problematic_behaviors: problematicBehaviors,
+      improvement_suggestions: finalImprovementSuggestions,
+      personalized_advice: finalPersonalizedAdvice,
       basic_analysis_details: {
         days_analyzed: daysAnalyzed,
-        total_logs: totalLogs,
-        skipped_meal_counts: { breakfast: 0, lunch: 0, dinner: 0 }, // Placeholder
+        total_logs: foodLogs.length,
+        skipped_meal_counts: {
+          breakfast: Math.max(0, daysAnalyzed - mealCounts.breakfast),
+          lunch: Math.max(0, daysAnalyzed - mealCounts.lunch),
+          dinner: Math.max(0, daysAnalyzed - mealCounts.dinner),
+        },
+        average_eating_window_hours:
+          mealTimings.length > 1
+            ? Math.max(
+                ...mealTimings.map((t) =>
+                  parseInt(t.average_time.split(':')[0]),
+                ),
+              ) -
+              Math.min(
+                ...mealTimings.map((t) =>
+                  parseInt(t.average_time.split(':')[0]),
+                ),
+              )
+            : undefined,
+        calculated_late_night_eating_frequency:
+          foodLogs.filter((log) => new Date(log.timestamp).getHours() >= 22)
+            .length / foodLogs.length,
       },
-      // Ensure all fields from EatingPatternToolResult are present
-      calorie_consistency: undefined,
-      meal_timings: [],
-      most_skipped_meal: undefined,
-      nutrient_balance: undefined,
-      eating_window_hours: undefined,
-      late_night_eating_frequency: undefined,
     }
   }
 
@@ -2227,68 +3080,6 @@ RESPONSE STRUCTURE (for nutrition-related queries):
     }
   }
 
-  private handleRequestProductInfoFromWeb(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _args: WebSearchRequestArgs,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _userProfile: UserProfileDto,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _language: string,
-  ): WebSearchRequestToolResult {
-    // Implementation of handleRequestProductInfoFromWeb method
-    // This is a placeholder and should be replaced with the actual implementation
-    return {
-      status: 'web_search_required',
-      search_query_for_assistant: '',
-      original_product_name: '',
-      message_to_user_while_searching: '',
-      error_message: '',
-    }
-  }
-
-  private handleAnalyzeBarcodeData(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _args: BarcodeAnalysisArgs,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _userProfile: UserProfileDto,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _language: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _barcodeDataOrProductInfo: string,
-  ): BarcodeAnalysisToolResult {
-    // Implementation of handleAnalyzeBarcodeData method
-    // This is a placeholder and should be replaced with the actual implementation
-    return {
-      barcode_type: '',
-      barcode_value: '',
-      food_info: {
-        product_name: '',
-        brand: '',
-        serving_size: '',
-        servings_per_container: 0,
-        calories: 0,
-        protein: 0,
-        carbs: 0,
-        fat: 0,
-        fiber: 0,
-        sugar: 0,
-        saturated_fat: 0,
-        trans_fat: 0,
-        cholesterol: 0,
-        sodium: 0,
-        vitamins_minerals: {},
-        ingredients: [],
-        allergens: [],
-        storage_instructions: '',
-      },
-      nutritional_rating: 0,
-      health_benefits: [],
-      health_concerns: [],
-      personalized_advice: '',
-      alternatives: [],
-    }
-  }
-
   async createEmbedding(
     text: string,
   ): Promise<EmbeddingResult | { error: string }> {
@@ -2430,6 +3221,1793 @@ RESPONSE STRUCTURE (for nutrition-related queries):
 
       return {
         error: `Failed to create embedding: ${specificMessage}`,
+      }
+    }
+  }
+
+  // REFACTORED CORE METHOD - Enhanced Responses API Integration
+  private async executeAgenticTaskWithResponsesAPI<
+    ArgsDto,
+    ResultDto extends object,
+  >(
+    lineUserId: string,
+    instructions: string,
+    userInput: string | OpenaiResponseInputMessage[],
+    tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+    expectedToolName: string,
+    toolHandler: ToolHandler<ArgsDto, ResultDto>,
+    userProfile: UserProfileDto,
+    language: string,
+    taskType: AiTaskType,
+    timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
+    foodLogsForHandler?: FoodLogEntryDto[],
+    nutritionGoalForHandler?: NutritionGoalDtoForAI | null,
+    _messageId?: string, // Prefixed with underscore to indicate unused
+  ): Promise<ResultDto | NonFoodDescriptionResult | { error: string } | null> {
+    this.logger.debug(
+      `executeAgenticTaskWithResponsesAPI initiated for user: ${lineUserId}, taskType: ${taskType}, expectedTool: ${expectedToolName}`,
+    )
+
+    // Select appropriate model
+    const userInputString =
+      typeof userInput === 'string' ? userInput : JSON.stringify(userInput)
+    const selectedModel = this.selectModelInternal(
+      userInputString,
+      userProfile,
+      timeConstraint,
+      taskType,
+    )
+    const deploymentName = selectedModel.deploymentName
+
+    // ✅ ใช้ Responses API built-in conversation state management
+    let previousResponseId: string | undefined
+    try {
+      // ดึง response ID ล่าสุดจาก conversation history
+      const conversationHistory =
+        await this.conversationHistoryService.getRecentHistory(
+          lineUserId,
+          userProfile,
+          1000,
+        )
+
+      // Type-safe response ID extraction
+      if (conversationHistory && conversationHistory.length > 0) {
+        const lastMessage = conversationHistory[conversationHistory.length - 1]
+        if (lastMessage.content && typeof lastMessage.content === 'string') {
+          const responseIdMatch = lastMessage.content.match(/response_id:(\w+)/)
+          previousResponseId = responseIdMatch?.[1]
+        }
+      }
+    } catch (historyError) {
+      this.logger.warn(
+        `Failed to retrieve conversation history for ${lineUserId}: ${historyError instanceof Error ? historyError.message : String(historyError)}`,
+      )
+    }
+
+    // Create Responses API request with proper tool format
+    const responseParams: OpenaiResponseCreateParams = {
+      model: deploymentName,
+      instructions,
+      input: userInput,
+      tools: tools.map((tool) => ({
+        type: 'function',
+        name: tool.function.name,
+        description: tool.function.description || '',
+        parameters: tool.function.parameters || {},
+        strict: tool.function.strict !== false,
+      })),
+      tool_choice: 'auto',
+      temperature: selectedModel.params.temperature,
+      previous_response_id: previousResponseId,
+      max_output_tokens: selectedModel.params.max_tokens,
+      metadata: {
+        lineUserId,
+        messageId: _messageId || '',
+        taskType,
+        language,
+      },
+    }
+
+    this.logger.debug(
+      `Calling Responses API for ${lineUserId} with deployment: ${deploymentName}`,
+    )
+
+    try {
+      const openAIResponse = await this.openaiService.createOpenaiResponse(
+        deploymentName,
+        responseParams,
+      )
+
+      // Debug log to see response structure
+      this.logger.log(
+        `🔍 Raw OpenAI Response for ${lineUserId}: ${JSON.stringify(openAIResponse, null, 2).substring(0, 1000)}...`,
+      )
+      this.logger.log(
+        `🧪 Response has 'error' property: ${'error' in openAIResponse}`,
+      )
+      this.logger.log(
+        `🧪 Response error value: ${openAIResponse && typeof openAIResponse === 'object' && 'error' in openAIResponse ? JSON.stringify(openAIResponse.error) : 'no error property'}`,
+      )
+
+      // **FIXED**: Check if error is not null instead of checking if error property exists
+      // Azure OpenAI Responses API always includes 'error' property but it's null when no error
+      if (
+        openAIResponse &&
+        typeof openAIResponse === 'object' &&
+        'error' in openAIResponse &&
+        openAIResponse.error !== null
+      ) {
+        const errorMessage =
+          typeof openAIResponse.error === 'string'
+            ? openAIResponse.error
+            : JSON.stringify(openAIResponse.error)
+        this.logger.error(`OpenAI Responses API call failed: ${errorMessage}`)
+        return { error: errorMessage }
+      }
+
+      // Save the current response for conversation state
+      await this.conversationHistoryService.addMessageToHistory(
+        lineUserId,
+        'assistant',
+        JSON.stringify(openAIResponse),
+      )
+
+      // **Enhanced Implementation**: Process Responses API output
+      return await this.processResponsesAPIOutput(
+        openAIResponse,
+        expectedToolName,
+        toolHandler,
+        userProfile,
+        language,
+        lineUserId,
+        foodLogsForHandler,
+        nutritionGoalForHandler,
+        _messageId,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `executeAgenticTaskWithResponsesAPI error for user ${lineUserId}: ${message}`,
+      )
+      return { error: `Failed to execute agentic task: ${message}` }
+    }
+  }
+
+  /**
+   * Enhanced method to process Responses API output and handle tool calls
+   * Now supports autonomous multi-tool workflows
+   */
+  private async processResponsesAPIOutput<ArgsDto, ResultDto extends object>(
+    openAIResponse: unknown,
+    expectedToolName: string,
+    toolHandler: ToolHandler<ArgsDto, ResultDto>,
+    userProfile: UserProfileDto,
+    language: string,
+    lineUserId: string,
+    foodLogsForHandler?: FoodLogEntryDto[],
+    nutritionGoalForHandler?: NutritionGoalDtoForAI | null,
+    _messageId?: string,
+  ): Promise<ResultDto | NonFoodDescriptionResult | { error: string } | null> {
+    this.logger.log(
+      `🔍 processResponsesAPIOutput called for user ${lineUserId}, expectedTool: ${expectedToolName}`,
+    )
+
+    // Store food history data from get_food_history tool calls
+    let retrievedFoodLogs: FoodLogEntryDto[] | undefined = foodLogsForHandler
+
+    // Handle different response structures from Responses API using type guards
+    if (hasOutputArray(openAIResponse)) {
+      this.logger.log(
+        `📊 Response has output array with ${openAIResponse.output.length} items`,
+      )
+
+      let finalResult:
+        | ResultDto
+        | NonFoodDescriptionResult
+        | { error: string }
+        | null = null
+
+      for (const outputItem of openAIResponse.output) {
+        this.logger.log(
+          `🔍 Processing output item type: ${typeof outputItem === 'object' && outputItem !== null && 'type' in outputItem ? (outputItem as { type: string }).type : 'unknown'}`,
+        )
+
+        // Handle function calls in Responses API format
+        if (
+          typeof outputItem === 'object' &&
+          outputItem !== null &&
+          'type' in outputItem
+        ) {
+          const typedItem = outputItem as {
+            type: string
+            name?: string
+            arguments?: string
+          }
+
+          if (
+            typedItem.type === 'function_call' &&
+            typedItem.name &&
+            typedItem.arguments
+          ) {
+            this.logger.log(
+              `🛠️ AI called tool: ${typedItem.name} via Responses API for user ${lineUserId}`,
+            )
+
+            // Add tool call to conversation history
+            await this.conversationHistoryService.addMessageToHistory(
+              lineUserId,
+              'assistant',
+              `[Tool Call: ${typedItem.name} with args: ${typeof typedItem.arguments === 'string' ? typedItem.arguments.substring(0, 100) : JSON.stringify(typedItem.arguments).substring(0, 100)}...]`,
+            )
+
+            try {
+              const parsedArgs = JSON.parse(typedItem.arguments) as unknown
+
+              // Handle get_food_history tool (intermediate step)
+              if (typedItem.name === foodHistoryTool.function.name) {
+                this.logger.log(
+                  `🗂️ Processing food history retrieval for autonomous workflow`,
+                )
+
+                const foodHistoryResult = await this.handleGetFoodHistory(
+                  parsedArgs as FoodHistoryArgs,
+                  userProfile,
+                  language,
+                )
+
+                // Convert food history to format expected by eating pattern handler
+                retrievedFoodLogs = foodHistoryResult.food_logs.map((log) => ({
+                  timestamp: new Date(log.timestamp),
+                  mealType: log.mealType,
+                  foodName: log.foodName,
+                  calories: log.calories,
+                  protein: log.protein,
+                  carbs: log.carbs,
+                  fat: log.fat,
+                  fiber: log.fiber,
+                }))
+
+                this.logger.log(
+                  `📋 Retrieved ${retrievedFoodLogs.length} food logs for autonomous analysis`,
+                )
+
+                // Add food history result to conversation history
+                await this.conversationHistoryService.addMessageToHistory(
+                  lineUserId,
+                  'assistant',
+                  `[Food History Retrieved: ${foodHistoryResult.message}]`,
+                )
+
+                // Continue processing - don't return here as we expect more tool calls
+                continue
+              }
+
+              // Handle conversational food history tool (direct processing)
+              if (
+                typedItem.name === conversationalFoodHistoryTool.function.name
+              ) {
+                this.logger.log(
+                  `💬 Processing conversational food history tool`,
+                )
+
+                const result = await toolHandler(
+                  parsedArgs as ArgsDto,
+                  userProfile,
+                  language,
+                  foodLogsForHandler,
+                  nutritionGoalForHandler,
+                )
+
+                finalResult = result
+                this.logger.log(
+                  `✅ Conversational food history result processed`,
+                )
+                continue
+              }
+
+              // Handle expected final tool (with retrieved food data if available)
+              if (typedItem.name === expectedToolName) {
+                this.logger.log(
+                  `🎯 Processing expected tool: ${expectedToolName} with ${retrievedFoodLogs ? retrievedFoodLogs.length : 0} food logs`,
+                )
+
+                const result = await toolHandler(
+                  parsedArgs as ArgsDto,
+                  userProfile,
+                  language,
+                  retrievedFoodLogs, // Use retrieved food logs if available
+                  nutritionGoalForHandler,
+                )
+
+                // Cache successful results
+                await this.cacheSuccessfulResults(
+                  result,
+                  expectedToolName,
+                  lineUserId,
+                  openAIResponse,
+                  _messageId,
+                )
+
+                finalResult = result
+                this.logger.log(
+                  `✅ Final tool result processed: ${JSON.stringify(result).substring(0, 100)}...`,
+                )
+                continue
+              }
+
+              // Handle unexpected tool
+              this.logger.warn(
+                `⚠️ AI called unexpected tool: ${typedItem.name}. Expected: ${expectedToolName}`,
+              )
+              // Don't return error immediately - continue processing in case there are more tool calls
+            } catch (parseError) {
+              this.logger.error(
+                `❌ Error parsing tool arguments for ${typedItem.name}: ${parseError}`,
+              )
+              return { error: 'Invalid tool arguments format.' }
+            }
+          }
+        }
+
+        // Handle direct text messages from assistant
+        if (
+          isResponsesApiMessage(outputItem) &&
+          outputItem.role === 'assistant' &&
+          outputItem.content
+        ) {
+          let assistantText = ''
+
+          if (Array.isArray(outputItem.content)) {
+            const textPart = outputItem.content.find(
+              (part): part is ResponsesApiContentItem =>
+                typeof part === 'object' &&
+                part !== null &&
+                'type' in part &&
+                part.type === 'output_text' &&
+                'text' in part &&
+                typeof part.text === 'string',
+            )
+            if (textPart && textPart.text) {
+              assistantText = textPart.text
+            }
+          } else if (typeof outputItem.content === 'string') {
+            assistantText = outputItem.content
+          }
+
+          if (assistantText) {
+            this.logger.log(
+              `💬 AI direct response: ${assistantText.substring(0, 100)}...`,
+            )
+            await this.conversationHistoryService.addMessageToHistory(
+              lineUserId,
+              'assistant',
+              assistantText,
+            )
+
+            // Handle friendly non-food responses for food analysis tasks
+            if (expectedToolName === foodAnalysisTool.function.name) {
+              return {
+                type: 'non_food_description',
+                description: assistantText,
+              } as unknown as NonFoodDescriptionResult
+            }
+
+            // If we don't have a final result yet, this might be the AI's final response
+            if (!finalResult) {
+              return {
+                error: `AI_DIRECT_RESPONSE: ${assistantText}`,
+              }
+            }
+          }
+        }
+      }
+
+      // Return the final result if we found one
+      if (finalResult) {
+        return finalResult
+      }
+    }
+
+    // Handle simple text response (fallback)
+    if (hasOutputText(openAIResponse)) {
+      this.logger.log(
+        `📄 Response has output_text: ${openAIResponse.output_text.substring(0, 100)}...`,
+      )
+      await this.conversationHistoryService.addMessageToHistory(
+        lineUserId,
+        'assistant',
+        openAIResponse.output_text,
+      )
+      return {
+        error: `AI_DIRECT_RESPONSE_VIA_OUTPUT_TEXT: ${openAIResponse.output_text}`,
+      }
+    }
+
+    this.logger.warn(
+      `❌ No recognized response structure found for user ${lineUserId}`,
+    )
+    return {
+      error:
+        'AI did not produce a valid tool call or text output via Responses API.',
+    }
+  }
+
+  /**
+   * Helper method to cache successful analysis results
+   */
+  private async cacheSuccessfulResults<ResultDto extends object>(
+    result: ResultDto | NonFoodDescriptionResult | { error: string } | null,
+    expectedToolName: string,
+    lineUserId: string,
+    openAIResponse: unknown,
+    _messageId?: string,
+  ): Promise<void> {
+    // Cache successful food analysis results
+    if (
+      result &&
+      typeof result === 'object' &&
+      !(
+        'status' in result &&
+        typeof result.status === 'string' &&
+        result.status.includes('web_search_required')
+      ) &&
+      expectedToolName === foodAnalysisTool.function.name &&
+      'food_name' in result &&
+      typeof result.food_name === 'string' &&
+      'calories' in result &&
+      typeof result.calories === 'number'
+    ) {
+      try {
+        this.logger.debug(
+          `🗄️ Caching food analysis result: ${result.food_name}`,
+        )
+
+        const foodAnalysisResult = result as unknown as FoodAnalysisToolResult
+        const title = `${foodAnalysisResult.food_name} - ${foodAnalysisResult.calories} kcal`
+        const summary = `${foodAnalysisResult.portion || 'ไม่ระบุปริมาณ'} | โปรตีน: ${foodAnalysisResult.protein || 'N/A'}g | คาร์บ: ${foodAnalysisResult.carbs || 'N/A'}g | ไขมัน: ${foodAnalysisResult.fat || 'N/A'}g`
+
+        // Extract response ID
+        let responseId: string | undefined
+        if (
+          typeof openAIResponse === 'object' &&
+          openAIResponse !== null &&
+          'id' in openAIResponse
+        ) {
+          responseId = String(openAIResponse.id)
+        }
+
+        const analysisId =
+          await this.conversationHistoryService.addAnalysisResult(
+            lineUserId,
+            'food_analysis',
+            foodAnalysisResult,
+            title,
+            summary,
+            foodAnalysisResult.imageUrl,
+            responseId,
+          )
+
+        this.logger.log(
+          `💾 Structured food analysis saved with ID: ${analysisId}`,
+        )
+
+        // Cache for immediate use if messageId is available
+        if (_messageId && _messageId.trim() !== '') {
+          this.analysisCacheService.set(
+            _messageId,
+            result as unknown as FoodAnalysisToolResult,
+          )
+          this.logger.debug(`🏷️ Also cached with messageId: ${_messageId}`)
+        }
+      } catch (structuredStorageError) {
+        this.logger.warn(
+          `⚠️ Structured storage error: ${structuredStorageError}`,
+        )
+      }
+    }
+
+    // Cache eating pattern analysis results
+    if (
+      result &&
+      typeof result === 'object' &&
+      expectedToolName === eatingPatternTool.function.name &&
+      'calories_trend' in result &&
+      'personalized_advice' in result
+    ) {
+      try {
+        const eatingPatternResult = result as unknown as EatingPatternToolResult
+        const title = `รูปแบบการกิน - ${eatingPatternResult.calories_trend === 'improving' ? 'ดีขึ้น' : eatingPatternResult.calories_trend === 'stable' ? 'คงที่' : eatingPatternResult.calories_trend === 'worsening' ? 'แย่ลง' : 'ข้อมูลไม่เพียงพอ'}`
+        const summary = `แคลอรี่เฉลี่ย: ${eatingPatternResult.average_daily_calories || 'N/A'} kcal | รูปแบบ: ${eatingPatternResult.identified_patterns?.join(', ') || 'ไม่พบรูปแบบเฉพาะ'}`
+
+        const analysisId =
+          await this.conversationHistoryService.addAnalysisResult(
+            lineUserId,
+            'eating_pattern',
+            eatingPatternResult,
+            title,
+            summary,
+          )
+
+        this.logger.log(
+          `📊 Eating pattern analysis saved with ID: ${analysisId}`,
+        )
+      } catch (storageError) {
+        this.logger.warn(`⚠️ Eating pattern storage error: ${storageError}`)
+      }
+    }
+  }
+
+  /**
+   * Type-safe wrapper methods for tool handlers
+   */
+  private readonly handleExtractFoodAnalysisWrapper: ToolHandler<
+    FoodAnalysisToolResult,
+    FoodAnalysisToolResult
+  > = async (args, userProfile, language) => {
+    return this.handleExtractFoodAnalysis(args, userProfile, language)
+  }
+
+  private readonly handleCalculateNutritionGoalsWrapper: ToolHandler<
+    NutritionGoalArgs,
+    NutritionGoalToolResult
+  > = (args, userProfile, language) => {
+    return this.handleCalculateNutritionGoals(args, userProfile, language)
+  }
+
+  private readonly handleAnalyzeEatingPatternWrapper: ToolHandler<
+    EatingPatternArgs,
+    EatingPatternToolResult
+  > = (args, userProfile, language, foodLogs, nutritionGoal) => {
+    return this.handleAnalyzeEatingPattern(
+      args,
+      userProfile,
+      language,
+      foodLogs,
+      nutritionGoal,
+    )
+  }
+
+  private readonly handleRecommendMealsWrapper: ToolHandler<
+    MealRecommendationArgs,
+    MealRecommendationToolResult
+  > = (args, userProfile, language) => {
+    // Note: This wrapper doesn't use mealContext parameter since it's not in ToolHandler interface
+    return this.handleRecommendMeals(args, userProfile, language, 'any meal')
+  }
+
+  private readonly handleGetFoodHistoryWrapper: ToolHandler<
+    FoodHistoryArgs,
+    FoodHistoryToolResult
+  > = async (args, userProfile, language) => {
+    return this.handleGetFoodHistory(args, userProfile, language)
+  }
+
+  private readonly handleConversationalFoodHistoryWrapper: ToolHandler<
+    ConversationalFoodHistoryArgs,
+    ConversationalFoodHistoryResult
+  > = async (args, userProfile, language) => {
+    return this.handleConversationalFoodHistory(args, userProfile, language)
+  }
+
+  // === NEW: ANALYSIS HISTORY METHODS ===
+
+  /**
+   * ดึงประวัติการวิเคราะห์สำหรับสร้างปุ่ม Quick Reply หรือ Rich Menu
+   */
+  async getAnalysisHistory(
+    lineUserId: string,
+    limit: number = 5,
+    type?:
+      | 'food_analysis'
+      | 'nutrition_goal'
+      | 'eating_pattern'
+      | 'meal_recommendation',
+  ) {
+    try {
+      const results =
+        await this.conversationHistoryService.getRecentAnalysisResults(
+          lineUserId,
+          limit,
+          type,
+        )
+
+      this.logger.log(
+        `Retrieved ${results.length} analysis history items for user ${lineUserId}${type ? ` (type: ${type})` : ''}`,
+      )
+
+      return results.map((analysis) => ({
+        id: analysis.id,
+        type: analysis.type,
+        title: analysis.title,
+        summary: analysis.summary,
+        createdAt: analysis.createdAt,
+        imageUrl: analysis.imageUrl,
+      }))
+    } catch (error) {
+      this.logger.error(
+        `Failed to get analysis history for user ${lineUserId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return []
+    }
+  }
+
+  /**
+   * ดึงข้อมูลการวิเคราะห์แบบเต็มตาม ID สำหรับแสดงรายละเอียด
+   */
+  async getAnalysisDetail(lineUserId: string, analysisId: string) {
+    try {
+      const analysis = await this.conversationHistoryService.getAnalysisById(
+        lineUserId,
+        analysisId,
+      )
+
+      if (!analysis) {
+        this.logger.warn(
+          `Analysis not found: ${analysisId} for user ${lineUserId}`,
+        )
+        return null
+      }
+
+      this.logger.log(
+        `Retrieved analysis detail: ${analysisId} for user ${lineUserId}`,
+      )
+
+      return analysis
+    } catch (error) {
+      this.logger.error(
+        `Failed to get analysis detail ${analysisId} for user ${lineUserId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return null
+    }
+  }
+
+  // ✅ Control Method Helper Functions
+  private getMaxHistoryTokensByConstraint(
+    timeConstraint: 'fast' | 'normal' | 'accurate',
+  ): number {
+    return AI_CONFIG.conversationControl.historyTokenLimits[timeConstraint]
+  }
+
+  private analyzeConversationContext(
+    conversationHistory: Array<{
+      role: 'user' | 'assistant'
+      content: string
+    }> | null,
+    currentQuery: string,
+  ): {
+    contextType:
+      | 'new_conversation'
+      | 'follow_up'
+      | 'clarification'
+      | 'related_topic'
+    isFollowUp: boolean
+    previousTopic: string | null
+    lastResponseId: string | undefined
+  } {
+    if (!conversationHistory || conversationHistory.length === 0) {
+      return {
+        contextType: 'new_conversation',
+        isFollowUp: false,
+        previousTopic: null,
+        lastResponseId: undefined,
+      }
+    }
+
+    const lastAssistantMessage = conversationHistory
+      .filter((msg) => msg.role === 'assistant')
+      .slice(-1)[0]
+      ?.content?.toLowerCase()
+
+    const currentQueryLower = currentQuery.toLowerCase()
+
+    // ใช้การตั้งค่าจาก config
+    const { followUpKeywords, clarificationKeywords } =
+      AI_CONFIG.conversationControl.conversationPatterns
+
+    const isFollowUp = followUpKeywords.some((keyword) =>
+      currentQueryLower.includes(keyword.toLowerCase()),
+    )
+
+    const isClarification = clarificationKeywords.some((keyword) =>
+      currentQueryLower.includes(keyword.toLowerCase()),
+    )
+
+    // Extract previous topic from last assistant message
+    let previousTopic: string | null = null
+    if (lastAssistantMessage) {
+      // Simple topic extraction (can be enhanced)
+      const foodMentions = lastAssistantMessage.match(
+        /(อาหาร|ผัก|ผลไม้|เนื้อ|ไก่|หมู|ปลา|ข้าว|แกง)/g,
+      )
+      if (foodMentions && foodMentions.length > 0) {
+        previousTopic = foodMentions[0]
+      }
+    }
+
+    let contextType:
+      | 'new_conversation'
+      | 'follow_up'
+      | 'clarification'
+      | 'related_topic'
+    if (isClarification) {
+      contextType = 'clarification'
+    } else if (isFollowUp) {
+      contextType = 'follow_up'
+    } else if (conversationHistory.length > 2) {
+      contextType = 'related_topic'
+    } else {
+      contextType = 'new_conversation'
+    }
+
+    return {
+      contextType,
+      isFollowUp: isFollowUp || isClarification,
+      previousTopic,
+      lastResponseId: undefined, // Will be enhanced when we track response IDs
+    }
+  }
+
+  private selectRelevantConversationContext(
+    conversationHistory: Array<{
+      role: 'user' | 'assistant'
+      content: string
+    }> | null,
+    currentQuery: string,
+    isFollowUp: boolean,
+  ): Array<{ role: 'user' | 'assistant'; content: string }> | null {
+    if (!conversationHistory || conversationHistory.length === 0) {
+      return null
+    }
+
+    const { contextSelection } = AI_CONFIG.conversationControl
+
+    // ใช้การตั้งค่าจาก config
+    const messageCount = isFollowUp
+      ? contextSelection.followUpMessages
+      : contextSelection.regularMessages
+
+    // จำกัดไม่ให้เกิน maxContextMessages
+    const finalMessageCount = Math.min(
+      messageCount,
+      contextSelection.maxContextMessages,
+    )
+
+    return conversationHistory.slice(-finalMessageCount)
+  }
+
+  private constructOptimizedInputMessages(
+    relevantContext: Array<{
+      role: 'user' | 'assistant'
+      content: string
+    }> | null,
+    currentQuery: string,
+    maxTokens: number,
+  ): OpenaiResponseInputMessage[] {
+    const messages: OpenaiResponseInputMessage[] = []
+
+    if (relevantContext && relevantContext.length > 0) {
+      // เพิ่ม context messages โดยตรวจสอบ token limit
+      let currentTokenCount = this.estimateTokenCount(currentQuery)
+
+      for (const msg of relevantContext) {
+        const msgTokenCount = this.estimateTokenCount(msg.content)
+        if (currentTokenCount + msgTokenCount > maxTokens) {
+          break // หยุดเมื่อใกล้เกิน token limit
+        }
+
+        messages.push({
+          role: msg.role,
+          content: msg.content,
+        })
+        currentTokenCount += msgTokenCount
+      }
+    }
+
+    // เพิ่มข้อความปัจจุบัน
+    messages.push({
+      role: 'user',
+      content: currentQuery,
+    })
+
+    return messages
+  }
+
+  private calculateOptimalOutputTokens(
+    timeConstraint: 'fast' | 'normal' | 'accurate',
+    contextAnalysis: { contextType: string; isFollowUp: boolean },
+    queryLength: number,
+  ): number {
+    const { outputTokenSettings } = AI_CONFIG.conversationControl
+
+    // Base tokens ตาม timeConstraint ใช้การตั้งค่าจาก config
+    let baseTokens = outputTokenSettings.baseTokens[timeConstraint]
+
+    // ปรับตาม context type ใช้ multiplier จาก config
+    if (
+      contextAnalysis.isFollowUp ||
+      contextAnalysis.contextType === 'clarification'
+    ) {
+      baseTokens = Math.floor(
+        baseTokens * outputTokenSettings.followUpMultiplier,
+      )
+    }
+
+    // ปรับตามความยาวของคำถาม ใช้ multiplier จาก config
+    if (queryLength > 100) {
+      baseTokens = Math.floor(
+        baseTokens * outputTokenSettings.longQueryMultiplier,
+      )
+    }
+
+    // จำกัดไม่ให้เกิน maxOutputTokens
+    return Math.min(baseTokens, outputTokenSettings.maxOutputTokens)
+  }
+
+  private estimateTokenCount(text: string): number {
+    // ใช้ค่าคงที่สำหรับการประมาณ token (4 ตัวอักษร = 1 token สำหรับภาษาไทย/อังกฤษผสม)
+    const charactersPerToken = 4
+    return Math.ceil(text.length / charactersPerToken)
+  }
+
+  /**
+   * Handle get_food_history tool call - retrieve user's food logs for AI analysis
+   */
+  private async handleConversationalFoodHistory(
+    args: ConversationalFoodHistoryArgs,
+    userProfile: UserProfileDto,
+    language: string,
+  ): Promise<ConversationalFoodHistoryResult> {
+    this.logger.log(
+      `Handling conversational food history query: ${args.query_type} for user profile: ${userProfile.lineUserId}`,
+    )
+
+    // 🔒 Security: Validate userProfile has required fields
+    if (!userProfile.lineUserId) {
+      this.logger.error('Security violation: Missing lineUserId in userProfile')
+      throw new Error('Invalid user profile: missing lineUserId')
+    }
+
+    // 🔒 Security: Log the query for audit purposes
+    this.logger.log(
+      `Food history query audit - User: ${userProfile.lineUserId}, Query: ${args.user_question.substring(0, 100)}, Type: ${args.query_type}`,
+    )
+
+    try {
+      // Determine time period for data retrieval
+      let days = 30 // default
+      let startDate: Date | undefined
+      let endDate: Date | undefined
+
+      if (args.time_period) {
+        if (args.time_period.days) {
+          days = Math.min(Math.max(args.time_period.days, 1), 90)
+        }
+        if (args.time_period.specific_date) {
+          const specificDate = new Date(args.time_period.specific_date)
+          startDate = new Date(specificDate.setHours(0, 0, 0, 0))
+          endDate = new Date(specificDate.setHours(23, 59, 59, 999))
+          days = 1
+        }
+        if (args.time_period.start_date && args.time_period.end_date) {
+          startDate = new Date(args.time_period.start_date)
+          endDate = new Date(args.time_period.end_date)
+          days = Math.ceil(
+            (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+          )
+        }
+      }
+
+      // 🔒 Security: Get food logs with explicit lineUserId validation
+      // This method already validates lineUserId internally
+      const foodLogs = await this.foodLogService.getFoodLogsForAIAnalysis(
+        userProfile.lineUserId,
+        days,
+        500, // higher limit for comprehensive analysis
+      )
+
+      // 🔒 Security: The underlying getFoodLogsForAIAnalysis already validates lineUserId
+      // Additional validation is not needed here as the service layer handles it
+
+      // 🔒 Security: Log data access for audit
+      this.logger.log(
+        `Data access audit - User: ${userProfile.lineUserId}, Retrieved: ${foodLogs.length} logs, Period: ${days} days`,
+      )
+
+      // Filter food logs based on criteria
+      let filteredLogs = foodLogs
+
+      if (startDate && endDate) {
+        filteredLogs = foodLogs.filter((log) => {
+          const logDate = new Date(log.timestamp)
+          return logDate >= startDate && logDate <= endDate
+        })
+      }
+
+      if (args.filters) {
+        if (args.filters.meal_types && args.filters.meal_types.length > 0) {
+          filteredLogs = filteredLogs.filter((log) =>
+            args.filters!.meal_types!.includes(
+              log.mealType as 'breakfast' | 'lunch' | 'dinner' | 'snack',
+            ),
+          )
+        }
+        if (args.filters.food_names && args.filters.food_names.length > 0) {
+          filteredLogs = filteredLogs.filter((log) =>
+            args.filters!.food_names!.some((name) =>
+              log.foodName.toLowerCase().includes(name.toLowerCase()),
+            ),
+          )
+        }
+        if (args.filters.min_calories !== undefined) {
+          filteredLogs = filteredLogs.filter(
+            (log) => log.calories >= args.filters!.min_calories!,
+          )
+        }
+        if (args.filters.max_calories !== undefined) {
+          filteredLogs = filteredLogs.filter(
+            (log) => log.calories <= args.filters!.max_calories!,
+          )
+        }
+      }
+
+      // Analyze data based on query type and focus
+      const analysis = this.analyzeFilteredFoodLogs(
+        filteredLogs,
+        args.query_type,
+        args.analysis_focus || [],
+        userProfile,
+        language,
+      )
+
+      // Generate natural language answer
+      const answer = this.generateConversationalAnswer(
+        args.user_question,
+        args.query_type,
+        filteredLogs,
+        analysis,
+        userProfile,
+        language,
+      )
+
+      const result: ConversationalFoodHistoryResult = {
+        answer,
+        data_summary: {
+          total_logs_analyzed: filteredLogs.length,
+          date_range: {
+            start:
+              filteredLogs.length > 0
+                ? new Date(
+                    Math.min(
+                      ...filteredLogs.map((log) =>
+                        new Date(log.timestamp).getTime(),
+                      ),
+                    ),
+                  )
+                    .toISOString()
+                    .split('T')[0]
+                : new Date().toISOString().split('T')[0],
+            end:
+              filteredLogs.length > 0
+                ? new Date(
+                    Math.max(
+                      ...filteredLogs.map((log) =>
+                        new Date(log.timestamp).getTime(),
+                      ),
+                    ),
+                  )
+                    .toISOString()
+                    .split('T')[0]
+                : new Date().toISOString().split('T')[0],
+          },
+          key_insights: analysis.insights,
+        },
+        recommendations: analysis.recommendations,
+        follow_up_suggestions: analysis.followUpSuggestions,
+      }
+
+      // 🔒 Security: Log successful query completion
+      this.logger.log(
+        `Food history query completed - User: ${userProfile.lineUserId}, Analyzed: ${filteredLogs.length} logs`,
+      )
+
+      return result
+    } catch (error) {
+      // 🔒 Security: Log security-related errors
+      this.logger.error(
+        `Error in handleConversationalFoodHistory for user ${userProfile.lineUserId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      throw error
+    }
+  }
+
+  private analyzeFilteredFoodLogs(
+    logs: FoodLogEntryDto[],
+    queryType: string,
+    analysisFocus: string[],
+    userProfile: UserProfileDto,
+    language: string,
+  ): {
+    insights: string[]
+    recommendations: string[]
+    followUpSuggestions: string[]
+  } {
+    const insights: string[] = []
+    const recommendations: string[] = []
+    const followUpSuggestions: string[] = []
+
+    if (logs.length === 0) {
+      insights.push(
+        language === 'th'
+          ? 'ไม่พบข้อมูลการกินในช่วงเวลาที่ระบุ'
+          : 'No food logs found for the specified period',
+      )
+      return { insights, recommendations, followUpSuggestions }
+    }
+
+    // Basic statistics
+    const totalCalories = logs.reduce((sum, log) => sum + log.calories, 0)
+    const avgCalories = totalCalories / logs.length
+    const totalProtein = logs.reduce((sum, log) => sum + log.protein, 0)
+    const totalCarbs = logs.reduce((sum, log) => sum + log.carbs, 0)
+    const totalFat = logs.reduce((sum, log) => sum + log.fat, 0)
+
+    // Meal type distribution
+    const mealTypes = logs.reduce(
+      (acc, log) => {
+        acc[log.mealType] = (acc[log.mealType] || 0) + 1
+        return acc
+      },
+      {} as Record<string, number>,
+    )
+
+    // Generate insights based on query type
+    switch (queryType) {
+      case 'nutrition_summary':
+        insights.push(
+          language === 'th'
+            ? `แคลอรี่เฉลี่ย: ${avgCalories.toFixed(0)} kcal ต่อมื้อ`
+            : `Average calories: ${avgCalories.toFixed(0)} kcal per meal`,
+        )
+        insights.push(
+          language === 'th'
+            ? `โปรตีนรวม: ${totalProtein.toFixed(1)}g, คาร์บ: ${totalCarbs.toFixed(1)}g, ไขมัน: ${totalFat.toFixed(1)}g`
+            : `Total protein: ${totalProtein.toFixed(1)}g, carbs: ${totalCarbs.toFixed(1)}g, fat: ${totalFat.toFixed(1)}g`,
+        )
+        break
+
+      case 'meal_type_analysis':
+        Object.entries(mealTypes).forEach(([mealType, count]) => {
+          insights.push(
+            language === 'th'
+              ? `${mealType}: ${count} มื้อ`
+              : `${mealType}: ${count} meals`,
+          )
+        })
+        break
+
+      case 'calorie_trends': {
+        const dailyCalories = this.calculateDailyCalories(logs)
+        const trend = this.calculateTrend(dailyCalories)
+        insights.push(
+          language === 'th'
+            ? `แนวโน้มแคลอรี่: ${trend === 'increasing' ? 'เพิ่มขึ้น' : trend === 'decreasing' ? 'ลดลง' : 'คงที่'}`
+            : `Calorie trend: ${trend}`,
+        )
+        break
+      }
+    }
+
+    // Generate recommendations
+    if (avgCalories < 300) {
+      recommendations.push(
+        language === 'th'
+          ? 'ควรเพิ่มปริมาณอาหารในแต่ละมื้อ'
+          : 'Consider increasing portion sizes',
+      )
+    }
+
+    // Generate follow-up suggestions
+    followUpSuggestions.push(
+      language === 'th'
+        ? 'ต้องการดูรายละเอียดของมื้ออาหารเฉพาะวันไหนไหม?'
+        : 'Would you like to see details for specific days?',
+    )
+
+    return { insights, recommendations, followUpSuggestions }
+  }
+
+  private calculateDailyCalories(logs: FoodLogEntryDto[]): number[] {
+    const dailyCalories: Record<string, number> = {}
+
+    logs.forEach((log) => {
+      const date = new Date(log.timestamp).toISOString().split('T')[0]
+      dailyCalories[date] = (dailyCalories[date] || 0) + log.calories
+    })
+
+    return Object.values(dailyCalories)
+  }
+
+  private calculateTrend(
+    values: number[],
+  ): 'increasing' | 'decreasing' | 'stable' {
+    if (values.length < 2) return 'stable'
+
+    const firstHalf = values.slice(0, Math.floor(values.length / 2))
+    const secondHalf = values.slice(Math.floor(values.length / 2))
+
+    const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length
+    const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length
+
+    const diff = secondAvg - firstAvg
+    if (Math.abs(diff) < 50) return 'stable'
+    return diff > 0 ? 'increasing' : 'decreasing'
+  }
+
+  private generateConversationalAnswer(
+    userQuestion: string,
+    queryType: string,
+    logs: FoodLogEntryDto[],
+    analysis: {
+      insights: string[]
+      recommendations: string[]
+      followUpSuggestions: string[]
+    },
+    userProfile: UserProfileDto,
+    language: string,
+  ): string {
+    if (logs.length === 0) {
+      return language === 'th'
+        ? 'ขออภัยค่ะ ไม่พบข้อมูลการกินในช่วงเวลาที่คุณถามนะคะ อาจจะลองถามในช่วงเวลาอื่นดูไหมคะ?'
+        : "Sorry, I couldn't find any food logs for the period you asked about. Would you like to try a different time period?"
+    }
+
+    let answer =
+      language === 'th' ? 'จากข้อมูลการกินของคุณ ' : 'Based on your food logs, '
+
+    // Add insights
+    if (analysis.insights.length > 0) {
+      answer +=
+        analysis.insights.join(language === 'th' ? ' และ ' : ' and ') + '. '
+    }
+
+    // Add recommendations if any
+    if (analysis.recommendations.length > 0) {
+      answer += language === 'th' ? 'คำแนะนำ: ' : 'Recommendations: '
+      answer +=
+        analysis.recommendations.join(language === 'th' ? ' และ ' : ' and ') +
+        '. '
+    }
+
+    return answer
+  }
+
+  private async handleGetFoodHistory(
+    args: FoodHistoryArgs,
+    userProfile: UserProfileDto,
+    language: string,
+  ): Promise<FoodHistoryToolResult> {
+    const days = Math.min(args.days || 30, 90) // Default 30 days, max 90
+    const limit = Math.min(args.limit || 100, 500) // Default 100 logs, max 500
+
+    this.logger.log(
+      `Getting food history for user ${userProfile.lineUserId}: ${days} days, limit ${limit}`,
+    )
+
+    try {
+      const foodLogs = await this.foodLogService.getFoodLogsForAIAnalysis(
+        userProfile.lineUserId,
+        days,
+        limit,
+      )
+
+      // Calculate summary statistics
+      const mealTypesDistribution = {
+        breakfast: 0,
+        lunch: 0,
+        dinner: 0,
+        snack: 0,
+        other: 0,
+      }
+
+      const dateRange = {
+        start: '',
+        end: '',
+      }
+
+      if (foodLogs.length > 0) {
+        // Sort by timestamp to get date range
+        const sortedLogs = [...foodLogs].sort(
+          (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+        )
+        dateRange.start = sortedLogs[0].timestamp.toISOString()
+        dateRange.end =
+          sortedLogs[sortedLogs.length - 1].timestamp.toISOString()
+
+        // Count meal types
+        foodLogs.forEach((log) => {
+          const mealType = log.mealType.toLowerCase()
+          if (mealType in mealTypesDistribution) {
+            mealTypesDistribution[
+              mealType as keyof typeof mealTypesDistribution
+            ]++
+          } else {
+            mealTypesDistribution.other++
+          }
+        })
+      }
+
+      // Calculate days covered
+      const daysCovered =
+        foodLogs.length > 0
+          ? Math.ceil(
+              (new Date(dateRange.end).getTime() -
+                new Date(dateRange.start).getTime()) /
+                (1000 * 60 * 60 * 24),
+            ) + 1
+          : 0
+
+      const message =
+        language === 'th'
+          ? `พบประวัติการกิน ${foodLogs.length} รายการ ใน ${daysCovered} วัน (ช่วง ${days} วันที่ผ่านมา)`
+          : `Found ${foodLogs.length} food logs in ${daysCovered} days (past ${days} days)`
+
+      return {
+        food_logs: foodLogs.map((log) => ({
+          timestamp: log.timestamp.toISOString(),
+          mealType: log.mealType,
+          foodName: log.foodName,
+          calories: log.calories,
+          protein: log.protein,
+          carbs: log.carbs,
+          fat: log.fat,
+          fiber: log.fiber,
+        })),
+        summary: {
+          total_logs: foodLogs.length,
+          days_covered: daysCovered,
+          date_range: dateRange,
+          meal_types_distribution: mealTypesDistribution,
+        },
+        message,
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error getting food history for user ${userProfile.lineUserId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+
+      const errorMessage =
+        language === 'th'
+          ? 'ไม่สามารถดึงประวัติการกินได้ในขณะนี้'
+          : 'Unable to retrieve food history at this time'
+
+      return {
+        food_logs: [],
+        summary: {
+          total_logs: 0,
+          days_covered: 0,
+          date_range: { start: '', end: '' },
+          meal_types_distribution: {
+            breakfast: 0,
+            lunch: 0,
+            dinner: 0,
+            snack: 0,
+            other: 0,
+          },
+        },
+        message: errorMessage,
+      }
+    }
+  }
+
+  /**
+   * NEW: Manual workflow eating pattern analysis - Sequential tool calls
+   * Reliable alternative to autonomous AI workflow
+   */
+  async analyzeEatingPatternWithAI(
+    lineUserId: string,
+    userProfile: UserProfileDto,
+    nutritionGoal: NutritionGoalDtoForAI | null = null,
+    language: string = 'th',
+    timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
+  ): Promise<EatingPatternToolResult | { error: string } | null> {
+    try {
+      this.logger.log(
+        `🔧 [Manual Workflow] Starting eating pattern analysis for user ${lineUserId}`,
+      )
+
+      // Step 1: Get food history manually
+      this.logger.log(
+        `📋 Step 1: Retrieving food history for user ${lineUserId}`,
+      )
+      const foodHistoryResult = await this.getFoodHistoryForAI(
+        lineUserId,
+        userProfile,
+        30, // days
+        100, // limit
+        language,
+      )
+
+      if ('error' in foodHistoryResult) {
+        this.logger.error(
+          `❌ Failed to retrieve food history: ${foodHistoryResult.error}`,
+        )
+        return {
+          error: `Failed to retrieve food history: ${foodHistoryResult.error}`,
+        }
+      }
+
+      // Convert food history to format expected by eating pattern handler
+      const foodLogs: FoodLogEntryDto[] = foodHistoryResult.food_logs.map(
+        (log) => ({
+          timestamp: new Date(log.timestamp),
+          mealType: log.mealType,
+          foodName: log.foodName,
+          calories: log.calories,
+          protein: log.protein,
+          carbs: log.carbs,
+          fat: log.fat,
+          fiber: log.fiber,
+        }),
+      )
+
+      this.logger.log(
+        `✅ Step 1 completed: Retrieved ${foodLogs.length} food logs from ${foodHistoryResult.summary.days_covered} days`,
+      )
+
+      // Step 2: Analyze eating patterns with retrieved data
+      this.logger.log(
+        `📊 Step 2: Analyzing eating patterns for user ${lineUserId}`,
+      )
+
+      const analysisResult = await this.analyzeEatingPattern(
+        lineUserId,
+        userProfile,
+        foodLogs,
+        nutritionGoal,
+        language,
+        timeConstraint,
+      )
+
+      if (
+        analysisResult &&
+        typeof analysisResult === 'object' &&
+        'error' in analysisResult
+      ) {
+        this.logger.error(
+          `❌ Failed to analyze eating patterns: ${analysisResult.error}`,
+        )
+        return analysisResult
+      }
+
+      // Enhanced logging for manual workflow completion
+      if (
+        analysisResult &&
+        typeof analysisResult === 'object' &&
+        'calories_trend' in analysisResult
+      ) {
+        this.logger.log(
+          `✅ Manual workflow completed successfully for user ${lineUserId}`,
+        )
+        this.logger.log(
+          `📈 Analysis results: Trend: ${analysisResult.calories_trend}, Patterns: ${analysisResult.identified_patterns?.length || 0} identified, Advice: ${analysisResult.personalized_advice.substring(0, 100)}...`,
+        )
+
+        // Add food history context to the result
+        const enhancedResult: EatingPatternToolResult = {
+          ...analysisResult,
+          basic_analysis_details: {
+            days_analyzed:
+              analysisResult.basic_analysis_details?.days_analyzed ||
+              foodHistoryResult.summary.days_covered,
+            total_logs:
+              analysisResult.basic_analysis_details?.total_logs ||
+              foodHistoryResult.summary.total_logs,
+            skipped_meal_counts: analysisResult.basic_analysis_details
+              ?.skipped_meal_counts || { breakfast: 0, lunch: 0, dinner: 0 },
+            average_eating_window_hours:
+              analysisResult.basic_analysis_details
+                ?.average_eating_window_hours,
+            calculated_late_night_eating_frequency:
+              analysisResult.basic_analysis_details
+                ?.calculated_late_night_eating_frequency,
+          },
+        }
+
+        return enhancedResult
+      }
+
+      return analysisResult as EatingPatternToolResult | null
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `❌ analyzeEatingPatternWithAI (manual workflow) error for user ${lineUserId}: ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      )
+      return {
+        error: `Manual eating pattern analysis failed: ${message}`,
+      }
+    }
+  }
+
+  /**
+   * NEW: Get Food History for AI Analysis (Public Method)
+   * Allows external services to retrieve food history for AI processing
+   */
+  async getFoodHistoryForAI(
+    lineUserId: string,
+    userProfile: UserProfileDto,
+    days: number = 30,
+    limit: number = 100,
+    language: string = 'th',
+  ): Promise<FoodHistoryToolResult | { error: string }> {
+    try {
+      this.logger.log(
+        `📋 Getting food history for AI analysis: user ${lineUserId}, ${days} days, limit ${limit}`,
+      )
+
+      const result = await this.handleGetFoodHistory(
+        { days, limit },
+        userProfile,
+        language,
+      )
+
+      this.logger.log(
+        `✅ Retrieved ${result.food_logs.length} food logs for AI analysis`,
+      )
+
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `❌ getFoodHistoryForAI error for user ${lineUserId}: ${message}`,
+      )
+      return { error: `Failed to retrieve food history: ${message}` }
+    }
+  }
+
+  /**
+   * 🤖 FULL AUTONOMOUS AI ANALYSIS
+   * ให้ AI สร้างการวิเคราะห์ทั้งหมดเองโดยไม่พึ่ง manual patterns
+   */
+  private async generateFullAutonomousAnalysis(
+    foodLogs: FoodLogEntryDto[],
+    userProfile: UserProfileDto,
+    nutritionGoal: NutritionGoalDtoForAI | null,
+    language: string,
+    caloriesTrend: string,
+    averageDailyCalories: number,
+    nutritionalQualityScore: number,
+  ): Promise<{
+    personalizedAdvice: string
+    identifiedPatterns: string[]
+    improvementSuggestions: string[]
+  } | null> {
+    try {
+      // เตรียมข้อมูลสำหรับ AI วิเคราะห์
+      const foodDataSummary = foodLogs
+        .map((log) => ({
+          date: log.timestamp.toISOString().split('T')[0],
+          time: log.timestamp.toTimeString().split(' ')[0],
+          meal: log.mealType,
+          food: log.foodName,
+          calories: log.calories,
+          protein: log.protein,
+          carbs: log.carbs,
+          fat: log.fat,
+        }))
+        .slice(0, 20) // จำกัดข้อมูลเพื่อไม่ให้ token เกิน
+
+      const userContext = {
+        name: userProfile.displayName || 'คุณ',
+        goal: userProfile.goal || 'ไม่ระบุ',
+        age: userProfile.age || null,
+        gender: userProfile.gender || 'ไม่ระบุ',
+        dietType: userProfile.dietType || 'ปกติ',
+        healthConditions: userProfile.healthConditions || [],
+        currentCalories: averageDailyCalories,
+        trend: caloriesTrend,
+        qualityScore: nutritionalQualityScore,
+        goalCalories: nutritionGoal?.daily_calories || null,
+      }
+
+      // System prompt สำหรับ Full Autonomous Analysis
+      const autonomousPrompt = `คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญในการวิเคราะห์รูปแบบการกิน
+
+ภารกิจ: วิเคราะห์ข้อมูลการกินและสร้างการวิเคราะห์ที่สมบูรณ์
+
+กฎสำคัญ:
+- ใช้ข้อมูลที่ให้มาเท่านั้น อย่าแต่งเพิ่ม
+- เรียกชื่อ "${userContext.name}" ในการสนทนา
+- ใช้ภาษาไทยที่เป็นธรรมชาติและเป็นกันเอง
+- ห้ามใช้ ** หรือ markdown formatting ใดๆ เด็ดขาด
+- ใช้ emoji เบาๆ ให้เหมาะสม (ไม่เกิน 2-3 ตัวต่อข้อความ)
+- เน้นจุดเด่นก่อน แล้วค่อยแนะนำส่วนที่ปรับปรุงได้
+- สร้างข้อความที่สร้างแรงบันดาลใจ
+
+โปรดตอบกลับเป็น JSON format:
+{
+  "personalizedAdvice": "คำแนะนำส่วนบุคคลที่สมบูรณ์ รวมแนวโน้มแคลอรี่และข้อมูลสำคัญ",
+  "identifiedPatterns": ["รูปแบบที่พบ 1", "รูปแบบที่พบ 2", "รูปแบบที่พบ 3"],
+  "improvementSuggestions": ["ข้อเสนอแนะ 1", "ข้อเสนอแนะ 2", "ข้อเสนอแนะ 3"]
+}
+
+ข้อมูลผู้ใช้:
+${JSON.stringify(userContext, null, 2)}
+
+ข้อมูลการกิน (${foodDataSummary.length} รายการล่าสุด):
+${JSON.stringify(foodDataSummary, null, 2)}`
+
+      // เรียก AI
+      const deploymentName =
+        this.openaiService.getGpt41_miniModelDeployment() ||
+        this.openaiService.getGpt41DeploymentName()
+
+      if (!deploymentName) {
+        this.logger.warn('No AI model available for autonomous analysis')
+        return null
+      }
+
+      const aiResponse = (await this.openaiService.getChatCompletion(
+        deploymentName,
+        [
+          {
+            role: 'system',
+            content: autonomousPrompt,
+          },
+          {
+            role: 'user',
+            content: `กรุณาวิเคราะห์ข้อมูลการกินของ ${userContext.name} และสร้างการวิเคราะห์ที่สมบูรณ์โดยไม่ใช้ ** formatting`,
+          },
+        ],
+        {
+          temperature: 0.7,
+          max_tokens: 1000,
+        },
+      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string }
+
+      if ('error' in aiResponse) {
+        this.logger.warn(`Autonomous AI failed: ${aiResponse.error}`)
+        return null
+      }
+
+      const aiContent = aiResponse.choices[0]?.message?.content?.trim()
+
+      if (aiContent && aiContent.length > 50) {
+        try {
+          const analysisData: unknown = JSON.parse(aiContent)
+
+          // Type guard
+          const isValidAnalysis = (
+            data: unknown,
+          ): data is EnhancedAnalysisComponents => {
+            return (
+              typeof data === 'object' &&
+              data !== null &&
+              typeof (data as Record<string, unknown>).personalizedAdvice ===
+                'string' &&
+              Array.isArray(
+                (data as Record<string, unknown>).identifiedPatterns,
+              ) &&
+              Array.isArray(
+                (data as Record<string, unknown>).improvementSuggestions,
+              )
+            )
+          }
+
+          if (isValidAnalysis(analysisData)) {
+            return {
+              personalizedAdvice: analysisData.personalizedAdvice,
+              identifiedPatterns: analysisData.identifiedPatterns,
+              improvementSuggestions: analysisData.improvementSuggestions,
+            }
+          } else {
+            this.logger.warn('Invalid autonomous analysis structure')
+            return null
+          }
+        } catch (parseError) {
+          this.logger.warn(
+            `Autonomous analysis JSON parse failed: ${parseError}`,
+          )
+          return null
+        }
+      } else {
+        this.logger.warn('Autonomous analysis produced insufficient content')
+        return null
+      }
+    } catch (error) {
+      this.logger.error(
+        `Autonomous analysis error: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return null
+    }
+  }
+
+  /**
+   * 🤖 AI-Enhanced Text Generation for All Analysis Components
+   * ใช้ AI สำหรับทำให้ข้อความทุกส่วนมีชีวิตชีวาและเป็นส่วนตัว
+   * ส่วนการคำนวณใช้ manual logic เพื่อความแม่นยำ
+   */
+  private async enhanceAnalysisComponentsWithAI(
+    baseAdvice: string,
+    basePatterns: string[],
+    baseProblematicBehaviors: string[],
+    baseImprovementSuggestions: string[],
+    userProfile: UserProfileDto,
+    language: string,
+    nutritionalQualityScore: number,
+    caloriesTrend: string,
+    averageDailyCalories: number,
+    weekendWeekdayDiff?: number,
+    lateNightFrequency?: number,
+  ): Promise<{
+    personalizedAdvice: string
+    identifiedPatterns: string[]
+    improvementSuggestions: string[]
+  }> {
+    try {
+      // เตรียมข้อมูลที่ AI จะใช้สร้างข้อความ
+      const contextData = {
+        userName: userProfile.displayName || 'คุณ',
+        goal: userProfile.goal || 'ไม่ระบุ',
+        age: userProfile.age || null,
+        gender: userProfile.gender || 'ไม่ระบุ',
+        baseAdvice,
+        patterns: basePatterns,
+        issues: baseProblematicBehaviors,
+        suggestions: baseImprovementSuggestions,
+        qualityScore: nutritionalQualityScore,
+        caloriesTrend: caloriesTrend,
+        averageCalories: averageDailyCalories,
+        weekendEffect: weekendWeekdayDiff,
+        lateNightIssue: lateNightFrequency,
+        dietType: userProfile.dietType || 'ปกติ',
+        healthConditions: userProfile.healthConditions || [],
+      }
+
+      // System prompt สำหรับ AI text enhancement
+      const enhancementPrompt = `คุณเป็นนักโภชนาการ AI ที่เชี่ยวชาญในการเขียนข้อความที่เป็นกันเองและสร้างแรงบันดาลใจ
+
+ภารกิจ: แปลงข้อมูลการวิเคราะห์เป็นข้อความที่น่าสนใจ เป็นกันเอง และใช้ชื่อผู้ใช้
+
+กฎสำคัญ:
+- ใช้ข้อมูลที่ให้มาเท่านั้น อย่าแต่งเพิ่ม
+- เรียกชื่อ "${contextData.userName}" ในการสนทนา
+- ใช้ภาษาไทยที่เป็นธรรมชาติและเป็นกันเอง
+- ไม่ใช้ ** หรือ markdown formatting ใดๆ
+- ใช้ emoji เบาๆ ให้เหมาะสม
+- เน้นจุดเด่นก่อน แล้วค่อยแนะนำส่วนที่ปรับปรุงได้
+
+โปรดตอบกลับเป็น JSON format ตามรูปแบบนี้:
+{
+  "personalizedAdvice": "คำแนะนำส่วนบุคคลแบบเต็ม รวมข้อมูลแนวโน้มแคลอรี่ด้วย",
+  "identifiedPatterns": ["รูปแบบที่พบ 1", "รูปแบบที่พบ 2"],
+  "improvementSuggestions": ["ข้อเสนอแนะ 1", "ข้อเสนอแนะ 2"]
+}
+
+ข้อมูลการวิเคราะห์:
+${JSON.stringify(contextData, null, 2)}`
+
+      // เรียก AI สำหรับ text generation
+      const deploymentName =
+        this.openaiService.getGpt41_miniModelDeployment() ||
+        this.openaiService.getGpt41DeploymentName()
+
+      if (!deploymentName) {
+        this.logger.warn(
+          'No AI model available for text enhancement, using base texts',
+        )
+        return {
+          personalizedAdvice: baseAdvice,
+          identifiedPatterns: basePatterns,
+          improvementSuggestions: baseImprovementSuggestions,
+        }
+      }
+
+      const enhancedResponse = (await this.openaiService.getChatCompletion(
+        deploymentName,
+        [
+          {
+            role: 'system',
+            content: enhancementPrompt,
+          },
+          {
+            role: 'user',
+            content: `กรุณาปรับปรุงข้อความทั้งหมดสำหรับ ${contextData.userName} จากข้อมูลการวิเคราะห์ข้างต้น โดยส่งกลับเป็น JSON format`,
+          },
+        ],
+        {
+          temperature: 0.7, // เพิ่มความเป็นธรรมชาติ
+          max_tokens: 800, // เพิ่มขนาดเพื่อรองรับทุกส่วน
+        },
+      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string }
+
+      if ('error' in enhancedResponse) {
+        const errorMessage =
+          typeof enhancedResponse.error === 'string'
+            ? enhancedResponse.error
+            : 'Unknown error'
+        this.logger.warn(`AI text enhancement failed: ${errorMessage}`)
+        return {
+          personalizedAdvice: baseAdvice,
+          identifiedPatterns: basePatterns,
+          improvementSuggestions: baseImprovementSuggestions,
+        }
+      }
+
+      const enhancedContent =
+        enhancedResponse.choices[0]?.message?.content?.trim()
+
+      if (enhancedContent && enhancedContent.length > 50) {
+        try {
+          // พยายาม parse JSON response
+          const enhancedData: unknown = JSON.parse(enhancedContent)
+
+          // Type guard function
+          const isValidEnhancedData = (
+            data: unknown,
+          ): data is EnhancedAnalysisComponents => {
+            return (
+              typeof data === 'object' &&
+              data !== null &&
+              typeof (data as Record<string, unknown>).personalizedAdvice ===
+                'string' &&
+              Array.isArray(
+                (data as Record<string, unknown>).identifiedPatterns,
+              ) &&
+              Array.isArray(
+                (data as Record<string, unknown>).improvementSuggestions,
+              )
+            )
+          }
+
+          // ตรวจสอบว่ามีข้อมูลครบถ้วน
+          if (isValidEnhancedData(enhancedData)) {
+            this.logger.log(
+              `✨ Enhanced all analysis components with AI for ${userProfile.lineUserId}`,
+            )
+            return {
+              personalizedAdvice: enhancedData.personalizedAdvice,
+              identifiedPatterns: enhancedData.identifiedPatterns,
+              improvementSuggestions: enhancedData.improvementSuggestions,
+            }
+          } else {
+            this.logger.warn(
+              'AI enhancement JSON missing required fields, using base texts',
+            )
+            return {
+              personalizedAdvice: baseAdvice,
+              identifiedPatterns: basePatterns,
+              improvementSuggestions: baseImprovementSuggestions,
+            }
+          }
+        } catch (parseError) {
+          this.logger.warn(
+            `AI enhancement JSON parse failed, using base texts: ${parseError}`,
+          )
+          return {
+            personalizedAdvice: baseAdvice,
+            identifiedPatterns: basePatterns,
+            improvementSuggestions: baseImprovementSuggestions,
+          }
+        }
+      } else {
+        this.logger.warn(
+          'AI enhancement produced insufficient content, using base texts',
+        )
+        return {
+          personalizedAdvice: baseAdvice,
+          identifiedPatterns: basePatterns,
+          improvementSuggestions: baseImprovementSuggestions,
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `AI text enhancement error: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return {
+        personalizedAdvice: baseAdvice,
+        identifiedPatterns: basePatterns,
+        improvementSuggestions: baseImprovementSuggestions,
       }
     }
   }

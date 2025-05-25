@@ -1,8 +1,23 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
-import { Document } from 'mongoose'
+import { Document, Schema as MongooseSchema } from 'mongoose'
 // We don't strictly need a direct DB-level ref to User if we query by lineUserId,
 // but it can be useful for population or data integrity.
 // For now, let's keep it simple and primarily use lineUserId.
+
+// Interface for structured analysis results that can be used for buttons
+export interface AnalysisResult {
+  type:
+    | 'food_analysis'
+    | 'nutrition_goal'
+    | 'eating_pattern'
+    | 'meal_recommendation'
+  id: string // Unique ID for this analysis (e.g., messageId or timestamp-based)
+  title: string // Display name for button (e.g., "ข้าวผัดกุ้ง - 520 kcal")
+  summary: string // Short summary for preview
+  data: Record<string, any> // Full analysis result data
+  createdAt: Date
+  imageUrl?: string // For food analysis with image
+}
 
 // Interface for individual messages within the history
 // This matches roughly with OpenAI.Chat.Completions.ChatCompletionMessageParam content part
@@ -12,6 +27,8 @@ export interface ConversationMessage {
   role: 'user' | 'assistant'
   content: string // Could be simple text or stringified JSON for complex content like image URLs
   timestamp: Date
+  analysisResult?: AnalysisResult // Structured analysis data for buttons
+  responseId?: string // Responses API response ID for conversation state
   // tokenCount?: number; // Optional: for more precise context window management later
 }
 
@@ -28,6 +45,28 @@ export class ConversationHistory extends Document {
         role: { type: String, required: true, enum: ['user', 'assistant'] },
         content: { type: String, required: true },
         timestamp: { type: Date, default: Date.now },
+        analysisResult: {
+          type: new MongooseSchema({
+            type: {
+              type: String,
+              enum: [
+                'food_analysis',
+                'nutrition_goal',
+                'eating_pattern',
+                'meal_recommendation',
+              ],
+              required: true,
+            },
+            id: { type: String, required: true },
+            title: { type: String, required: true },
+            summary: { type: String, required: true },
+            data: { type: MongooseSchema.Types.Mixed, required: true },
+            createdAt: { type: Date, required: true },
+            imageUrl: { type: String, required: false },
+          }),
+          required: false,
+        },
+        responseId: { type: String, required: false },
         // tokenCount: { type: Number }
       },
     ],
