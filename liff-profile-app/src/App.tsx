@@ -245,7 +245,7 @@ interface Translations {
 
 const translations: Translations = {
   th: {
-    appName: 'โปรไฟล์ของฉัน',
+    appName: 'Kin-Geng AI',
     userProfileTitle: '⚙️ แก้ไขโปรไฟล์',
     nutritionReportTitle: '📊 รายงานโภชนาการ',
     loadingLiff: '⏳ กำลังโหลด LIFF...',

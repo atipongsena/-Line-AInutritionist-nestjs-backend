@@ -27,6 +27,8 @@ async function bootstrap() {
         ? [
             // Azure Static Web Apps HTTPS URLs (อัปเดตตาม deployment จริง)
             'https://ai-nutritionist-frontend.*.z23.web.core.windows.net',
+            // Current production frontend URL
+            'https://salmon-pond-09f432200.6.azurestaticapps.net',
           ]
         : []),
     ],
