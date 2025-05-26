@@ -1549,6 +1549,52 @@ function App() {
     console.log('[NAVIGATION_DEBUG] Navigate function called')
   }, [navigate, location])
 
+  // Handle LIFF URL with path routing on app initialization
+  useEffect(() => {
+    if (isLiffInitialized && !isLoadingProfile) {
+      console.log('[LIFF_ROUTING] Checking initial LIFF URL for path routing')
+      console.log('[LIFF_ROUTING] Window location:', window.location.href)
+      console.log('[LIFF_ROUTING] Window pathname:', window.location.pathname)
+      console.log('[LIFF_ROUTING] Window search:', window.location.search)
+      console.log('[LIFF_ROUTING] Window hash:', window.location.hash)
+
+      // Check if URL contains nutrition-report path
+      const fullUrl = window.location.href
+      const pathname = window.location.pathname
+      const hash = window.location.hash
+
+      if (
+        fullUrl.includes('/nutrition-report') ||
+        pathname.includes('/nutrition-report') ||
+        hash.includes('/nutrition-report') ||
+        fullUrl.includes('nutrition-report')
+      ) {
+        console.log(
+          '[LIFF_ROUTING] Detected nutrition-report in URL - navigating to nutrition report',
+        )
+        setTimeout(() => {
+          void navigate('/nutrition-report')
+        }, 100)
+      } else if (
+        fullUrl.includes('/daily-report') ||
+        pathname.includes('/daily-report') ||
+        hash.includes('/daily-report') ||
+        fullUrl.includes('daily-report')
+      ) {
+        console.log(
+          '[LIFF_ROUTING] Detected daily-report in URL - navigating to nutrition report',
+        )
+        setTimeout(() => {
+          void navigate('/nutrition-report')
+        }, 100)
+      } else {
+        console.log(
+          '[LIFF_ROUTING] No special routing detected - staying on profile page',
+        )
+      }
+    }
+  }, [isLiffInitialized, isLoadingProfile, navigate])
+
   useEffect(() => {
     console.log('[ROUTE_DEBUG] ========== LOCATION CHANGED ==========')
     console.log('[ROUTE_DEBUG] Current pathname:', location.pathname)
