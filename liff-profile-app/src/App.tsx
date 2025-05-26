@@ -1551,14 +1551,62 @@ function App() {
 
   // Handle LIFF URL with path routing on app initialization
   useEffect(() => {
-    if (isLiffInitialized && !isLoadingProfile) {
+    // ตรวจสอบ URL Parameters เร็วที่สุด - ก่อน LIFF initialization
+    const checkInitialRouting = () => {
       console.log('[LIFF_ROUTING] Checking initial LIFF URL for path routing')
       console.log('[LIFF_ROUTING] Window location:', window.location.href)
       console.log('[LIFF_ROUTING] Window pathname:', window.location.pathname)
       console.log('[LIFF_ROUTING] Window search:', window.location.search)
       console.log('[LIFF_ROUTING] Window hash:', window.location.hash)
 
-      // Check if URL contains nutrition-report path
+      // ตรวจสอบ Query Parameters
+      const urlParams = new URLSearchParams(window.location.search)
+      const targetPath = urlParams.get('targetPath')
+      const page = urlParams.get('page')
+      const logId = urlParams.get('logId')
+
+      console.log('[LIFF_ROUTING] URL Parameters:', {
+        targetPath,
+        page,
+        logId,
+      })
+
+      // ตรวจสอบ target path จาก query parameter
+      if (targetPath) {
+        console.log(`[LIFF_ROUTING] Found targetPath: ${targetPath}`)
+
+        if (
+          targetPath.includes('nutrition-report') ||
+          targetPath.includes('daily-report')
+        ) {
+          console.log(
+            '[LIFF_ROUTING] Setting flag to navigate to nutrition report after LIFF init',
+          )
+          sessionStorage.setItem('pendingNavigation', '/nutrition-report')
+          if (logId) {
+            sessionStorage.setItem('pendingLogId', logId)
+          }
+          return true
+        }
+      }
+
+      // ตรวจสอบ page parameter
+      if (page) {
+        console.log(`[LIFF_ROUTING] Found page parameter: ${page}`)
+
+        if (page === 'nutrition-report' || page === 'daily-report') {
+          console.log(
+            '[LIFF_ROUTING] Setting flag to navigate to nutrition report after LIFF init',
+          )
+          sessionStorage.setItem('pendingNavigation', '/nutrition-report')
+          if (logId) {
+            sessionStorage.setItem('pendingLogId', logId)
+          }
+          return true
+        }
+      }
+
+      // ตรวจสอบ URL path โดยตรง
       const fullUrl = window.location.href
       const pathname = window.location.pathname
       const hash = window.location.hash
@@ -1567,30 +1615,50 @@ function App() {
         fullUrl.includes('/nutrition-report') ||
         pathname.includes('/nutrition-report') ||
         hash.includes('/nutrition-report') ||
-        fullUrl.includes('nutrition-report')
-      ) {
-        console.log(
-          '[LIFF_ROUTING] Detected nutrition-report in URL - navigating to nutrition report',
-        )
-        setTimeout(() => {
-          void navigate('/nutrition-report')
-        }, 100)
-      } else if (
+        fullUrl.includes('nutrition-report') ||
         fullUrl.includes('/daily-report') ||
         pathname.includes('/daily-report') ||
         hash.includes('/daily-report') ||
         fullUrl.includes('daily-report')
       ) {
         console.log(
-          '[LIFF_ROUTING] Detected daily-report in URL - navigating to nutrition report',
+          '[LIFF_ROUTING] Detected nutrition-report in URL - setting pending navigation',
         )
-        setTimeout(() => {
-          void navigate('/nutrition-report')
-        }, 100)
-      } else {
+        sessionStorage.setItem('pendingNavigation', '/nutrition-report')
+        if (logId) {
+          sessionStorage.setItem('pendingLogId', logId)
+        }
+        return true
+      }
+
+      return false
+    }
+
+    // เรียกใช้ทันทีเมื่อ component mount
+    checkInitialRouting()
+
+    // ตรวจสอบอีกครั้งหลังจาก LIFF initialization เสร็จ
+    if (isLiffInitialized && !isLoadingProfile) {
+      const pendingNavigation = sessionStorage.getItem('pendingNavigation')
+      const pendingLogId = sessionStorage.getItem('pendingLogId')
+
+      if (pendingNavigation) {
         console.log(
-          '[LIFF_ROUTING] No special routing detected - staying on profile page',
+          `[LIFF_ROUTING] Executing pending navigation to: ${pendingNavigation}`,
         )
+
+        // สร้าง URL พร้อม logId ถ้ามี
+        let navigationUrl = pendingNavigation
+        if (pendingLogId) {
+          navigationUrl += `?logId=${pendingLogId}`
+        }
+
+        setTimeout(() => {
+          void navigate(navigationUrl)
+          // ล้าง pending navigation
+          sessionStorage.removeItem('pendingNavigation')
+          sessionStorage.removeItem('pendingLogId')
+        }, 200) // เพิ่มเวลา delay เล็กน้อยให้ LIFF initialization เสร็จสิ้น
       }
     }
   }, [isLiffInitialized, isLoadingProfile, navigate])

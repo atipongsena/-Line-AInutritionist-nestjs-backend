@@ -36,6 +36,44 @@
 - **LIFF SDK** - ผสานกับ LINE ecosystem
 - **LINE Profile** - ใช้ข้อมูลโปรไฟล์จาก LINE
 - **Deep Linking** - รองรับการเปิดหน้าเฉพาะจาก URL
+- **Rich Menu Support** - รองรับการนำทางผ่าน Rich Menu
+- **Flex Message Integration** - รองรับ deep link จาก Flex Message
+
+## 🔗 Deep Linking และ Routing
+
+แอปพลิเคชันนี้รองรับการเข้าถึงหน้าเฉพาะผ่าน URL parameters สำหรับการใช้งานกับ Rich Menu หรือ Flex Message
+
+### การใช้งาน Deep Links
+
+#### 1. หน้าโปรไฟล์ (หน้าหลัก)
+
+```
+https://liff.line.me/2007349762-AJ9J432d
+```
+
+#### 2. หน้ารายงานโภชนาการ
+
+```
+https://liff.line.me/2007349762-AJ9J432d?targetPath=/nutrition-report
+https://liff.line.me/2007349762-AJ9J432d?page=nutrition-report
+```
+
+#### 3. หน้ารายงานรายวันพร้อม logId
+
+```
+https://liff.line.me/2007349762-AJ9J432d?page=daily-report&logId=12345&date=2024-01-15
+```
+
+### Query Parameters ที่รองรับ
+
+| Parameter    | รายละเอียด                        | ตัวอย่าง                        |
+| ------------ | --------------------------------- | ------------------------------- |
+| `targetPath` | Path ที่ต้องการไป                 | `?targetPath=/nutrition-report` |
+| `page`       | ชื่อหน้าที่ต้องการไป              | `?page=nutrition-report`        |
+| `logId`      | ID ของ log ที่ต้องการแสดง         | `?logId=12345`                  |
+| `date`       | วันที่ที่ต้องการแสดง (YYYY-MM-DD) | `?date=2024-01-15`              |
+
+📖 **ดูรายละเอียดเพิ่มเติมใน [LIFF_ROUTING_GUIDE.md](./LIFF_ROUTING_GUIDE.md)**
 
 ---
 

@@ -98,12 +98,24 @@ const NutritionReportMain: React.FC = () => {
       try {
         const params = new URLSearchParams(window.location.search)
         const logId = params.get('logId')
+        const targetDate = params.get('date')
 
         if (logId) {
           console.log(
             '[NutritionReportMain] Found logId in URL, switching to Daily Report tab',
+            { logId, targetDate },
           )
           setTabValue(0) // ไปที่ tab Daily Report
+
+          // ถ้ามี targetDate ให้ set วันที่ตาม parameter
+          if (targetDate) {
+            console.log(`[NutritionReportMain] Setting date to: ${targetDate}`)
+            useNutritionStore.getState().setSelectedDate(targetDate)
+          }
+
+          // เก็บ logId ไว้ใน store หรือ state เพื่อใช้งานต่อ
+          // (อาจต้องเพิ่ม state หรือ store สำหรับ logId)
+          sessionStorage.setItem('targetLogId', logId)
         }
 
         setHasCheckedUrlParams(true)
