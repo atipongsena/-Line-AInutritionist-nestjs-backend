@@ -679,6 +679,39 @@ interface WindowWithLiff extends Window {
   liff?: LiffType & { [key: string]: any } // Make liff optional and allow other properties
 }
 
+// ตรวจสอบ URL parameters ก่อน component render เพื่อตั้งค่า initial state
+const checkForPendingNavigation = (): boolean => {
+  const urlParams = new URLSearchParams(window.location.search)
+  const targetPath = urlParams.get('targetPath')
+  const page = urlParams.get('page')
+  const fullUrl = window.location.href
+  const pathname = window.location.pathname
+  const hash = window.location.hash
+
+  const hasPendingNav = !!(
+    targetPath?.includes('nutrition-report') ||
+    targetPath?.includes('daily-report') ||
+    page === 'nutrition-report' ||
+    page === 'daily-report' ||
+    fullUrl.includes('/nutrition-report') ||
+    pathname.includes('/nutrition-report') ||
+    hash.includes('/nutrition-report') ||
+    fullUrl.includes('nutrition-report') ||
+    fullUrl.includes('/daily-report') ||
+    pathname.includes('/daily-report') ||
+    hash.includes('/daily-report') ||
+    fullUrl.includes('daily-report')
+  )
+
+  if (hasPendingNav) {
+    console.log(
+      '[LIFF_ROUTING] Early detection: Pending navigation detected, will show loading screen',
+    )
+  }
+
+  return hasPendingNav
+}
+
 function App() {
   const [liffObject, setLiffObject] = useState<LiffType | null>(null)
   const [isLiffSdkReady, setIsLiffSdkReady] = useState(false)
@@ -692,6 +725,9 @@ function App() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [errorCount, setErrorCount] = useState<number>(0)
   const [hasInitiatedLoad, setHasInitiatedLoad] = useState<boolean>(false) // เพิ่ม state นี้เพื่อแทน window.hasInitiatedLoad
+  const [isPendingNavigation, setIsPendingNavigation] = useState<boolean>(
+    checkForPendingNavigation(),
+  ) // เช็คตั้งแต่แรกว่ามี pending navigation หรือไม่
 
   const [userProfileFromApi, setUserProfileFromApi] =
     useState<SharedUserProfileDto | null>(null)
@@ -1586,6 +1622,7 @@ function App() {
           if (logId) {
             sessionStorage.setItem('pendingLogId', logId)
           }
+          setIsPendingNavigation(true) // ตั้งค่า pending navigation state
           return true
         }
       }
@@ -1602,6 +1639,7 @@ function App() {
           if (logId) {
             sessionStorage.setItem('pendingLogId', logId)
           }
+          setIsPendingNavigation(true) // ตั้งค่า pending navigation state
           return true
         }
       }
@@ -1628,6 +1666,7 @@ function App() {
         if (logId) {
           sessionStorage.setItem('pendingLogId', logId)
         }
+        setIsPendingNavigation(true) // ตั้งค่า pending navigation state
         return true
       }
 
@@ -1653,15 +1692,15 @@ function App() {
           navigationUrl += `?logId=${pendingLogId}`
         }
 
-        setTimeout(() => {
-          void navigate(navigationUrl)
-          // ล้าง pending navigation
-          sessionStorage.removeItem('pendingNavigation')
-          sessionStorage.removeItem('pendingLogId')
-        }, 200) // เพิ่มเวลา delay เล็กน้อยให้ LIFF initialization เสร็จสิ้น
+        // ลด delay ให้น้อยที่สุด หรือไม่ใช้ setTimeout เลย
+        setIsPendingNavigation(false) // ปิด pending navigation state ก่อน
+        void navigate(navigationUrl)
+        // ล้าง pending navigation
+        sessionStorage.removeItem('pendingNavigation')
+        sessionStorage.removeItem('pendingLogId')
       }
     }
-  }, [isLiffInitialized, isLoadingProfile, navigate])
+  }, [isLiffInitialized, isLoadingProfile, navigate, setIsPendingNavigation])
 
   useEffect(() => {
     console.log('[ROUTE_DEBUG] ========== LOCATION CHANGED ==========')
@@ -1829,7 +1868,7 @@ function App() {
     }
   }, [userProfileFromApi, isEditMode])
 
-  if (!isLiffSdkReady || isLoadingProfile) {
+  if (!isLiffSdkReady || isLoadingProfile || isPendingNavigation) {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
@@ -1837,11 +1876,18 @@ function App() {
           <CircularProgress />
           <Typography sx={{ mt: 2 }}>
             {!isLiffSdkReady
-              ? 'Loading LIFF SDK...'
+              ? 'กำลังโหลด LIFF SDK...'
               : !isLiffInitialized
                 ? T.loadingLiff
-                : T.loadingProfile}
+                : isPendingNavigation
+                  ? '🚀 กำลังนำทางไปหน้าที่ต้องการ...'
+                  : T.loadingProfile}
           </Typography>
+          {isPendingNavigation && (
+            <Typography variant="caption" sx={{ mt: 1, opacity: 0.7 }}>
+              ตรวจพบการเข้าถึงผ่าน Deep Link
+            </Typography>
+          )}
         </Container>
       </ThemeProvider>
     )

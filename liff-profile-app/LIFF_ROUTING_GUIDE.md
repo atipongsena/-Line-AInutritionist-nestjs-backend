@@ -12,6 +12,13 @@
 
 ## วิธีแก้ไข (ที่ได้ implement แล้ว)
 
+### ⚡ การปรับปรุงล่าสุด (แก้ไขปัญหาการแสดงหน้าหลักแวบ)
+
+- ✅ **Early Detection**: ตรวจสอบ URL parameters ก่อน component render
+- ✅ **Zero Delay**: ไม่ใช้ setTimeout ในการ navigate
+- ✅ **Smart Loading**: แสดง loading screen พิเศษสำหรับ deep link
+- ✅ **Prevent Flash**: ป้องกันการแสดงหน้าหลักแวบก่อนนำทาง
+
 ### 1. การตั้งค่า Rich Menu URI
 
 ใน Rich Menu ของ LINE ให้ตั้งค่า URI Action ดังนี้:
@@ -48,25 +55,33 @@ https://liff.line.me/2007349762-AJ9J432d?page=nutrition-report&logId=12345
 | `page`       | `nutrition-report`, `daily-report`   | `?page=nutrition-report`        |
 | `logId`      | ID ของ log ที่ต้องการแสดง            | `?logId=12345`                  |
 
-### 3. ลำดับการทำงาน
+### 3. ลำดับการทำงาน (ปรับปรุงแล้ว)
 
 1. User คลิกปุ่มใน Rich Menu
 2. LINE เปิด LIFF App ที่ Endpoint URL พร้อม query parameters
-3. App ตรวจสอบ URL parameters ทันทีและเก็บไว้ใน sessionStorage
-4. App รอ LIFF initialization เสร็จ
-5. App ทำการ navigate ไปยัง path ที่ต้องการ
+3. **App ตรวจสอบ URL parameters ทันที** (ก่อน component render)
+4. **แสดง loading screen พิเศษ** แทนหน้าหลัก หากตรวจพบ deep link
+5. App รอ LIFF initialization เสร็จ
+6. **App navigate ทันที** (ไม่มี delay) ไปยัง path ที่ต้องการ
 
 ### 4. การ Debug
 
 ดู Console logs ที่ขึ้นต้นด้วย `[LIFF_ROUTING]` เพื่อตรวจสอบการทำงาน:
 
 ```
+[LIFF_ROUTING] Early detection: Pending navigation detected, will show loading screen
 [LIFF_ROUTING] Checking initial LIFF URL for path routing
 [LIFF_ROUTING] URL Parameters: { targetPath: "/nutrition-report", page: null, logId: null }
 [LIFF_ROUTING] Found targetPath: /nutrition-report
 [LIFF_ROUTING] Setting flag to navigate to nutrition report after LIFF init
 [LIFF_ROUTING] Executing pending navigation to: /nutrition-report
 ```
+
+### สิ่งที่จะเห็นขณะใช้งาน
+
+- ✅ **ไม่แสดงหน้าหลักแวบ** ก่อนนำทาง
+- ✅ แสดงข้อความ "🚀 กำลังนำทางไปหน้าที่ต้องการ..."
+- ✅ แสดงข้อความ "ตรวจพบการเข้าถึงผ่าน Deep Link"
 
 ## ตัวอย่างการใช้งาน
 

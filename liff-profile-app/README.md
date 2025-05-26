@@ -73,7 +73,15 @@ https://liff.line.me/2007349762-AJ9J432d?page=daily-report&logId=12345&date=2024
 | `logId`      | ID ของ log ที่ต้องการแสดง         | `?logId=12345`                  |
 | `date`       | วันที่ที่ต้องการแสดง (YYYY-MM-DD) | `?date=2024-01-15`              |
 
-📖 **ดูรายละเอียดเพิ่มเติมใน [LIFF_ROUTING_GUIDE.md](./LIFF_ROUTING_GUIDE.md)**
+### ⚡ การปรับปรุงล่าสุด - แก้ไขปัญหา "หน้าหลักแวบ"
+
+- ✅ **ป้องกันการแสดงหน้าหลักแวบ** ก่อนนำทาง Deep Link
+- ✅ **Early Detection** - ตรวจสอบ URL parameters ก่อน component render
+- ✅ **Zero Delay Navigation** - นำทางทันทีไม่มี delay
+- ✅ **Smart Loading Screen** - แสดง loading พิเศษสำหรับ Deep Link
+
+📖 **ดูรายละเอียดเพิ่มเติมใน [LIFF_ROUTING_GUIDE.md](./LIFF_ROUTING_GUIDE.md)**  
+🧪 **คู่มือทดสอบใน [DEEP_LINK_TESTING_GUIDE.md](./DEEP_LINK_TESTING_GUIDE.md)**
 
 ---
 
