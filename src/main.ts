@@ -32,7 +32,7 @@ async function bootstrap() {
           ]
         : []),
     ],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
       'Accept',
@@ -40,10 +40,15 @@ async function bootstrap() {
       'X-LINE-ID-TOKEN',
       'Origin',
       'X-Requested-With',
+      'Access-Control-Request-Method',
+      'Access-Control-Request-Headers',
     ],
     credentials: true,
     // เปิดใช้ preflight caching สำหรับ performance
     maxAge: 86400, // 24 hours
+    // Explicit preflight handling
+    preflightContinue: false,
+    optionsSuccessStatus: 200,
   })
 
   // Global Validation Pipe

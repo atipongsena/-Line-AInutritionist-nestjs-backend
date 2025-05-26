@@ -10,6 +10,7 @@ import {
   Routes,
   Route,
   useNavigate,
+  useLocation,
 } from 'react-router-dom'
 import {
   Container,
@@ -737,18 +738,25 @@ function App() {
 
   const fetchWithTokenRetry = useCallback(
     async (url: string, options: RequestInit = {}): Promise<Response> => {
+      console.log('[FETCH_DEBUG] Starting fetchWithTokenRetry')
+      console.log('[FETCH_DEBUG] URL:', url)
+      console.log('[FETCH_DEBUG] Options:', options)
+
       let currentIdToken: string | null = null
 
       if (liffObject && liffObject.isLoggedIn()) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log(
-            '[DEBUG] fetchWithTokenRetry: Attempting to get fresh ID token from liffObject.',
-          )
-        }
+        console.log('[FETCH_DEBUG] LIFF object available and user logged in')
         currentIdToken = liffObject.getIDToken()
+        console.log(
+          '[FETCH_DEBUG] Got ID token:',
+          currentIdToken ? 'YES' : 'NO',
+        )
       } else {
-        console.warn(
-          '[DEBUG] fetchWithTokenRetry: liffObject not available or user not logged in. Cannot get ID token.',
+        console.error('[FETCH_DEBUG] LIFF not available or user not logged in')
+        console.log('[FETCH_DEBUG] liffObject:', !!liffObject)
+        console.log(
+          '[FETCH_DEBUG] isLoggedIn:',
+          liffObject ? liffObject.isLoggedIn() : 'N/A',
         )
         throw new Error(
           'LIFF not initialized or user not logged in to get ID token.',
@@ -756,9 +764,7 @@ function App() {
       }
 
       if (!currentIdToken) {
-        console.error(
-          '[DEBUG] fetchWithTokenRetry: Failed to obtain ID token for API call.',
-        )
+        console.error('[FETCH_DEBUG] Failed to obtain ID token')
         throw new Error('Failed to obtain ID token for API call.')
       }
 
@@ -773,12 +779,8 @@ function App() {
         ? baseHeaders
         : { ...baseHeaders, 'ngrok-skip-browser-warning': 'true' }
 
-      if (process.env.NODE_ENV === 'development') {
-        console.log(
-          '[DEBUG] fetchWithTokenRetry: Request Headers being set:',
-          headers,
-        )
-      }
+      console.log('[FETCH_DEBUG] Final headers:', headers)
+      console.log('[FETCH_DEBUG] Making request to:', url)
 
       try {
         const response = await fetch(url, {
@@ -786,31 +788,36 @@ function App() {
           headers,
         })
 
+        console.log('[FETCH_DEBUG] Response received')
+        console.log('[FETCH_DEBUG] Status:', response.status)
+        console.log('[FETCH_DEBUG] Status Text:', response.statusText)
+        console.log(
+          '[FETCH_DEBUG] Headers:',
+          Object.fromEntries(response.headers.entries()),
+        )
+
         // ตรวจสอบการตอบกลับที่เกี่ยวข้องกับ token หมดอายุ
         if (response.status === 401 || response.status === 403) {
-          const responseText = await response.text()
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('[DEBUG] Token error response:', responseText)
+          let responseText = ''
+          try {
+            responseText = await response.clone().text()
+            console.warn(
+              '[FETCH_DEBUG] Auth error response text:',
+              responseText,
+            )
+          } catch {
+            console.warn('[FETCH_DEBUG] Could not read response text')
           }
 
           if (
             responseText.includes('expired') ||
             responseText.includes('Invalid')
           ) {
-            if (process.env.NODE_ENV === 'development') {
-              console.log(
-                '[DEBUG] Token expired or invalid. Reloading the page...',
-              )
-            }
-
-            // แสดงข้อความแจ้งเตือนให้ผู้ใช้ทราบ
+            console.log('[FETCH_DEBUG] Token expired, reloading page')
             alert(
               'ช่วงเวลาเข้าสู่ระบบหมดอายุ กำลังรีเฟรชหน้าเว็บเพื่อเข้าสู่ระบบใหม่',
             )
-
-            // หากต้องการรีเฟรชหน้า
             window.location.reload()
-
             throw new Error(
               'LINE login session expired. Reloading application...',
             )
@@ -819,18 +826,29 @@ function App() {
 
         return response
       } catch (error) {
-        console.error('[DEBUG] Fetch error:', error)
+        console.error('[FETCH_DEBUG] Fetch error occurred:', error)
 
-        // ตรวจสอบว่าถ้าเป็นข้อผิดพลาดเกี่ยวกับการเชื่อมต่อ
-        if (
-          error instanceof TypeError &&
-          error.message.includes('Failed to fetch')
-        ) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log(
-              '[DEBUG] Network error occurred. Please check your connection.',
+        if (error instanceof TypeError) {
+          console.error('[FETCH_DEBUG] TypeError details:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+          })
+
+          if (error.message.includes('Failed to fetch')) {
+            console.error('[FETCH_DEBUG] Network error - Failed to fetch')
+            throw new Error(
+              `Network error: Cannot connect to ${url}. Please check your internet connection.`,
             )
           }
+        }
+
+        if (error instanceof Error) {
+          console.error('[FETCH_DEBUG] Error details:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+          })
         }
 
         throw error
@@ -1358,17 +1376,23 @@ function App() {
   }
 
   const handleSave = async () => {
+    console.log('[PROFILE_DEBUG] ========== SAVE PROFILE STARTED ==========')
     console.log('[PROFILE_DEBUG] handleSave called')
     console.log('[PROFILE_DEBUG] lineUserId:', lineUserId)
-    console.log('[PROFILE_DEBUG] idToken:', idToken ? 'EXISTS' : 'MISSING')
+    console.log('[PROFILE_DEBUG] idToken exists:', !!idToken)
+    console.log('[PROFILE_DEBUG] liffObject exists:', !!liffObject)
+    console.log('[PROFILE_DEBUG] isLoggedIn:', liffObject?.isLoggedIn())
+    console.log('[PROFILE_DEBUG] apiBaseUrl:', apiBaseUrl)
 
     if (!lineUserId || !idToken) {
-      setSaveError(T.idTokenMissingError)
       console.error('[PROFILE_DEBUG] Missing lineUserId or idToken')
+      console.error('[PROFILE_DEBUG] lineUserId:', lineUserId)
+      console.error('[PROFILE_DEBUG] idToken:', !!idToken)
+      setSaveError(T.idTokenMissingError)
       return
     }
 
-    console.log('[PROFILE_DEBUG] Starting save process...')
+    console.log('[PROFILE_DEBUG] Validation passed, starting save process...')
     setIsSavingProfile(true)
     setSaveError(null)
     setSaveSuccess(false)
@@ -1445,6 +1469,13 @@ function App() {
 
     try {
       console.log('[PROFILE_DEBUG] About to call fetchWithTokenRetry...')
+      console.log('[PROFILE_DEBUG] Target URL:', `${apiBaseUrl}/api/users/me`)
+      console.log('[PROFILE_DEBUG] Method: PUT')
+      console.log(
+        '[PROFILE_DEBUG] Payload size:',
+        JSON.stringify(payload).length,
+        'characters',
+      )
 
       // เปลี่ยน endpoint ให้ตรงกับที่ใช้ในการ fetch profile
       const response = await fetchWithTokenRetry(`${apiBaseUrl}/api/users/me`, {
@@ -1452,10 +1483,11 @@ function App() {
         body: JSON.stringify(payload),
       })
 
-      console.log(
-        '[PROFILE_DEBUG] fetchWithTokenRetry completed, response status:',
-        response.status,
-      )
+      console.log('[PROFILE_DEBUG] ========== RESPONSE RECEIVED ==========')
+      console.log('[PROFILE_DEBUG] fetchWithTokenRetry completed')
+      console.log('[PROFILE_DEBUG] Response status:', response.status)
+      console.log('[PROFILE_DEBUG] Response ok:', response.ok)
+      console.log('[PROFILE_DEBUG] Response statusText:', response.statusText)
 
       if (!response.ok) {
         let errorMessage = `API Error: ${response.status}`
@@ -1507,9 +1539,38 @@ function App() {
   const handlePrevStep = () => setCurrentStep((prev) => prev - 1)
 
   const navigate = useNavigate()
+  const location = useLocation()
+
   const goToNutritionReport = useCallback(() => {
+    console.log('[NAVIGATION_DEBUG] Attempting to navigate to nutrition-report')
+    console.log('[NAVIGATION_DEBUG] Current location:', window.location.href)
+    console.log('[NAVIGATION_DEBUG] Current pathname:', location.pathname)
     void navigate('/nutrition-report')
-  }, [navigate])
+    console.log('[NAVIGATION_DEBUG] Navigate function called')
+  }, [navigate, location])
+
+  useEffect(() => {
+    console.log('[ROUTE_DEBUG] ========== LOCATION CHANGED ==========')
+    console.log('[ROUTE_DEBUG] Current pathname:', location.pathname)
+    console.log('[ROUTE_DEBUG] Current search:', location.search)
+    console.log('[ROUTE_DEBUG] Current hash:', location.hash)
+    console.log('[ROUTE_DEBUG] Full URL:', window.location.href)
+    console.log(
+      '[ROUTE_DEBUG] Browser back/forward event or navigation occurred',
+    )
+
+    // ตรวจสอบว่าเป็นการนำทางไปยัง nutrition-report หรือไม่
+    if (
+      location.pathname === '/nutrition-report' ||
+      location.pathname === '/daily-report'
+    ) {
+      console.log('[ROUTE_DEBUG] Detected navigation to nutrition report page')
+      console.log('[ROUTE_DEBUG] Should render NutritionReportMain component')
+    } else if (location.pathname === '/') {
+      console.log('[ROUTE_DEBUG] Detected navigation to profile page (root)')
+      console.log('[ROUTE_DEBUG] Should render profile content')
+    }
+  }, [location])
 
   useEffect(() => {
     if (
@@ -2612,6 +2673,10 @@ function App() {
                   element={<NutritionReportMain />}
                 />
                 <Route path="/daily-report" element={<NutritionReportMain />} />
+                <Route
+                  path="/nutrition-report/*"
+                  element={<NutritionReportMain />}
+                />
               </Routes>
             </Suspense>
           </Container>
@@ -2624,9 +2689,7 @@ function App() {
 const AppWithRouter: React.FC = () => {
   return (
     <Router>
-      <Routes>
-        <Route path="/*" element={<App />} />
-      </Routes>
+      <App />
     </Router>
   )
 }

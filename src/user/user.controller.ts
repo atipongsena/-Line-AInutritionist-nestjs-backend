@@ -232,7 +232,16 @@ export class UserController {
     @Req() req: AuthenticatedLiffRequest,
     @Body() body: Record<string, any>,
   ): Promise<UserProfileDto> {
+    this.logger.log(`========== PUT /api/users/me REQUEST RECEIVED ==========`)
     this.logger.log(`Updating profile for LIFF user: ${req.lineUserId}`)
+    this.logger.log(`Request headers:`, {
+      'content-type': req.headers['content-type'],
+      'x-line-id-token': req.headers['x-line-id-token'] ? 'PRESENT' : 'MISSING',
+      'user-agent': req.headers['user-agent'],
+      origin: req.headers['origin'],
+    })
+    this.logger.log(`Body content type: ${typeof body}`)
+    this.logger.log(`Body size: ${JSON.stringify(body).length} characters`)
     this.logger.debug(
       `Profile update payload received:`,
       JSON.stringify(body, null, 2),
