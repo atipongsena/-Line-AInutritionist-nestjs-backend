@@ -1358,10 +1358,17 @@ function App() {
   }
 
   const handleSave = async () => {
+    console.log('[PROFILE_DEBUG] handleSave called')
+    console.log('[PROFILE_DEBUG] lineUserId:', lineUserId)
+    console.log('[PROFILE_DEBUG] idToken:', idToken ? 'EXISTS' : 'MISSING')
+
     if (!lineUserId || !idToken) {
       setSaveError(T.idTokenMissingError)
+      console.error('[PROFILE_DEBUG] Missing lineUserId or idToken')
       return
     }
+
+    console.log('[PROFILE_DEBUG] Starting save process...')
     setIsSavingProfile(true)
     setSaveError(null)
     setSaveSuccess(false)
@@ -1433,11 +1440,12 @@ function App() {
       delete (payload as Partial<SharedUserProfileDto>).lineUserId
     }
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[PROFILE_DEBUG] Saving profile with payload:', payload)
-    }
+    console.log('[PROFILE_DEBUG] Payload prepared:', payload)
+    console.log('[PROFILE_DEBUG] API Base URL:', apiBaseUrl)
 
     try {
+      console.log('[PROFILE_DEBUG] About to call fetchWithTokenRetry...')
+
       // เปลี่ยน endpoint ให้ตรงกับที่ใช้ในการ fetch profile
       const response = await fetchWithTokenRetry(`${apiBaseUrl}/api/users/me`, {
         method: 'PUT', // ยังคงใช้ PUT method
@@ -1445,7 +1453,7 @@ function App() {
       })
 
       console.log(
-        '[PROFILE_DEBUG] Profile save response status:',
+        '[PROFILE_DEBUG] fetchWithTokenRetry completed, response status:',
         response.status,
       )
 
@@ -1479,11 +1487,18 @@ function App() {
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err: unknown) {
       console.error('[PROFILE_DEBUG] Save Profile Error:', err)
-      setSaveError(
-        `${T.apiSaveError}: ${(err as { message?: string })?.message || 'Unknown error'}`,
-      )
+
+      let errorMessage = 'Unknown error'
+      if (err instanceof Error) {
+        errorMessage = err.message
+      } else if (typeof err === 'string') {
+        errorMessage = err
+      }
+
+      setSaveError(`${T.apiSaveError}: ${errorMessage}`)
       setTimeout(() => setSaveError(null), 5000)
     } finally {
+      console.log('[PROFILE_DEBUG] Save process completed')
       setIsSavingProfile(false)
     }
   }
@@ -1853,28 +1868,11 @@ function App() {
   )
 
   const renderEditModeContent = () => (
-    <Paper
-      elevation={3}
-      sx={{ p: { xs: 1, sm: 2, md: 3 }, m: { xs: 0.5, sm: 1 } }}
-    >
-      <Typography
-        variant="h6"
-        gutterBottom
-        component="div"
-        sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}
-      >
+    <Paper elevation={3} sx={{ p: { xs: 2, sm: 3 } }}>
+      <Typography variant="h5" gutterBottom component="div">
         {T.userProfileTitle}
       </Typography>
-      <Stepper
-        activeStep={currentStep - 1}
-        alternativeLabel
-        sx={{
-          mb: 2,
-          '& .MuiStepLabel-label': {
-            fontSize: { xs: '0.75rem', sm: '0.875rem' },
-          },
-        }}
-      >
+      <Stepper activeStep={currentStep - 1} alternativeLabel sx={{ mb: 3 }}>
         {[
           T.step1Title,
           T.step2Title,
@@ -1890,8 +1888,8 @@ function App() {
       </Stepper>
 
       {currentStep === 1 && (
-        <Box sx={{ '& > *': { mb: { xs: 2, sm: 1 } } }}>
-          <FormControl fullWidth size="small">
+        <>
+          <FormControl fullWidth margin="normal">
             <InputLabel id="language-select-label">
               {T.languageLabel}
             </InputLabel>
@@ -1905,9 +1903,7 @@ function App() {
               <MenuItem value="th">ภาษาไทย</MenuItem>
               <MenuItem value="en">English</MenuItem>
             </Select>
-            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
-              {T.languageHelper}
-            </FormHelperText>
+            <FormHelperText>{T.languageHelper}</FormHelperText>
           </FormControl>
           <TextField
             label={T.nicknameLabel}
@@ -1915,14 +1911,8 @@ function App() {
             value={formData.displayName || ''}
             onChange={handleInputChange}
             fullWidth
-            size="small"
+            margin="normal"
             helperText={T.nicknameHelper}
-            InputLabelProps={{
-              sx: { fontSize: { xs: '0.9rem', sm: '1rem' } },
-            }}
-            FormHelperTextProps={{
-              sx: { fontSize: { xs: '0.7rem', sm: '0.75rem' } },
-            }}
           />
           <LocalizationProvider
             dateAdapter={AdapterDateFns}
@@ -1939,41 +1929,18 @@ function App() {
                     : undefined,
                 }))
               }
-              slotProps={{
-                textField: {
-                  size: 'small',
-                  fullWidth: true,
-                  InputLabelProps: {
-                    sx: { fontSize: { xs: '0.9rem', sm: '1rem' } },
-                  },
-                  FormHelperTextProps: {
-                    sx: { fontSize: { xs: '0.7rem', sm: '0.75rem' } },
-                  },
-                  helperText: T.birthdateHelper,
-                },
-              }}
-              sx={{ width: '100%' }}
+              sx={{ width: '100%', mt: 2, mb: 1 }}
             />
           </LocalizationProvider>
+          <FormHelperText>{T.birthdateHelper}</FormHelperText>
           {calculatedAge !== undefined && (
-            <Typography
-              variant="body2"
-              sx={{
-                mt: 0.5,
-                fontSize: { xs: '0.8rem', sm: '0.875rem' },
-                color: 'text.secondary',
-              }}
-            >
+            <Typography variant="body2" sx={{ mt: 1 }}>
               {T.ageLabel}: {calculatedAge}{' '}
               {currentLang === 'th' ? 'ปี' : 'years'}
             </Typography>
           )}
-          <FormControl component="fieldset" fullWidth>
-            <Typography
-              variant="subtitle1"
-              gutterBottom
-              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
-            >
+          <FormControl component="fieldset" margin="normal" fullWidth>
+            <Typography variant="subtitle1" gutterBottom>
               {T.genderLabel}
             </Typography>
             <ToggleButtonGroup
@@ -1982,13 +1949,6 @@ function App() {
               onChange={handleGenderChange}
               aria-label="gender selection"
               fullWidth
-              size="small"
-              sx={{
-                '& .MuiToggleButton-root': {
-                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
-                  py: { xs: 0.5, sm: 1 },
-                },
-              }}
             >
               <ToggleButton value="male" aria-label="male">
                 {T.male}
@@ -2000,53 +1960,32 @@ function App() {
                 {T.other}
               </ToggleButton>
             </ToggleButtonGroup>
-            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
-              {T.genderHelper}
-            </FormHelperText>
+            <FormHelperText>{T.genderHelper}</FormHelperText>
           </FormControl>
-        </Box>
+        </>
       )}
       {currentStep === 2 && (
-        <Box sx={{ '& > *': { mb: { xs: 2, sm: 1 } } }}>
-          <FormControl fullWidth size="small">
-            <InputLabel
-              id="goal-label"
-              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
-            >
-              {T.goalLabel}
-            </InputLabel>
+        <>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="goal-label">{T.goalLabel}</InputLabel>
             <Select
               labelId="goal-label"
               name="goal"
               value={formData.goal || ''}
               onChange={handleSelectChange}
               label={T.goalLabel}
-              MenuProps={{
-                PaperProps: {
-                  sx: { maxHeight: 200 },
-                },
-              }}
             >
               {goalOptions.map((option) => (
-                <MenuItem
-                  key={option.value}
-                  value={option.value}
-                  sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
-                >
+                <MenuItem key={option.value} value={option.value}>
                   {getLocalizedOptionLabel(option, currentLang)}
                 </MenuItem>
               ))}
             </Select>
-            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
-              {T.goalHelper}
-            </FormHelperText>
+            <FormHelperText>{T.goalHelper}</FormHelperText>
           </FormControl>
 
-          <FormControl fullWidth size="small">
-            <InputLabel
-              id="activity-level-label"
-              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
-            >
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="activity-level-label">
               {T.activityLevelLabel}
             </InputLabel>
             <Select
@@ -2055,61 +1994,34 @@ function App() {
               value={formData.activityLevel || ''}
               onChange={handleSelectChange}
               label={T.activityLevelLabel}
-              MenuProps={{
-                PaperProps: {
-                  sx: { maxHeight: 200 },
-                },
-              }}
             >
               {activityLevelOptionsList.map((option) => (
-                <MenuItem
-                  key={option.value}
-                  value={option.value}
-                  sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
-                >
+                <MenuItem key={option.value} value={option.value}>
                   {getLocalizedOptionLabel(option, currentLang)}
                 </MenuItem>
               ))}
             </Select>
-            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
-              {T.activityLevelHelper}
-            </FormHelperText>
+            <FormHelperText>{T.activityLevelHelper}</FormHelperText>
           </FormControl>
 
-          <FormControl fullWidth size="small">
-            <InputLabel
-              id="diet-type-label"
-              sx={{ fontSize: { xs: '0.9rem', sm: '1rem' } }}
-            >
-              {T.dietTypeLabel}
-            </InputLabel>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="diet-type-label">{T.dietTypeLabel}</InputLabel>
             <Select
               labelId="diet-type-label"
               name="dietType"
               value={formData.dietType || ''}
               onChange={handleSelectChange}
               label={T.dietTypeLabel}
-              MenuProps={{
-                PaperProps: {
-                  sx: { maxHeight: 200 },
-                },
-              }}
             >
               {dietTypeOptionsList.map((option) => (
-                <MenuItem
-                  key={option.value}
-                  value={option.value}
-                  sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
-                >
+                <MenuItem key={option.value} value={option.value}>
                   {getLocalizedOptionLabel(option, currentLang)}
                 </MenuItem>
               ))}
             </Select>
-            <FormHelperText sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
-              {T.dietTypeHelper}
-            </FormHelperText>
+            <FormHelperText>{T.dietTypeHelper}</FormHelperText>
           </FormControl>
-        </Box>
+        </>
       )}
       {currentStep === 3 && renderStep3Content()}
       {currentStep === 4 && (
@@ -2679,38 +2591,29 @@ function App() {
               )}
             </Toolbar>
           </AppBar>
-          <Container
-            component="main"
-            maxWidth="md"
-            sx={{ mt: 1, mb: 1, px: { xs: 1, sm: 2 } }}
-          >
+          <Container component="main" maxWidth="md" sx={{ mt: 2, mb: 2 }}>
             {profileError && !profileError.includes(T.noApiProfileData) && (
               <Alert severity="error" sx={{ mb: 2 }}>
                 {profileError}
               </Alert>
             )}
-            <Box sx={{ px: 1, py: 1 }}>
-              <Suspense fallback={<CircularProgress />}>
-                <Routes>
-                  <Route
-                    path="/"
-                    element={
-                      isEditMode
-                        ? renderEditModeContent()
-                        : renderDisplayModeContent()
-                    }
-                  />
-                  <Route
-                    path="/nutrition-report"
-                    element={<NutritionReportMain />}
-                  />
-                  <Route
-                    path="/daily-report"
-                    element={<NutritionReportMain />}
-                  />
-                </Routes>
-              </Suspense>
-            </Box>
+            <Suspense fallback={<CircularProgress />}>
+              <Routes>
+                <Route
+                  path="/"
+                  element={
+                    isEditMode
+                      ? renderEditModeContent()
+                      : renderDisplayModeContent()
+                  }
+                />
+                <Route
+                  path="/nutrition-report"
+                  element={<NutritionReportMain />}
+                />
+                <Route path="/daily-report" element={<NutritionReportMain />} />
+              </Routes>
+            </Suspense>
           </Container>
         </LiffIdHandler>
       </ThemeProvider>
