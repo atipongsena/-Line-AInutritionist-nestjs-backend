@@ -428,9 +428,10 @@ const DailyReportView: React.FC = memo(() => {
 
   // Memoized values for chart data
   const macroPieData = useMemo(() => {
-    const protein = safeDailyData.macronutrients.protein.consumed || 0
-    const carbs = safeDailyData.macronutrients.carbs.consumed || 0
-    const fat = safeDailyData.macronutrients.fat.consumed || 0
+    const macros = safeDailyData.macronutrients
+    const protein = macros?.protein?.consumed || 0
+    const carbs = macros?.carbs?.consumed || 0
+    const fat = macros?.fat?.consumed || 0
 
     return [
       {
