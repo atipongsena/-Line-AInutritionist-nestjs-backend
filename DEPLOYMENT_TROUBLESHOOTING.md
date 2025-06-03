@@ -187,6 +187,62 @@ Error: Invalid deployment token
 4. คัดลอก token ใหม่
 5. อัพเดท GitHub Secret: `AZURE_STATIC_WEB_APPS_API_TOKEN`
 
+### 8. Node.js Runtime Version Mismatch
+
+**อาการ:**
+
+```
+[WARNING] Nodejs runtime version info is not provided for the Next.js app.
+Defaulting to version: 18.
+```
+
+**สาเหตุ:** Azure Static Web Apps ไม่ทราบ Node.js version ที่ควรใช้
+
+**วิธีแก้:**
+
+1. **สร้างไฟล์ `staticwebapp.config.json`:**
+
+```json
+{
+  "platform": {
+    "apiRuntime": "node:20"
+  },
+  "navigationFallback": {
+    "rewrite": "/"
+  },
+  "routes": [
+    {
+      "route": "/api/*",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/*",
+      "allowedRoles": ["anonymous"]
+    }
+  ]
+}
+```
+
+2. **อัพเดท package.json engines:**
+
+```json
+{
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
+```
+
+3. **เพิ่ม config_file_location ใน workflow:**
+
+```yaml
+- name: Deploy to Azure Static Web Apps
+  uses: Azure/static-web-apps-deploy@v1
+  with:
+    config_file_location: 'liff-nutrition-next'
+```
+
 ## 🔧 Quick Fix Commands
 
 ### Reset Deployment

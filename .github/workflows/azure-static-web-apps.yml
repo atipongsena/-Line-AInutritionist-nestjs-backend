@@ -18,7 +18,7 @@ on:
       - '.github/workflows/azure-static-web-apps.yml'
 
 env:
-  NODE_VERSION: '24'
+  NODE_VERSION: '20'
   PNPM_VERSION: '9'
 
 jobs:
@@ -80,6 +80,7 @@ jobs:
           app_location: 'liff-nutrition-next'
           output_location: '.next'
           skip_app_build: true
+          config_file_location: 'liff-nutrition-next'
 
       - name: Create deployment summary
         if: success()

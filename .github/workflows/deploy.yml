@@ -28,7 +28,7 @@ env:
   ACR_NAME: ainutritionistacr
   BACKEND_APP_NAME: ai-nutritionist-backend
   FRONTEND_APP_NAME: ai-nutritionist-frontend
-  NODE_VERSION: '24'
+  NODE_VERSION: '20'
   PNPM_VERSION: '9'
 
 jobs:

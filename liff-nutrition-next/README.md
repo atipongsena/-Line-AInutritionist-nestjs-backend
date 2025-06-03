@@ -310,6 +310,36 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 หากพบปัญหาหรือต้องการขอ feature ใหม่ กรุณาสร้าง [GitHub Issue](https://github.com/your-org/ai-nutritionist-nestjs-backend/issues)
 
+## 🚀 Deployment Configuration
+
+### Azure Static Web Apps
+
+โปรเจกต์นี้ใช้ `staticwebapp.config.json` สำหรับการกำหนดค่า Azure Static Web Apps:
+
+- **Node.js Runtime**: กำหนดให้ใช้ Node.js 20
+- **Navigation Fallback**: รองรับ SPA routing
+- **Security Headers**: ตั้งค่า CSP และ security headers
+- **LIFF Integration**: รองรับการโหลดใน LINE application
+
+```json
+{
+  "platform": {
+    "apiRuntime": "node:20"
+  },
+  "navigationFallback": {
+    "rewrite": "/"
+  }
+}
+```
+
+### Environment Variables
+
+ตั้งค่า secrets ต่อไปนี้ใน GitHub repository:
+
+- `AZURE_STATIC_WEB_APPS_API_TOKEN`: Token จาก Azure Static Web Apps
+- `NEXT_PUBLIC_LIFF_ID`: LIFF ID จาก LINE Developers Console
+- `NEXT_PUBLIC_API_BASE_URL`: URL ของ backend API
+
 ---
 
 **AI Nutritionist Team** - สร้างด้วย ❤️ สำหรับสุขภาพที่ดีของทุกคน
