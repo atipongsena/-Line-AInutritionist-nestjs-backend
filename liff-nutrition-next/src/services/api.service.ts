@@ -223,7 +223,7 @@ class ApiService {
   }
 
   /**
-   * Daily Report API - ปรับปรุงสำหรับ production
+   * Daily Report API - แก้ไขให้ตรงกับ Backend
    */
   async getDailyReport(
     date: string,
@@ -232,11 +232,12 @@ class ApiService {
   ): Promise<DailyReportResponse> {
     try {
       console.log(
-        `[ApiService] Fetching daily report for ${date}, userId: ${userId}`,
+        `[ApiService] Fetching daily report for ${date}, lineUserId: ${userId}`,
       )
 
+      // ✅ แก้ไข: ลบ /api prefix และใช้ lineUserId parameter
       const response = await this.get<DailyReportResponse>(
-        `/api/nutrition/daily-report?date=${date}&userId=${userId}`,
+        `/nutrition/daily-report?date=${date}&lineUserId=${userId}`,
         token,
       )
 
@@ -249,20 +250,32 @@ class ApiService {
           return response as DailyReportResponse
         }
         // Case 2: Response เป็น data โดยตรง
-        else if ('calories' in response || 'meals' in response) {
+        else if ('date' in response || 'totalCalories' in response) {
           return {
             success: true,
             data: response as any,
           }
         }
+        // Case 3: Response wrapper อื่นๆ
+        else if ('data' in response) {
+          return {
+            success: true,
+            data: (response as any).data,
+          }
+        }
       }
 
-      throw new Error('Invalid response structure from daily report API')
-    } catch (error) {
-      console.error(`[ApiService] Failed to fetch daily report:`, error)
+      // ถ้าไม่ใช่ format ที่คาดหวัง
+      throw new Error('Invalid response format from daily report API')
+    } catch (error: any) {
+      console.error(`[ApiService] Daily report API failed:`, error)
 
-      // ✅ ไม่ return fallback data ที่นี่ ให้ store จัดการ
-      throw error
+      // ✅ Return fallback พร้อม error info
+      return {
+        success: false,
+        data: null as any,
+        error: error.message || 'Failed to fetch daily report',
+      }
     }
   }
 
@@ -279,19 +292,32 @@ class ApiService {
     token: string,
   ): Promise<FoodLogResponseDto> {
     try {
-      const response = await this.get<FoodLogResponseDto>(
-        `/api/food-log/${logId}?userId=${userId}`,
+      console.log(
+        `[ApiService] Fetching food log ${logId} for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path และ parameter names
+      const response = await this.get<any>(
+        `/food-log/${logId}?lineUserId=${userId}`,
         token,
       )
-      return response
-    } catch (error) {
-      console.warn(
-        `[ApiService] Failed to fetch food log ${logId}, using fallback:`,
-        error,
-      )
+
+      if (response) {
+        return {
+          success: true,
+          data: response,
+        }
+      }
+
       return {
         success: false,
-        message: 'Could not connect to server. Please try again later.',
+        error: 'No food log data found',
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Food log fetch failed:`, error)
+      return {
+        success: false,
+        error: error.message || 'Failed to fetch food log',
       }
     }
   }
@@ -306,18 +332,26 @@ class ApiService {
     token: string,
   ): Promise<FoodLogResponseDto> {
     try {
-      const response = await this.put<FoodLogResponseDto>(
-        `/api/food-log/${logId}?userId=${userId}`,
+      console.log(
+        `[ApiService] Updating food log ${logId} for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path (ลบ /api)
+      const response = await this.put<any>(
+        `/food-log/${logId}`,
         updateData,
         token,
       )
-      return response
-    } catch (error) {
-      console.error(`[ApiService] Failed to update food log ${logId}:`, error)
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Food log update failed:`, error)
       return {
         success: false,
-        message: 'Failed to update food log. Please try again.',
-        error: error instanceof Error ? error.message : String(error),
+        error: error.message || 'Failed to update food log',
       }
     }
   }
@@ -331,16 +365,23 @@ class ApiService {
     token: string,
   ): Promise<ApiResponse<null>> {
     try {
-      const response = await this.delete<ApiResponse<null>>(
-        `/api/food-log/${logId}?userId=${userId}`,
-        token,
+      console.log(
+        `[ApiService] Deleting food log ${logId} for lineUserId: ${userId}`,
       )
-      return response
-    } catch (error) {
-      console.error(`[ApiService] Failed to delete food log ${logId}:`, error)
+
+      // ✅ แก้ไข path
+      await this.delete<any>(`/food-log/${logId}`, token)
+
+      return {
+        success: true,
+        data: null,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Food log deletion failed:`, error)
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        data: null,
+        error: error.message || 'Failed to delete food log',
       }
     }
   }
@@ -354,22 +395,34 @@ class ApiService {
     days?: number,
     limit?: number,
   ): Promise<FoodLogResponseDto[]> {
-    let endpoint = `/food-log/recent`
-    const params = new URLSearchParams()
-    if (days) params.append('days', days.toString())
-    if (limit) params.append('limit', limit.toString())
-    if (params.toString()) endpoint += `?${params.toString()}`
+    try {
+      console.log(
+        `[ApiService] Fetching recent food logs for lineUserId: ${userId}`,
+      )
 
-    return this.request<FoodLogResponseDto[]>(
-      endpoint,
-      {
-        method: 'GET',
-        headers: {
-          'X-Line-User-ID': userId,
-        },
-      },
-      token,
-    )
+      // ✅ แก้ไข path และ parameters
+      const queryParams = new URLSearchParams()
+      queryParams.append('lineUserId', userId)
+      if (days) queryParams.append('days', days.toString())
+      if (limit) queryParams.append('limit', limit.toString())
+
+      const response = await this.get<any[]>(
+        `/food-log/recent?${queryParams.toString()}`,
+        token,
+      )
+
+      if (Array.isArray(response)) {
+        return response.map((item) => ({
+          success: true,
+          data: item,
+        }))
+      }
+
+      return []
+    } catch (error: any) {
+      console.error(`[ApiService] Recent food logs fetch failed:`, error)
+      return []
+    }
   }
 
   // ===================
@@ -384,8 +437,29 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<ApiResponse<WeeklyData>> {
-    const endpoint = `/nutrition/weekly-report?weekStartDate=${weekStartDate}&lineUserId=${userId}`
-    return this.get<ApiResponse<WeeklyData>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching weekly report for ${weekStartDate}, lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path และ parameters
+      const response = await this.get<any>(
+        `/nutrition/weekly-report?weekStartDate=${weekStartDate}&lineUserId=${userId}`,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Weekly report fetch failed:`, error)
+      return {
+        success: false,
+        data: null as any,
+        error: error.message || 'Failed to fetch weekly report',
+      }
+    }
   }
 
   // ===================
@@ -400,8 +474,29 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<ApiResponse<MonthlyData>> {
-    const endpoint = `/nutrition/monthly-report?month=${month}&lineUserId=${userId}`
-    return this.get<ApiResponse<MonthlyData>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching monthly report for ${month}, lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path และ parameters
+      const response = await this.get<any>(
+        `/nutrition/monthly-report?month=${month}&lineUserId=${userId}`,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Monthly report fetch failed:`, error)
+      return {
+        success: false,
+        data: null as any,
+        error: error.message || 'Failed to fetch monthly report',
+      }
+    }
   }
 
   // ===================
@@ -415,8 +510,26 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<ApiResponse<any>> {
-    const endpoint = `/user/profile/${userId}`
-    return this.get<ApiResponse<any>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching user profile for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path (ดูจาก UserController ที่ใช้ /api/users)
+      const response = await this.get<any>('/api/users/profile', token)
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] User profile fetch failed:`, error)
+      return {
+        success: false,
+        data: null,
+        error: error.message || 'Failed to fetch user profile',
+      }
+    }
   }
 
   /**
@@ -427,8 +540,30 @@ class ApiService {
     profileData: any,
     token: string,
   ): Promise<ApiResponse<any>> {
-    const endpoint = `/user/profile/${userId}`
-    return this.put<ApiResponse<any>>(endpoint, profileData, token)
+    try {
+      console.log(
+        `[ApiService] Updating user profile for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path
+      const response = await this.put<any>(
+        '/api/users/profile',
+        profileData,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] User profile update failed:`, error)
+      return {
+        success: false,
+        data: null,
+        error: error.message || 'Failed to update user profile',
+      }
+    }
   }
 
   // ===================
@@ -439,7 +574,19 @@ class ApiService {
    * Check API health status
    */
   async healthCheck(): Promise<{ status: string; timestamp: string }> {
-    return this.get<{ status: string; timestamp: string }>('/health')
+    try {
+      // ✅ health check ไม่ต้องมี /api prefix
+      const response = await this.get<{ status: string; timestamp: string }>(
+        '/health',
+      )
+      return response
+    } catch (error: any) {
+      console.error(`[ApiService] Health check failed:`, error)
+      return {
+        status: 'error',
+        timestamp: new Date().toISOString(),
+      }
+    }
   }
 }
 

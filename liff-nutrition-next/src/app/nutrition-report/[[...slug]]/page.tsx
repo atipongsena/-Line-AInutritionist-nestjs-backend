@@ -1,32 +1,27 @@
-import React, { Suspense } from 'react'
-import CircularProgress from '@mui/material/CircularProgress'
-import NutritionReportClient from './client'
+import { Metadata } from 'next'
+import ClientPage from './client'
 
-// Path to NutritionReportMain: from src/app/nutrition-report/[[...slug]]/page.tsx
-// to src/app/[[...slug]]/nutrition-report/views/NutritionReportMain.tsx
-// ../../ goes to src/app/
-// Then navigate to [[...slug]]/nutrition-report/views/NutritionReportMain.tsx
-const NutritionReportMain = React.lazy(
-  () => import('../../[[...slug]]/nutrition-report/views/NutritionReportMain'),
-)
-
-// ✅ Static export compatibility: generateStaticParams
-export async function generateStaticParams() {
-  // Return common slug combinations for static generation
-  return [
-    { slug: [] }, // Empty slug for root
-    { slug: ['daily'] }, // Daily report
-    { slug: ['weekly'] }, // Weekly report
-    { slug: ['monthly'] }, // Monthly report
-  ]
+// ✅ เพิ่ม metadata สำหรับ SEO
+export const metadata: Metadata = {
+  title: 'AI Nutritionist - รายงานโภชนาการ',
+  description: 'ดูรายงานโภชนาการแบบ real-time รายวัน รายสัปดาห์ และรายเดือน',
 }
 
-export default function NutritionReportPage() {
-  // NutritionReportMain will be updated to use useParams or useSearchParams internally
-  // to get logId, date, or other parameters from the URL.
-  return (
-    <Suspense fallback={<CircularProgress />}>
-      <NutritionReportClient />
-    </Suspense>
-  )
+// ✅ ลบ generateStaticParams เพื่อให้ใช้ CSR
+// export async function generateStaticParams() {
+//   return [
+//     { slug: [] },
+//     { slug: ['daily'] },
+//     { slug: ['weekly'] },
+//     { slug: ['monthly'] },
+//   ]
+// }
+
+// ✅ บังคับใช้ dynamic rendering (CSR) เพื่อ real-time data
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+// ✅ Server Component ที่เรียก Client Component
+export default function Page() {
+  return <ClientPage />
 }

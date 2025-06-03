@@ -1,16 +1,22 @@
-// Import main App component from client.tsx
-import App from './client'
+import { Metadata } from 'next'
+import ClientPage from './client'
 
-// This is a catch-all route page.
-// It ensures that all paths are handled by the client-side React application initially.
-export function generateStaticParams() {
-  // Required for static export if you have dynamic segments,
-  // for a pure SPA-like setup, returning an empty slug for the root is common.
-  return [{ slug: [''] }]
+// ✅ เพิ่ม metadata สำหรับ SEO
+export const metadata: Metadata = {
+  title: 'AI Nutritionist - โปรไฟล์ผู้ใช้',
+  description: 'จัดการโปรไฟล์และข้อมูลสุขภาพของคุณด้วย AI Nutritionist',
 }
 
+// ✅ ลบ generateStaticParams เพื่อให้ใช้ CSR
+// export async function generateStaticParams() {
+//   return [{ slug: [] }]
+// }
+
+// ✅ บังคับใช้ dynamic rendering (CSR)
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+// ✅ Server Component ที่เรียก Client Component
 export default function Page() {
-  // This Server Component will render the ClientComponent,
-  // which will then take over rendering the rest of the application client-side.
-  return <App />
+  return <ClientPage />
 }

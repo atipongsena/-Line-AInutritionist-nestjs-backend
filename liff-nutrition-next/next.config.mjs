@@ -1,10 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 🚀 Azure Static Web Apps Configuration
-  output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
+  // 🚀 Azure Static Web Apps Configuration - Hybrid Approach
+  // ❌ ลบ output: 'export' เพื่อให้ใช้ hybrid rendering ได้
+  // output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
+
+  // ✅ ใช้ default Next.js behavior สำหรับ hybrid rendering
   distDir: 'out',
 
-  // ✅ เปิดใช้ SSR features สำหรับ development
+  // ✅ เปิดใช้ SSR features สำหรับทุก environment
   transpilePackages: ['@ai-nutritionist/shared-types'],
 
   // 🚀 Performance Optimizations (Stable Features Only)
@@ -105,9 +108,10 @@ const nextConfig = {
     ]
   },
 
-  // 🖼️ Image optimization (แก้ไขสำหรับ Azure Static Web Apps)
+  // 🖼️ Image optimization (ปรับปรุงสำหรับ Hybrid Rendering)
   images: {
-    unoptimized: process.env.NODE_ENV === 'production', // ✅ ปิด image optimization สำหรับ static export
+    // ✅ เปิด image optimization ใน production เพื่อประสิทธิภาพ
+    unoptimized: false, // เปลี่ยนจาก production check เป็น false เสมอ
     remotePatterns: [
       {
         protocol: 'https',

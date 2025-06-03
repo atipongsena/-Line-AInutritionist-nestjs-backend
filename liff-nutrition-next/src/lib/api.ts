@@ -145,41 +145,39 @@ export async function testApiConnectivity(): Promise<{
   try {
     await healthCheck()
     results.health = true
-    results.endpoints['/health'] = true
+    results.endpoints['health'] = true
   } catch (error) {
     results.health = false
-    results.endpoints['/health'] = false
-    results.errors.push(
-      `Health check failed: ${error instanceof Error ? error.message : String(error)}`,
-    )
+    results.endpoints['health'] = false
+    results.errors.push(`Health check failed: ${error}`)
   }
 
-  // Test other critical endpoints
-  const testEndpoints = [
-    '/api/nutrition/daily-report',
-    '/api/user/profile',
-    '/api/food-log',
+  // Test other endpoints
+  const endpointsToTest = [
+    {
+      name: 'nutrition-daily',
+      path: '/nutrition/daily-report?date=2025-01-01&lineUserId=test',
+    },
+    { name: 'user-profile', path: '/api/users/profile' },
+    { name: 'food-log', path: '/food-log/recent?lineUserId=test' },
   ]
 
-  for (const endpoint of testEndpoints) {
+  for (const endpoint of endpointsToTest) {
     try {
-      const url = `${API_BASE_URL}${endpoint}?test=connectivity`
-      const response = await fetch(url, {
+      const response = await fetch(`${API_BASE_URL}${endpoint.path}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
+          'X-LINE-ID-TOKEN': 'test-token',
         },
-        mode: 'cors',
-        credentials: 'omit',
       })
-
-      results.endpoints[endpoint] = response.status < 500 // Accept auth errors but not server errors
+      results.endpoints[endpoint.name] = response.status < 500
+      if (response.status >= 500) {
+        results.errors.push(`${endpoint.name}: Server error ${response.status}`)
+      }
     } catch (error) {
-      results.endpoints[endpoint] = false
-      results.errors.push(
-        `${endpoint} failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      results.endpoints[endpoint.name] = false
+      results.errors.push(`${endpoint.name}: ${error}`)
     }
   }
 
