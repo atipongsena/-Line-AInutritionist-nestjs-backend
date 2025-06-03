@@ -7,16 +7,14 @@ export const metadata: Metadata = {
   description: 'จัดการโปรไฟล์และข้อมูลสุขภาพของคุณด้วย AI Nutritionist',
 }
 
-// ✅ ลบ generateStaticParams เพื่อให้ใช้ CSR
-// export async function generateStaticParams() {
-//   return [{ slug: [] }]
-// }
+// ✅ ใช้ generateStaticParams สำหรับ static export แต่ client จะ handle dynamics
+export async function generateStaticParams() {
+  return [
+    { slug: [] }, // Root path for profile
+  ]
+}
 
-// ✅ บังคับใช้ dynamic rendering (CSR)
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
-// ✅ Server Component ที่เรียก Client Component
+// ✅ Static generation + Client-side dynamics
 export default function Page() {
   return <ClientPage />
 }

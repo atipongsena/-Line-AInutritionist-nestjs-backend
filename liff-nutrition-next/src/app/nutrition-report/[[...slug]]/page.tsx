@@ -7,21 +7,17 @@ export const metadata: Metadata = {
   description: 'ดูรายงานโภชนาการแบบ real-time รายวัน รายสัปดาห์ และรายเดือน',
 }
 
-// ✅ ลบ generateStaticParams เพื่อให้ใช้ CSR
-// export async function generateStaticParams() {
-//   return [
-//     { slug: [] },
-//     { slug: ['daily'] },
-//     { slug: ['weekly'] },
-//     { slug: ['monthly'] },
-//   ]
-// }
+// ✅ ใช้ generateStaticParams สำหรับ static export แต่ client จะ handle real-time data
+export async function generateStaticParams() {
+  return [
+    { slug: [] }, // /nutrition-report
+    { slug: ['daily'] }, // /nutrition-report/daily
+    { slug: ['weekly'] }, // /nutrition-report/weekly
+    { slug: ['monthly'] }, // /nutrition-report/monthly
+  ]
+}
 
-// ✅ บังคับใช้ dynamic rendering (CSR) เพื่อ real-time data
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
-// ✅ Server Component ที่เรียก Client Component
+// ✅ Static generation + Client-side real-time data fetching
 export default function Page() {
   return <ClientPage />
 }
