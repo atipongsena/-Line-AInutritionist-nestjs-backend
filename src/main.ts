@@ -10,29 +10,52 @@ async function bootstrap() {
 
   // Enable CORS with specific options for production
   const frontendUrl = configService.get<string>('FRONTEND_URL')
-  const isProduction = configService.get<string>('NODE_ENV') === 'production'
+  // const isProduction = configService.get<string>('NODE_ENV') === 'production' // isProduction ไม่ได้ถูกใช้ใน logic ใหม่โดยตรง แต่ยังเก็บไว้เผื่อกรณีอื่น
 
   app.enableCors({
-    origin: [
-      // Development origins
-      'http://localhost:3000', // Frontend dev server
-      'http://localhost:3001', // LIFF dev server
-      /.*\.ngrok-free\.app$/,
-      // ❌ ลบ development HTTPS (Azure จัดการ HTTPS อัตโนมัติ)
-      // 'https://localhost:3000',
-      // 'https://localhost:3001',
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      const allowedOrigins = [
+        // Development origins
+        'http://localhost:3000', // Frontend dev server
+        'http://localhost:3001', // LIFF dev server
+        // Production/Staging Frontend URL from environment variable
+        ...(frontendUrl ? [frontendUrl.replace(/\/$/, '')] : []), // Ensure no trailing slash for comparison
+        // Current Azure Static Web Apps (เผื่อยังมีการใช้งาน หรือต้องการ fallback)
+        // ควรตรวจสอบ URL เหล่านี้ให้ถูกต้องกับ deployment ปัจจุบันของคุณ
+        'https://salmon-pond-09f432200.6.azurestaticapps.net',
+        // 'https://ai-nutritionist-frontend.*.z23.web.core.windows.net', // Regex-like string needs careful handling or separate regex
+      ]
 
-      // Production origins (Azure Static Web Apps)
-      ...(frontendUrl ? [frontendUrl] : []),
-      ...(isProduction
-        ? [
-            // Azure Static Web Apps HTTPS URLs (อัปเดตตาม deployment จริง)
-            'https://ai-nutritionist-frontend.*.z23.web.core.windows.net',
-            // Current production frontend URL
-            'https://salmon-pond-09f432200.6.azurestaticapps.net',
-          ]
-        : []),
-    ],
+      // Regex for Vercel preview and production *.vercel.app domains
+      const vercelRegex = /\.vercel\.app$/
+      // Regex for ngrok-free.app domains
+      const ngrokRegex = /.*\.ngrok-free\.app$/
+      // Regex for one of the Azure SWA patterns if needed as a regex
+      const azureSwaRegex =
+        /ai-nutritionist-frontend\.[^.]*\.z23\.web\.core\.windows\.net$/
+
+      if (!origin) {
+        // Allow requests with no origin (like mobile apps or curl requests if desired, or server-to-server)
+        callback(null, true)
+        return
+      }
+
+      // Now, origin is definitely a string
+      if (
+        allowedOrigins.includes(origin) ||
+        vercelRegex.test(origin) ||
+        ngrokRegex.test(origin) ||
+        azureSwaRegex.test(origin)
+      ) {
+        callback(null, true)
+      } else {
+        logger.warn(`CORS: Denied origin - ${origin}`)
+        callback(new Error('Not allowed by CORS'))
+      }
+    },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',

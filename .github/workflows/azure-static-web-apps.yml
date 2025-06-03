@@ -1,107 +1,58 @@
-name: Azure Static Web Apps CI/CD
+# .github/workflows/deploy-frontend-vercel.yml
+name: Deploy Frontend to Vercel
 
 on:
   push:
     branches:
-      - main
-      - master
+      - main # หรือ branch ที่ต้องการ deploy
     paths:
       - 'liff-nutrition-next/**'
-      - '.github/workflows/azure-static-web-apps.yml'
+      - '.github/workflows/deploy-frontend-vercel.yml'
   pull_request:
-    types: [opened, synchronize, reopened, closed]
-    branches:
-      - main
-      - master
     paths:
       - 'liff-nutrition-next/**'
-      - '.github/workflows/azure-static-web-apps.yml'
-
-env:
-  NODE_VERSION: '20'
-  PNPM_VERSION: '9'
+      - '.github/workflows/deploy-frontend-vercel.yml'
 
 jobs:
-  build_and_deploy_job:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+  deploy_vercel:
     runs-on: ubuntu-latest
-    name: Build and Deploy Job
-
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          submodules: true
-          lfs: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v3
         with:
-          version: ${{ env.PNPM_VERSION }}
+          version: 9 # หรือเวอร์ชั่นที่คุณใช้
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '22' # หรือเวอร์ชั่นที่คุณใช้
           cache: 'pnpm'
+          cache-dependency-path: '**/pnpm-lock.yaml' # Cache dependencies สำหรับ monorepo
 
-      - name: Install dependencies
-        run: |
-          cd liff-nutrition-next
-          pnpm install --frozen-lockfile
+      - name: Install Dependencies (Monorepo)
+        run: pnpm install --frozen-lockfile
 
-      - name: Type check
-        run: |
-          cd liff-nutrition-next
-          pnpm type-check
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
 
-      - name: Lint check
-        run: |
-          cd liff-nutrition-next
-          pnpm lint
+      - name: Pull Vercel Project Settings
+        # Path to your Next.js app, relative to the monorepo root
+        # This command links the local directory to your Vercel project and pulls down environment variables.
+        # Make sure your Vercel project is already created and linked to this Git repository.
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: ./liff-nutrition-next # Ensure this path is correct
 
-      - name: Build application
-        run: |
-          cd liff-nutrition-next
-          pnpm build
+      - name: Build Project
+        # Vercel build automatically picks up Next.js config.
+        # Pass environment variables from Vercel (pulled in previous step) or GitHub secrets
+        run: vercel build ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: ./liff-nutrition-next
         env:
-          NODE_ENV: production
-          NEXT_PUBLIC_LIFF_ID: ${{ secrets.NEXT_PUBLIC_LIFF_ID }}
-          NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
-          NEXT_PUBLIC_VERSION: ${{ github.sha }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }} # Example
 
-      - name: Deploy to Azure Static Web Apps
-        id: builddeploy
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: 'upload'
-          app_location: 'liff-nutrition-next'
-          output_location: '.next'
-          skip_app_build: true
-          config_file_location: 'liff-nutrition-next'
-
-      - name: Create deployment summary
-        if: success()
-        run: |
-          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Status**: Successful" >> $GITHUB_STEP_SUMMARY
-          echo "📦 **App**: liff-nutrition-next" >> $GITHUB_STEP_SUMMARY
-          echo "🌐 **URL**: ${{ steps.builddeploy.outputs.static_web_app_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "📝 **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "🔗 **Branch**: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-
-  close_pull_request_job:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    name: Close Pull Request Job
-    steps:
-      - name: Close Pull Request
-        id: closepullrequest
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          action: 'close'
-          app_location: 'liff-nutrition-next'
+      - name: Deploy Project to Vercel
+        run: vercel deploy --prebuilt ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: ./liff-nutrition-next
