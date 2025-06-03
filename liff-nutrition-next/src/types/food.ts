@@ -85,12 +85,6 @@ export interface MealData {
   mealType: string
   foodItems: any[]
   totalCalories: number
-  calories?: number
-  protein?: number
-  carbs?: number
-  fat?: number
-  timestamp?: string
-  foods?: FoodItem[]
 }
 
 export interface NutritionSummary {
@@ -153,7 +147,6 @@ export interface LiffFoodLogData {
 export interface DailyNutritionData {
   date: string
   totalCalories: number
-  targetCalories?: number
   totalProtein: number
   totalCarbs: number
   totalFat: number
@@ -164,19 +157,10 @@ export interface DailyNutritionData {
   micronutrients?: MicronutrientsMap
   totalFoodItems?: number
   averageCaloriesPerMeal?: number
-  weeklyTrend?: any[]
-  recommendations?: string[]
-
-  // Macros summary
-  macros?: {
-    protein?: { current: number; target: number; percentage: number }
-    carbs?: { current: number; target: number; percentage: number }
-    fat?: { current: number; target: number; percentage: number }
-  }
 
   // Additional nested data structure
-  calories?: NutrientGoalData
-  macronutrients?: {
+  calories: NutrientGoalData
+  macronutrients: {
     protein: NutrientGoalData
     carbs: NutrientGoalData
     fat: NutrientGoalData

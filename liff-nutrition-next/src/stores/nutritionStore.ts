@@ -89,6 +89,9 @@ interface NutritionStore {
   isMonthlyLoading: boolean
   monthlyError: string | null
 
+  // UI state
+  refreshCounter: number
+
   // Actions
   setSelectedDate: (date: string) => void
   setDailyData: (data: DailyNutritionData | null) => void
@@ -105,6 +108,8 @@ interface NutritionStore {
   setMonthlyData: (data: MonthlyData | null) => void
   setMonthlyLoading: (loading: boolean) => void
   setMonthlyError: (error: string | null) => void
+
+  setRefreshCounter: (updater: (prev: number) => number) => void
 
   // Fetch functions (will call API)
   fetchDailyReport: (
@@ -196,6 +201,9 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   isMonthlyLoading: false,
   monthlyError: null,
 
+  // UI state
+  refreshCounter: 0,
+
   // Setters
   setSelectedDate: (date) => set({ selectedDate: date }),
   setDailyData: (data) => set({ dailyData: data }),
@@ -221,6 +229,9 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   setMonthlyData: (data) => set({ monthlyData: data }),
   setMonthlyLoading: (loading) => set({ isMonthlyLoading: loading }),
   setMonthlyError: (error) => set({ monthlyError: error }),
+
+  setRefreshCounter: (updater) =>
+    set({ refreshCounter: updater(get().refreshCounter) }),
 
   // Fetch functions - Mock implementations for now
   fetchDailyReport: async (date, userId, token) => {

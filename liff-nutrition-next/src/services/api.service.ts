@@ -9,7 +9,6 @@ import {
   ApiResponse,
 } from '../types/food'
 import { UpdateFoodLogPayload, LiffFoodLogData } from '../stores/nutritionStore'
-import { getMockDailyReport } from './mockData'
 
 // Base API configuration - ปรับปรุงสำหรับ Azure Static Web Apps
 const API_BASE_URL =
@@ -233,8 +232,39 @@ class ApiService {
     return this.request<T>(endpoint, { method: 'DELETE' }, token)
   }
 
+  // ✅ Fallback data สำหรับกรณีที่ API ไม่ทำงาน
+  private getFallbackDailyReport(): DailyReportResponse {
+    return {
+      success: true,
+      data: {
+        date: new Date().toISOString().split('T')[0],
+        totalCalories: 0,
+        totalProtein: 0,
+        totalCarbs: 0,
+        totalFat: 0,
+        totalFiber: 0,
+        totalSugar: 0,
+        totalSodium: 0,
+        meals: [],
+        micronutrients: {},
+        totalFoodItems: 0,
+        averageCaloriesPerMeal: 0,
+        calories: { consumed: 0, goal: 2000, unit: 'kcal' },
+        macronutrients: {
+          protein: { consumed: 0, goal: 50, unit: 'g' },
+          carbs: { consumed: 0, goal: 250, unit: 'g' },
+          fat: { consumed: 0, goal: 67, unit: 'g' },
+        },
+        otherNutrients: {
+          fiber: { consumed: 0, goal: 25, unit: 'g' },
+          water: { consumed: 0, goal: 2000, unit: 'ml' },
+        },
+      },
+    }
+  }
+
   /**
-   * ✅ Get daily nutrition report with fallback
+   * Daily Report API - ปรับปรุงสำหรับ fallback handling
    */
   async getDailyReport(
     date: string,
@@ -242,19 +272,18 @@ class ApiService {
     token: string,
   ): Promise<DailyReportResponse> {
     try {
-      console.log(
-        `[ApiService] Getting daily report for date: ${date}, userId: ${userId}`,
-      )
-      return await this.get<DailyReportResponse>(
-        `/nutrition/daily-report/${userId}?date=${date}`,
+      const response = await this.get<DailyReportResponse>(
+        `/api/nutrition/daily-report?date=${date}&userId=${userId}`,
         token,
       )
+      return response
     } catch (error) {
       console.warn(
-        `[ApiService] Failed to get daily report, using mock data:`,
+        `[ApiService] Failed to fetch daily report, using fallback data:`,
         error,
       )
-      return getMockDailyReport(date)
+      // ✅ ใช้ fallback data เมื่อ API ไม่ทำงาน
+      return this.getFallbackDailyReport()
     }
   }
 
@@ -263,7 +292,7 @@ class ApiService {
   // ===================
 
   /**
-   * ✅ Get food log by ID with fallback
+   * Food Log By ID - ปรับปรุงสำหรับ fallback handling
    */
   async getFoodLogById(
     logId: string,
@@ -271,37 +300,25 @@ class ApiService {
     token: string,
   ): Promise<FoodLogResponseDto> {
     try {
-      console.log(
-        `[ApiService] Getting food log for logId: ${logId}, userId: ${userId}`,
+      const response = await this.get<FoodLogResponseDto>(
+        `/api/food-log/${logId}?userId=${userId}`,
+        token,
       )
-      return await this.get<FoodLogResponseDto>(`/food-logs/${logId}`, token)
+      return response
     } catch (error) {
       console.warn(
-        `[ApiService] Failed to get food log, using mock data:`,
+        `[ApiService] Failed to fetch food log ${logId}, using fallback:`,
         error,
       )
       return {
-        success: true,
-        data: {
-          id: logId,
-          userId,
-          date: new Date().toISOString().split('T')[0],
-          meals: [],
-          totalNutrition: {
-            calories: 0,
-            protein: 0,
-            carbs: 0,
-            fat: 0,
-          },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
+        success: false,
+        message: 'Could not connect to server. Please try again later.',
       }
     }
   }
 
   /**
-   * ✅ Update food log with optimistic updates
+   * Update Food Log - ปรับปรุงสำหรับ error handling
    */
   async updateFoodLog(
     logId: string,
@@ -310,43 +327,24 @@ class ApiService {
     token: string,
   ): Promise<FoodLogResponseDto> {
     try {
-      console.log(
-        `[ApiService] Updating food log ${logId} with data:`,
-        updateData,
-      )
-      return await this.put<FoodLogResponseDto>(
-        `/food-logs/${logId}`,
+      const response = await this.put<FoodLogResponseDto>(
+        `/api/food-log/${logId}?userId=${userId}`,
         updateData,
         token,
       )
+      return response
     } catch (error) {
-      console.warn(
-        `[ApiService] Failed to update food log, returning optimistic update:`,
-        error,
-      )
+      console.error(`[ApiService] Failed to update food log ${logId}:`, error)
       return {
-        success: true,
-        data: {
-          id: logId,
-          userId,
-          date: new Date().toISOString().split('T')[0],
-          meals: [],
-          totalNutrition: {
-            calories: 0,
-            protein: 0,
-            carbs: 0,
-            fat: 0,
-          },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          ...updateData,
-        },
+        success: false,
+        message: 'Failed to update food log. Please try again.',
+        error: error instanceof Error ? error.message : String(error),
       }
     }
   }
 
   /**
-   * ✅ Delete food log with optimistic response
+   * Delete Food Log - ปรับปรุงสำหรับ error handling
    */
   async deleteFoodLog(
     logId: string,
@@ -354,16 +352,16 @@ class ApiService {
     token: string,
   ): Promise<ApiResponse<null>> {
     try {
-      console.log(`[ApiService] Deleting food log ${logId} for user ${userId}`)
-      return await this.delete<ApiResponse<null>>(`/food-logs/${logId}`, token)
-    } catch (error) {
-      console.warn(
-        `[ApiService] Failed to delete food log, returning success anyway:`,
-        error,
+      const response = await this.delete<ApiResponse<null>>(
+        `/api/food-log/${logId}?userId=${userId}`,
+        token,
       )
+      return response
+    } catch (error) {
+      console.error(`[ApiService] Failed to delete food log ${logId}:`, error)
       return {
-        success: true,
-        data: null,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
       }
     }
   }

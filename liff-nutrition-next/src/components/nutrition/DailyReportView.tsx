@@ -356,6 +356,8 @@ const DailyReportView: React.FC = memo(() => {
     setCurrentLiffFoodLog,
     fetchLiffFoodLog,
     setDailyLoading,
+    setDailyData,
+    setRefreshCounter,
   } = useNutritionStore()
 
   // ใช้ custom hook แทนการ duplicate code
@@ -428,10 +430,9 @@ const DailyReportView: React.FC = memo(() => {
 
   // Memoized values for chart data
   const macroPieData = useMemo(() => {
-    const macros = safeDailyData.macronutrients
-    const protein = macros?.protein?.consumed || 0
-    const carbs = macros?.carbs?.consumed || 0
-    const fat = macros?.fat?.consumed || 0
+    const protein = safeDailyData.macronutrients.protein.consumed || 0
+    const carbs = safeDailyData.macronutrients.carbs.consumed || 0
+    const fat = safeDailyData.macronutrients.fat.consumed || 0
 
     return [
       {
@@ -1429,8 +1430,15 @@ const DailyReportView: React.FC = memo(() => {
             '[Delete] Refreshing daily data after successful deletion...',
           )
           try {
+            // ✅ Force refresh by invalidating current data first
+            setDailyData(null) // Clear current data to force re-render
+            setDailyLoading(true)
+
             await handleFetchDailyReportHandler(selectedDate, userId, idToken)
             console.log('[Delete] ✅ Daily data refreshed successfully')
+
+            // ✅ Force component re-render by updating a counter
+            setRefreshCounter((prev) => prev + 1)
 
             // ✅ แสดง success message
             setDeleteSuccess(
@@ -1487,14 +1495,18 @@ const DailyReportView: React.FC = memo(() => {
       })
   }, [
     deletingFoodItemInfo,
-    deleteFoodItem,
     userId,
     idToken,
     currentLang,
+    deleteFoodItem,
     handleCloseConfirmDeleteModalHandler,
-    setDailyLoading,
-    handleFetchDailyReportHandler,
     selectedDate,
+    handleFetchDailyReportHandler,
+    setDeleteSuccess,
+    setDeleteError,
+    setDailyLoading,
+    setDailyData,
+    setRefreshCounter,
   ])
 
   // Handler for input changes in the LIFF form - fix the path issue
