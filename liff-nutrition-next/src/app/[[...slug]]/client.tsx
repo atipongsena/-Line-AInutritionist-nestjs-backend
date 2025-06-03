@@ -1186,13 +1186,46 @@ function App() {
                 '[LIFF_DEBUG] Step 8.E: API Profile Fetch Exception:',
                 apiError,
               )
-              setProfileError(
-                `${translations[currentLang].apiFetchError}: ${
-                  (apiError as { message?: string })?.message ||
-                  'Unknown API error'
-                }`,
-              )
-              setErrorCount((prev) => prev + 1)
+              // ✅ เพิ่ม fallback สำหรับกรณีที่ API ไม่ทำงาน
+              if (
+                apiError instanceof Error &&
+                apiError.message.includes('Failed to fetch')
+              ) {
+                console.warn(
+                  '[LIFF_DEBUG] API Connection failed, setting up for offline/fallback mode',
+                )
+                setProfileError('ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้')
+
+                // ✅ ไม่ตั้ง demo data ให้ user กรอกข้อมูลเอง
+                setUserProfileFromApi(null)
+                setFormData({
+                  lineUserId: profile.userId,
+                  displayName: profile.displayName,
+                  pictureUrl: profile.pictureUrl,
+                  language: currentLiff.getLanguage() === 'th' ? 'th' : 'en',
+                })
+                setIsEditMode(true) // เข้าสู่โหมดแก้ไขเพื่อให้ user กรอกข้อมูล
+                setCurrentStep(1)
+              } else if (
+                apiError instanceof Error &&
+                apiError.message.includes('HTML instead of JSON')
+              ) {
+                console.error(
+                  '[LIFF_DEBUG] Server returned HTML instead of JSON - likely a backend configuration issue',
+                )
+                setProfileError('เซิร์ฟเวอร์มีปัญหา กรุณาลองใหม่ภายหลัง')
+                setUserProfileFromApi(null)
+                setIsEditMode(true)
+                setCurrentStep(1)
+              } else {
+                setProfileError(
+                  `${translations[currentLang].apiFetchError}: ${
+                    apiError instanceof Error
+                      ? apiError.message
+                      : String(apiError)
+                  }`,
+                )
+              }
             }
           }
         } catch (loginError) {

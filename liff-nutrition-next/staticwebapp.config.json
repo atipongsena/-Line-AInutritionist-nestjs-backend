@@ -3,7 +3,16 @@
     "apiRuntime": "node:20"
   },
   "navigationFallback": {
-    "rewrite": "/"
+    "rewrite": "/",
+    "exclude": [
+      "/_next/*",
+      "/static/*",
+      "/*.png",
+      "/*.ico",
+      "/*.json",
+      "/*.txt",
+      "/*.svg"
+    ]
   },
   "routes": [
     {
@@ -19,7 +28,15 @@
       "allowedRoles": ["anonymous"]
     },
     {
-      "route": "/api/*",
+      "route": "/*.svg",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/*.txt",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/_next/*",
       "allowedRoles": ["anonymous"]
     },
     {
@@ -33,8 +50,8 @@
       "statusCode": 200
     },
     "401": {
-      "redirect": "/",
-      "statusCode": 302
+      "rewrite": "/",
+      "statusCode": 200
     },
     "403": {
       "rewrite": "/",
@@ -50,11 +67,16 @@
     "X-Frame-Options": "SAMEORIGIN",
     "X-XSS-Protection": "1; mode=block",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; frame-ancestors 'self' https://*.line.me https://*.line-apps.com https://*.line-scdn.net; connect-src 'self' https://*.line.me https://*.line-scdn.net https://api.line.me; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.line-scdn.net;"
+    "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; frame-ancestors 'self' https://*.line.me https://*.line-apps.com https://*.line-scdn.net; connect-src 'self' https://*.line.me https://*.line-scdn.net https://api.line.me https://ai-nutritionist-backend.wittyground-3784ecfe.southeastasia.azurecontainerapps.io; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.line-scdn.net;",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-LINE-ID-TOKEN, X-Line-User-ID"
   },
   "mimeTypes": {
     ".json": "application/json",
     ".png": "image/png",
-    ".ico": "image/x-icon"
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain"
   }
 }

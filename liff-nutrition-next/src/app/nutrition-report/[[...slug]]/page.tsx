@@ -1,22 +1,23 @@
-'use client'
+import { Metadata } from 'next'
+import ClientPage from './client'
 
-import React, { Suspense } from 'react'
-import CircularProgress from '@mui/material/CircularProgress'
+// ✅ เพิ่ม metadata สำหรับ SEO
+export const metadata: Metadata = {
+  title: 'AI Nutritionist - รายงานโภชนาการ',
+  description: 'ดูรายงานโภชนาการแบบ real-time รายวัน รายสัปดาห์ และรายเดือน',
+}
 
-// Path to NutritionReportMain: from src/app/nutrition-report/[[...slug]]/page.tsx
-// to src/app/[[...slug]]/nutrition-report/views/NutritionReportMain.tsx
-// ../../ goes to src/app/
-// Then navigate to [[...slug]]/nutrition-report/views/NutritionReportMain.tsx
-const NutritionReportMain = React.lazy(
-  () => import('../../[[...slug]]/nutrition-report/views/NutritionReportMain'),
-)
+// ✅ ใช้ generateStaticParams สำหรับ static export แต่ client จะ handle real-time data
+export async function generateStaticParams() {
+  return [
+    { slug: [] }, // /nutrition-report
+    { slug: ['daily'] }, // /nutrition-report/daily
+    { slug: ['weekly'] }, // /nutrition-report/weekly
+    { slug: ['monthly'] }, // /nutrition-report/monthly
+  ]
+}
 
-export default function NutritionReportPage() {
-  // NutritionReportMain will be updated to use useParams or useSearchParams internally
-  // to get logId, date, or other parameters from the URL.
-  return (
-    <Suspense fallback={<CircularProgress />}>
-      <NutritionReportMain />
-    </Suspense>
-  )
+// ✅ Static generation + Client-side real-time data fetching
+export default function Page() {
+  return <ClientPage />
 }

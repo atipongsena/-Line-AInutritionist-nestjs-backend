@@ -10,7 +10,7 @@ import {
 } from '../types/food'
 import { UpdateFoodLogPayload, LiffFoodLogData } from '../stores/nutritionStore'
 
-// Base API configuration
+// Base API configuration - ปรับปรุงสำหรับ Azure Static Web Apps
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
 
@@ -31,7 +31,7 @@ class ApiService {
   }
 
   /**
-   * Generic request method
+   * Generic request method - ปรับปรุงสำหรับ Production Environment
    */
   private async request<T>(
     endpoint: string,
@@ -39,13 +39,18 @@ class ApiService {
     token?: string,
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`
+
+    // ✅ Headers สำหรับ Production Environment
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
       'ngrok-skip-browser-warning': 'true',
       ...(options.headers as Record<string, string>),
     }
 
+    // ✅ เพิ่ม LINE ID Token สำหรับ authentication
     if (token) {
+      headers['Authorization'] = `Bearer ${token}`
       headers['X-LINE-ID-TOKEN'] = token
     }
 
@@ -53,26 +58,24 @@ class ApiService {
       `[ApiService] Making ${options.method || 'GET'} request to:`,
       url,
     )
-    console.log(`[ApiService] Request headers:`, headers)
-    console.log(`[ApiService] Request body:`, options.body)
 
     try {
       const response = await fetch(url, {
         ...options,
         headers,
+        mode: 'cors',
+        credentials: 'omit',
       })
 
-      console.log(`[ApiService] Response status:`, response.status)
-      console.log(`[ApiService] Response headers:`, response.headers)
-
-      // ✅ ตรวจสอบ Content-Type ก่อนที่จะ parse JSON
       const contentType = response.headers.get('content-type')
-      console.log(`[ApiService] Content-Type:`, contentType)
+      console.log(
+        `[ApiService] Response status: ${response.status}, Content-Type: ${contentType}`,
+      )
 
       if (!response.ok) {
-        // ✅ อ่าน response body เพื่อ debug ปัญหา
         let errorText = ''
         let errorData: any = null
+
         try {
           if (contentType?.includes('application/json')) {
             errorData = await response.json()
@@ -80,7 +83,7 @@ class ApiService {
           } else {
             errorText = await response.text()
           }
-          console.error(`[ApiService] Error response body:`, errorText)
+          console.error(`[ApiService] Error response:`, errorText)
         } catch (textError) {
           console.error(
             `[ApiService] Could not read error response:`,
@@ -88,37 +91,30 @@ class ApiService {
           )
         }
 
-        // ✅ จัดการ 403 Authentication Error
-        if (
-          response.status === 403 &&
-          errorData?.message === 'Invalid LIFF ID Token'
-        ) {
-          console.warn(
-            `[ApiService] Authentication failed - this is expected in development/testing. Using fallback data.`,
-          )
-          throw new Error(`AUTH_FAILED|${response.status}|${errorText}`)
+        // ✅ จัดการ Authentication Error
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`Authentication failed: ${errorText}`)
         }
 
-        throw new Error(
-          `HTTP error! status: ${response.status}, body: ${errorText}`,
-        )
+        // ✅ จัดการ Server Error
+        if (response.status >= 500) {
+          throw new Error(`Server error (${response.status}): ${errorText}`)
+        }
+
+        throw new Error(`HTTP error ${response.status}: ${errorText}`)
       }
 
-      // ✅ ตรวจสอบว่า response เป็น JSON หรือไม่
+      // ✅ ตรวจสอบ Content-Type
       if (!contentType?.includes('application/json')) {
         const textResponse = await response.text()
-        console.error(
-          `[ApiService] Expected JSON but got ${contentType}. Response:`,
-          textResponse.substring(0, 200) + '...',
-        )
+        console.error(`[ApiService] Expected JSON but got ${contentType}`)
 
-        // ✅ ถ้าได้ HTML อาจเป็น ngrok warning page หรือ backend error
         if (
           textResponse.includes('<!DOCTYPE') ||
           textResponse.includes('<html>')
         ) {
           throw new Error(
-            `Server returned HTML instead of JSON. This might be a ngrok warning page or backend error. Check backend server status.`,
+            'Server returned HTML instead of JSON. Backend may be misconfigured.',
           )
         }
 
@@ -128,23 +124,15 @@ class ApiService {
       }
 
       const data = await response.json()
-      console.log(`[ApiService] Response data:`, data)
+      console.log(`[ApiService] Response data received successfully`)
       return data
     } catch (error) {
       console.error(`[ApiService] Request failed:`, error)
 
-      // ✅ เพิ่มคำแนะนำสำหรับปัญหาพบบ่อย
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch')) {
-          console.error(
-            `[ApiService] Network error - Check if backend server is running and ngrok tunnel is active`,
-          )
-        } else if (error.message.includes('HTML instead of JSON')) {
-          console.error(
-            `[ApiService] HTML Response Error - Possible causes:`,
-            '\n1. ngrok showing warning page',
-            '\n2. Backend server not running',
-            '\n3. Wrong API endpoint',
+          throw new Error(
+            'Network error: Unable to connect to backend server. Please check your internet connection.',
           )
         }
       }
@@ -203,20 +191,92 @@ class ApiService {
     return this.request<T>(endpoint, { method: 'DELETE' }, token)
   }
 
-  // ===================
-  // Daily Report APIs
-  // ===================
+  // ✅ Fallback data สำหรับกรณีที่ API ไม่ทำงาน
+  private getFallbackDailyReport(): DailyReportResponse {
+    return {
+      success: true,
+      data: {
+        date: new Date().toISOString().split('T')[0],
+        totalCalories: 0,
+        totalProtein: 0,
+        totalCarbs: 0,
+        totalFat: 0,
+        totalFiber: 0,
+        totalSugar: 0,
+        totalSodium: 0,
+        meals: [],
+        micronutrients: {},
+        totalFoodItems: 0,
+        averageCaloriesPerMeal: 0,
+        calories: { consumed: 0, goal: 2000, unit: 'kcal' },
+        macronutrients: {
+          protein: { consumed: 0, goal: 50, unit: 'g' },
+          carbs: { consumed: 0, goal: 250, unit: 'g' },
+          fat: { consumed: 0, goal: 67, unit: 'g' },
+        },
+        otherNutrients: {
+          fiber: { consumed: 0, goal: 25, unit: 'g' },
+          water: { consumed: 0, goal: 2000, unit: 'ml' },
+        },
+      },
+    }
+  }
 
   /**
-   * Get daily nutrition report
+   * Daily Report API - แก้ไขให้ตรงกับ Backend
    */
   async getDailyReport(
     date: string,
     userId: string,
     token: string,
   ): Promise<DailyReportResponse> {
-    const endpoint = `/nutrition/daily-report?date=${date}&lineUserId=${userId}`
-    return this.get<DailyReportResponse>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching daily report for ${date}, lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข: ลบ /api prefix และใช้ lineUserId parameter
+      const response = await this.get<DailyReportResponse>(
+        `/nutrition/daily-report?date=${date}&lineUserId=${userId}`,
+        token,
+      )
+
+      console.log(`[ApiService] Daily report API response:`, response)
+
+      // ✅ ตรวจสอบ response structure
+      if (response && typeof response === 'object') {
+        // Case 1: Response มี success และ data
+        if ('success' in response && response.success && 'data' in response) {
+          return response as DailyReportResponse
+        }
+        // Case 2: Response เป็น data โดยตรง
+        else if ('date' in response || 'totalCalories' in response) {
+          return {
+            success: true,
+            data: response as any,
+          }
+        }
+        // Case 3: Response wrapper อื่นๆ
+        else if ('data' in response) {
+          return {
+            success: true,
+            data: (response as any).data,
+          }
+        }
+      }
+
+      // ถ้าไม่ใช่ format ที่คาดหวัง
+      throw new Error('Invalid response format from daily report API')
+    } catch (error: any) {
+      console.error(`[ApiService] Daily report API failed:`, error)
+
+      // ✅ Return fallback พร้อม error info
+      return {
+        success: false,
+        data: null as any,
+        error: error.message || 'Failed to fetch daily report',
+      }
+    }
   }
 
   // ===================
@@ -224,19 +284,46 @@ class ApiService {
   // ===================
 
   /**
-   * Get specific food log by ID
+   * Food Log By ID - ปรับปรุงสำหรับ fallback handling
    */
   async getFoodLogById(
     logId: string,
     userId: string,
     token: string,
   ): Promise<FoodLogResponseDto> {
-    const endpoint = `/food-log/${logId}/${userId}`
-    return this.get<FoodLogResponseDto>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching food log ${logId} for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
+      const response = await this.get<any>(
+        `/food-log/${logId}/${userId}`,
+        token,
+      )
+
+      if (response) {
+        return {
+          success: true,
+          data: response,
+        }
+      }
+
+      return {
+        success: false,
+        error: 'No food log data found',
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Food log fetch failed:`, error)
+      return {
+        success: false,
+        error: error.message || 'Failed to fetch food log',
+      }
+    }
   }
 
   /**
-   * Update food log
+   * Update Food Log - ปรับปรุงสำหรับ error handling
    */
   async updateFoodLog(
     logId: string,
@@ -244,20 +331,59 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<FoodLogResponseDto> {
-    const endpoint = `/food-log/${logId}/${userId}`
-    return this.put<FoodLogResponseDto>(endpoint, updateData, token)
+    try {
+      console.log(
+        `[ApiService] Updating food log ${logId} for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
+      const response = await this.put<any>(
+        `/food-log/${logId}/${userId}`,
+        updateData,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Food log update failed:`, error)
+      return {
+        success: false,
+        error: error.message || 'Failed to update food log',
+      }
+    }
   }
 
   /**
-   * Delete food log
+   * Delete Food Log - ปรับปรุงสำหรับ error handling
    */
   async deleteFoodLog(
     logId: string,
     userId: string,
     token: string,
   ): Promise<ApiResponse<null>> {
-    const endpoint = `/food-log/${logId}/${userId}`
-    return this.delete<ApiResponse<null>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Deleting food log ${logId} for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
+      await this.delete<any>(`/food-log/${logId}/${userId}`, token)
+
+      return {
+        success: true,
+        data: null,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Food log deletion failed:`, error)
+      return {
+        success: false,
+        data: null,
+        error: error.message || 'Failed to delete food log',
+      }
+    }
   }
 
   /**
@@ -269,22 +395,45 @@ class ApiService {
     days?: number,
     limit?: number,
   ): Promise<FoodLogResponseDto[]> {
-    let endpoint = `/food-log/recent`
-    const params = new URLSearchParams()
-    if (days) params.append('days', days.toString())
-    if (limit) params.append('limit', limit.toString())
-    if (params.toString()) endpoint += `?${params.toString()}`
+    try {
+      console.log(
+        `[ApiService] Fetching recent food logs for lineUserId: ${userId}`,
+      )
 
-    return this.request<FoodLogResponseDto[]>(
-      endpoint,
-      {
-        method: 'GET',
-        headers: {
-          'X-Line-User-ID': userId,
+      // ✅ แก้ไข: ใช้ X-Line-User-ID header แทน query parameter
+      const queryParams = new URLSearchParams()
+      if (days) queryParams.append('days', days.toString())
+      if (limit) queryParams.append('limit', limit.toString())
+
+      const endpoint = `/food-log/recent${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+
+      // ✅ ใช้ custom request เพื่อส่ง X-Line-User-ID header
+      const response = await this.request<any[]>(
+        endpoint,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Line-User-ID': userId, // ✅ ใช้ header ตาม backend requirement
+            ...(token && { Authorization: `Bearer ${token}` }),
+            ...(token && { 'X-LINE-ID-TOKEN': token }),
+          },
         },
-      },
-      token,
-    )
+        token,
+      )
+
+      if (Array.isArray(response)) {
+        return response.map((item) => ({
+          success: true,
+          data: item,
+        }))
+      }
+
+      return []
+    } catch (error: any) {
+      console.error(`[ApiService] Recent food logs fetch failed:`, error)
+      return []
+    }
   }
 
   // ===================
@@ -299,8 +448,29 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<ApiResponse<WeeklyData>> {
-    const endpoint = `/nutrition/weekly-report?weekStartDate=${weekStartDate}&lineUserId=${userId}`
-    return this.get<ApiResponse<WeeklyData>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching weekly report for ${weekStartDate}, lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path และ parameters
+      const response = await this.get<any>(
+        `/nutrition/weekly-report?weekStartDate=${weekStartDate}&lineUserId=${userId}`,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Weekly report fetch failed:`, error)
+      return {
+        success: false,
+        data: null as any,
+        error: error.message || 'Failed to fetch weekly report',
+      }
+    }
   }
 
   // ===================
@@ -315,8 +485,29 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<ApiResponse<MonthlyData>> {
-    const endpoint = `/nutrition/monthly-report?month=${month}&lineUserId=${userId}`
-    return this.get<ApiResponse<MonthlyData>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching monthly report for ${month}, lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path และ parameters
+      const response = await this.get<any>(
+        `/nutrition/monthly-report?month=${month}&lineUserId=${userId}`,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] Monthly report fetch failed:`, error)
+      return {
+        success: false,
+        data: null as any,
+        error: error.message || 'Failed to fetch monthly report',
+      }
+    }
   }
 
   // ===================
@@ -330,8 +521,26 @@ class ApiService {
     userId: string,
     token: string,
   ): Promise<ApiResponse<any>> {
-    const endpoint = `/user/profile/${userId}`
-    return this.get<ApiResponse<any>>(endpoint, token)
+    try {
+      console.log(
+        `[ApiService] Fetching user profile for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path (ดูจาก UserController ที่ใช้ /api/users)
+      const response = await this.get<any>('/api/users/profile', token)
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] User profile fetch failed:`, error)
+      return {
+        success: false,
+        data: null,
+        error: error.message || 'Failed to fetch user profile',
+      }
+    }
   }
 
   /**
@@ -342,8 +551,30 @@ class ApiService {
     profileData: any,
     token: string,
   ): Promise<ApiResponse<any>> {
-    const endpoint = `/user/profile/${userId}`
-    return this.put<ApiResponse<any>>(endpoint, profileData, token)
+    try {
+      console.log(
+        `[ApiService] Updating user profile for lineUserId: ${userId}`,
+      )
+
+      // ✅ แก้ไข path
+      const response = await this.put<any>(
+        '/api/users/profile',
+        profileData,
+        token,
+      )
+
+      return {
+        success: true,
+        data: response,
+      }
+    } catch (error: any) {
+      console.error(`[ApiService] User profile update failed:`, error)
+      return {
+        success: false,
+        data: null,
+        error: error.message || 'Failed to update user profile',
+      }
+    }
   }
 
   // ===================
@@ -354,7 +585,19 @@ class ApiService {
    * Check API health status
    */
   async healthCheck(): Promise<{ status: string; timestamp: string }> {
-    return this.get<{ status: string; timestamp: string }>('/health')
+    try {
+      // ✅ health check ไม่ต้องมี /api prefix
+      const response = await this.get<{ status: string; timestamp: string }>(
+        '/health',
+      )
+      return response
+    } catch (error: any) {
+      console.error(`[ApiService] Health check failed:`, error)
+      return {
+        status: 'error',
+        timestamp: new Date().toISOString(),
+      }
+    }
   }
 }
 

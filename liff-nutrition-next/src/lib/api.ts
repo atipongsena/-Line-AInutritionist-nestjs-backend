@@ -103,3 +103,85 @@ export const fetchLiffFoodLog = getFoodLogById
 export const updateLiffFoodLog = updateFoodLog
 export const updateFoodItem = updateFoodLog
 export const deleteFoodItem = deleteFoodLog
+
+// API utilities and configuration
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
+
+export interface HealthCheckResponse {
+  status: string
+  timestamp: string
+  version?: string
+  environment?: string
+  services?: {
+    database?: string
+    redis?: string
+    [key: string]: any
+  }
+}
+
+export interface ApiErrorResponse {
+  error: string
+  message: string
+  statusCode: number
+  timestamp: string
+}
+
+/**
+ * Test API connectivity and endpoints
+ */
+export async function testApiConnectivity(): Promise<{
+  health: boolean
+  endpoints: Record<string, boolean>
+  errors: string[]
+}> {
+  const results = {
+    health: false,
+    endpoints: {} as Record<string, boolean>,
+    errors: [] as string[],
+  }
+
+  // Test health endpoint
+  try {
+    await healthCheck()
+    results.health = true
+    results.endpoints['health'] = true
+  } catch (error) {
+    results.health = false
+    results.endpoints['health'] = false
+    results.errors.push(`Health check failed: ${error}`)
+  }
+
+  // Test other endpoints
+  const endpointsToTest = [
+    {
+      name: 'nutrition-daily',
+      path: '/nutrition/daily-report?date=2025-01-01&lineUserId=test',
+    },
+    { name: 'user-profile', path: '/api/users/profile' },
+    { name: 'food-log', path: '/food-log/recent?lineUserId=test' },
+  ]
+
+  for (const endpoint of endpointsToTest) {
+    try {
+      const response = await fetch(`${API_BASE_URL}${endpoint.path}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-LINE-ID-TOKEN': 'test-token',
+        },
+      })
+      results.endpoints[endpoint.name] = response.status < 500
+      if (response.status >= 500) {
+        results.errors.push(`${endpoint.name}: Server error ${response.status}`)
+      }
+    } catch (error) {
+      results.endpoints[endpoint.name] = false
+      results.errors.push(`${endpoint.name}: ${error}`)
+    }
+  }
+
+  return results
+}
+
+export { API_BASE_URL }

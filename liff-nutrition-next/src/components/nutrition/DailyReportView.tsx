@@ -356,6 +356,8 @@ const DailyReportView: React.FC = memo(() => {
     setCurrentLiffFoodLog,
     fetchLiffFoodLog,
     setDailyLoading,
+    setDailyData,
+    setRefreshCounter,
   } = useNutritionStore()
 
   // ใช้ custom hook แทนการ duplicate code
@@ -1345,11 +1347,38 @@ const DailyReportView: React.FC = memo(() => {
     setDailyLoading(true)
 
     updateFoodItem(currentEditingMealId, updatedFoodItemData, userId, idToken)
-      .then(() => {
+      .then(async (success) => {
         console.log('[Edit] Food item updated successfully')
         handleCloseEditModalHandler()
-        // ✅ เพิ่ม success feedback
-        console.log('✅ อาหารถูกอัพเดทเรียบร้อยแล้ว!')
+
+        if (success) {
+          // ✅ เพิ่มการ refresh ข้อมูลใหม่เหมือน delete function
+          console.log('[Edit] Refreshing daily data after successful update...')
+          try {
+            // ✅ Force refresh by invalidating current data first
+            setDailyData(null) // Clear current data to force re-render
+            setDailyLoading(true)
+
+            await handleFetchDailyReportHandler(selectedDate, userId, idToken)
+            console.log('[Edit] ✅ Daily data refreshed successfully')
+
+            // ✅ Force component re-render by updating a counter
+            setRefreshCounter((prev) => prev + 1)
+
+            // ✅ เพิ่ม success feedback
+            console.log('✅ อาหารถูกอัพเดทเรียบร้อยแล้ว!')
+          } catch (refreshError) {
+            console.error(
+              '[Edit] Error refreshing data after update:',
+              refreshError,
+            )
+            console.log(
+              '✅ อาหารถูกอัพเดทแล้ว (กรุณารีเฟรชหน้าเพื่อดูผลล่าสุด)',
+            )
+          }
+        } else {
+          console.error('[Edit] Update failed')
+        }
       })
       .catch((error) => {
         console.error('[Edit] Error updating food item:', error)
@@ -1365,7 +1394,11 @@ const DailyReportView: React.FC = memo(() => {
     userId,
     idToken,
     handleCloseEditModalHandler,
+    selectedDate, // ✅ Added missing dependency
+    handleFetchDailyReportHandler, // ✅ Added missing dependency
     setDailyLoading, // ✅ เพิ่ม dependency
+    setDailyData, // ✅ Added missing dependency
+    setRefreshCounter, // ✅ Added missing dependency
   ])
 
   const handleOpenConfirmDeleteModalHandler = useCallback(
@@ -1428,8 +1461,15 @@ const DailyReportView: React.FC = memo(() => {
             '[Delete] Refreshing daily data after successful deletion...',
           )
           try {
+            // ✅ Force refresh by invalidating current data first
+            setDailyData(null) // Clear current data to force re-render
+            setDailyLoading(true)
+
             await handleFetchDailyReportHandler(selectedDate, userId, idToken)
             console.log('[Delete] ✅ Daily data refreshed successfully')
+
+            // ✅ Force component re-render by updating a counter
+            setRefreshCounter((prev) => prev + 1)
 
             // ✅ แสดง success message
             setDeleteSuccess(
@@ -1486,14 +1526,18 @@ const DailyReportView: React.FC = memo(() => {
       })
   }, [
     deletingFoodItemInfo,
-    deleteFoodItem,
     userId,
     idToken,
     currentLang,
+    deleteFoodItem,
     handleCloseConfirmDeleteModalHandler,
+    selectedDate, // ✅ Added missing dependency
+    handleFetchDailyReportHandler, // ✅ Added missing dependency
+    setDeleteSuccess,
+    setDeleteError,
     setDailyLoading,
-    handleFetchDailyReportHandler,
-    selectedDate,
+    setDailyData, // ✅ Added missing dependency
+    setRefreshCounter, // ✅ Added missing dependency
   ])
 
   // Handler for input changes in the LIFF form - fix the path issue

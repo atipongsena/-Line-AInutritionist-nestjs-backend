@@ -89,6 +89,9 @@ interface NutritionStore {
   isMonthlyLoading: boolean
   monthlyError: string | null
 
+  // UI state
+  refreshCounter: number
+
   // Actions
   setSelectedDate: (date: string) => void
   setDailyData: (data: DailyNutritionData | null) => void
@@ -105,6 +108,8 @@ interface NutritionStore {
   setMonthlyData: (data: MonthlyData | null) => void
   setMonthlyLoading: (loading: boolean) => void
   setMonthlyError: (error: string | null) => void
+
+  setRefreshCounter: (updater: (prev: number) => number) => void
 
   // Fetch functions (will call API)
   fetchDailyReport: (
@@ -196,6 +201,9 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   isMonthlyLoading: false,
   monthlyError: null,
 
+  // UI state
+  refreshCounter: 0,
+
   // Setters
   setSelectedDate: (date) => set({ selectedDate: date }),
   setDailyData: (data) => set({ dailyData: data }),
@@ -222,253 +230,68 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   setMonthlyLoading: (loading) => set({ isMonthlyLoading: loading }),
   setMonthlyError: (error) => set({ monthlyError: error }),
 
-  // Fetch functions - Mock implementations for now
+  setRefreshCounter: (updater) =>
+    set({ refreshCounter: updater(get().refreshCounter) }),
+
+  // Fetch functions - Real API implementations
   fetchDailyReport: async (date, userId, token) => {
     set({ isDailyLoading: true, dailyError: null })
+
+    console.log(
+      `[NutritionStore] Fetching daily report for ${date}, userId: ${userId}`,
+    )
+
     try {
-      console.log(`[NutritionStore] Fetching daily report for ${date}...`)
+      // ✅ เรียก real API ก่อน
       const response = await apiService.getDailyReport(date, userId, token)
 
-      console.log(`[NutritionStore] Raw daily response:`, response)
-
-      // ✅ Handle different response structures
-      let dailyData: DailyNutritionData | null = null
-
-      if (response && typeof response === 'object') {
-        const anyResponse = response as any
-
-        // Case 1: Direct data response (response IS the data)
-        if (
-          anyResponse.calories ||
-          anyResponse.macronutrients ||
-          anyResponse.meals
-        ) {
-          dailyData = anyResponse as DailyNutritionData
-        }
-        // Case 2: Wrapped response with success/data structure
-        else if (
-          'success' in response &&
-          response.success &&
-          'data' in response
-        ) {
-          dailyData = (response as any).data as DailyNutritionData
-        }
-        // Case 3: Wrapped response without success flag but has data
-        else if ('data' in anyResponse && anyResponse.data) {
-          dailyData = anyResponse.data as DailyNutritionData
-        }
-      }
-
-      if (dailyData) {
+      if (response.success && response.data) {
+        console.log(`[NutritionStore] Real API data received:`, response.data)
         set({
-          dailyData: dailyData,
+          dailyData: response.data,
           isDailyLoading: false,
+          dailyError: null,
         })
-        console.log(
-          `[NutritionStore] Daily report loaded successfully:`,
-          dailyData,
-        )
+        return
       } else {
-        // ✅ สร้าง fallback data สำหรับ demo
-        console.log(`[NutritionStore] No valid data, creating fallback data...`)
-        const fallbackData: DailyNutritionData = {
-          date: date,
-          totalCalories: 1850,
-          totalProtein: 95,
-          totalCarbs: 220,
-          totalFat: 65,
-          calories: { consumed: 1850, goal: 2445 },
-          macronutrients: {
-            protein: { consumed: 95, goal: 183 },
-            carbs: { consumed: 220, goal: 287 },
-            fat: { consumed: 65, goal: 62 },
-          },
-          otherNutrients: {
-            fiber: { consumed: 18, goal: 25 },
-            sugar: { consumed: 45, goal: 50 },
-            sodium: { consumed: 1800, goal: 2300 },
-            water: { consumed: 1200, goal: 2000 },
-            cholesterol: { consumed: 180, goal: 300 },
-            saturated_fat: { consumed: 15, goal: 20 },
-            omega3: { consumed: 0.8, goal: 1.6 },
-          },
-          micronutrients: {
-            'vitamin-c': { value: 65, unit: 'mg', dv: 72 },
-            'vitamin-d': { value: 12, unit: 'μg', dv: 60 },
-            calcium: { value: 800, unit: 'mg', dv: 80 },
-            iron: { value: 12, unit: 'mg', dv: 67 },
-          },
-          meals: [
-            {
-              id: 'breakfast',
-              name: 'อาหารเช้า',
-              mealType: 'breakfast',
-              totalCalories: 450,
-              foodItems: [
-                {
-                  id: 'item1',
-                  name: 'ข้าวผัดกุ้ง',
-                  amount: 1,
-                  unit: 'จาน',
-                  calories: 450,
-                  protein: 18,
-                  carbs: 65,
-                  fat: 12,
-                },
-              ],
-            },
-            {
-              id: 'lunch',
-              name: 'อาหารกลางวัน',
-              mealType: 'lunch',
-              totalCalories: 650,
-              foodItems: [
-                {
-                  id: 'item2',
-                  name: 'ข้าวมันไก่',
-                  amount: 1,
-                  unit: 'จาน',
-                  calories: 650,
-                  protein: 35,
-                  carbs: 75,
-                  fat: 25,
-                },
-              ],
-            },
-            {
-              id: 'dinner',
-              name: 'อาหารเย็น',
-              mealType: 'dinner',
-              totalCalories: 750,
-              foodItems: [
-                {
-                  id: 'item3',
-                  name: 'ส้มตำไก่ย่าง',
-                  amount: 1,
-                  unit: 'ชุด',
-                  calories: 750,
-                  protein: 42,
-                  carbs: 80,
-                  fat: 28,
-                },
-              ],
-            },
-          ],
-        }
-
-        set({
-          dailyData: fallbackData,
-          isDailyLoading: false,
-          dailyError: null,
-        })
-        console.log(`[NutritionStore] Using fallback data for demo`)
+        throw new Error(response.error || 'Failed to fetch daily report')
       }
-    } catch (error) {
-      // ✅ จัดการ AUTH_FAILED error
-      if (error instanceof Error && error.message.startsWith('AUTH_FAILED')) {
-        console.warn(
-          `[NutritionStore] Authentication failed, using fallback data for demo`,
-        )
+    } catch (error: any) {
+      console.error(`[NutritionStore] API call failed:`, error)
 
-        const fallbackData: DailyNutritionData = {
-          date: date,
-          totalCalories: 1850,
-          totalProtein: 95,
-          totalCarbs: 220,
-          totalFat: 65,
-          calories: { consumed: 1850, goal: 2445 },
-          macronutrients: {
-            protein: { consumed: 95, goal: 183 },
-            carbs: { consumed: 220, goal: 287 },
-            fat: { consumed: 65, goal: 62 },
-          },
-          otherNutrients: {
-            fiber: { consumed: 18, goal: 25 },
-            sugar: { consumed: 45, goal: 50 },
-            sodium: { consumed: 1800, goal: 2300 },
-            water: { consumed: 1200, goal: 2000 },
-            cholesterol: { consumed: 180, goal: 300 },
-            saturated_fat: { consumed: 15, goal: 20 },
-            omega3: { consumed: 0.8, goal: 1.6 },
-          },
-          micronutrients: {
-            'vitamin-c': { value: 65, unit: 'mg', dv: 72 },
-            'vitamin-d': { value: 12, unit: 'μg', dv: 60 },
-            calcium: { value: 800, unit: 'mg', dv: 80 },
-            iron: { value: 12, unit: 'mg', dv: 67 },
-          },
-          meals: [
-            {
-              id: 'breakfast',
-              name: 'อาหารเช้า',
-              mealType: 'breakfast',
-              totalCalories: 450,
-              foodItems: [
-                {
-                  id: 'item1',
-                  name: 'ข้าวผัดกุ้ง',
-                  amount: 1,
-                  unit: 'จาน',
-                  calories: 450,
-                  protein: 18,
-                  carbs: 65,
-                  fat: 12,
-                },
-              ],
-            },
-            {
-              id: 'lunch',
-              name: 'อาหารกลางวัน',
-              mealType: 'lunch',
-              totalCalories: 650,
-              foodItems: [
-                {
-                  id: 'item2',
-                  name: 'ข้าวมันไก่',
-                  amount: 1,
-                  unit: 'จาน',
-                  calories: 650,
-                  protein: 35,
-                  carbs: 75,
-                  fat: 25,
-                },
-              ],
-            },
-            {
-              id: 'dinner',
-              name: 'อาหารเย็น',
-              mealType: 'dinner',
-              totalCalories: 750,
-              foodItems: [
-                {
-                  id: 'item3',
-                  name: 'ส้มตำไก่ย่าง',
-                  amount: 1,
-                  unit: 'ชุด',
-                  calories: 750,
-                  protein: 42,
-                  carbs: 80,
-                  fat: 28,
-                },
-              ],
-            },
-          ],
-        }
+      // ✅ ใช้ fallback data เฉพาะเมื่อ API ล้มเหลว
+      console.log(`[NutritionStore] Using fallback data due to API failure`)
 
-        set({
-          dailyData: fallbackData,
-          isDailyLoading: false,
-          dailyError: null,
-        })
-        return // ✅ ใช้ fallback data แทนการ throw error
+      const fallbackData: DailyNutritionData = {
+        date: date,
+        totalCalories: 0,
+        totalProtein: 0,
+        totalCarbs: 0,
+        totalFat: 0,
+        totalFiber: 0,
+        totalSugar: 0,
+        totalSodium: 0,
+        meals: [],
+        micronutrients: {},
+        totalFoodItems: 0,
+        averageCaloriesPerMeal: 0,
+        calories: { consumed: 0, goal: 2000, unit: 'kcal' },
+        macronutrients: {
+          protein: { consumed: 0, goal: 50, unit: 'g' },
+          carbs: { consumed: 0, goal: 250, unit: 'g' },
+          fat: { consumed: 0, goal: 67, unit: 'g' },
+        },
+        otherNutrients: {
+          fiber: { consumed: 0, goal: 25, unit: 'g' },
+          water: { consumed: 0, goal: 2000, unit: 'ml' },
+        },
       }
 
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Unknown error fetching daily report'
-      set({ dailyError: errorMessage, dailyData: null, isDailyLoading: false })
-      console.error(`[NutritionStore] Error fetching daily report:`, error)
+      set({
+        dailyData: fallbackData,
+        isDailyLoading: false,
+        dailyError: `API Error: ${error.message}. Using offline mode.`,
+      })
     }
   },
 

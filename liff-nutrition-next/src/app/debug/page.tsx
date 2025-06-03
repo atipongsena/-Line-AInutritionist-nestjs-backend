@@ -11,21 +11,49 @@ import {
   CircularProgress,
   Chip,
   Divider,
+  Grid,
+  List,
+  ListItem,
+  ListItemText,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material'
-import { Refresh as RefreshIcon, CheckCircle, Error } from '@mui/icons-material'
+import {
+  Refresh as RefreshIcon,
+  CheckCircle,
+  Error,
+  ExpandMore,
+  Storage,
+  Api,
+  Settings,
+} from '@mui/icons-material'
 import { useLiff } from '../../components/providers/LiffProvider'
+import { useNutritionStore } from '../../stores/nutritionStore'
 import { healthCheck } from '../../lib/api'
 
 interface DebugInfo {
   environment: Record<string, string>
   liffStatus: any
   apiStatus: any
+  nutritionStore: any
+  apiEndpoints: any
 }
 
 export default function DebugPage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const liff = useLiff()
+
+  // ✅ เพิ่ม nutrition store debug
+  const {
+    selectedDate,
+    dailyData,
+    isDailyLoading,
+    dailyError,
+    currentLiffFoodLog,
+    refreshCounter,
+  } = useNutritionStore()
 
   const loadDebugInfo = useCallback(async () => {
     setLoading(true)
@@ -45,8 +73,39 @@ export default function DebugPage() {
         isLoggedIn: liff.isLoggedIn,
         userId: liff.userId,
         hasProfile: !!liff.profile,
+        displayName: liff.profile?.displayName,
+        pictureUrl: liff.profile?.pictureUrl,
         language: liff.language,
         error: liff.error,
+      }
+
+      // ✅ Nutrition Store Status
+      const nutritionStore = {
+        selectedDate,
+        hasDailyData: !!dailyData,
+        isDailyLoading,
+        dailyError,
+        dailyMealsCount: dailyData?.meals?.length || 0,
+        totalCalories: dailyData?.calories?.consumed || 0,
+        caloriesGoal: dailyData?.calories?.goal || 0,
+        hasLiffFoodLog: !!currentLiffFoodLog,
+        refreshCounter,
+      }
+
+      // ✅ API Endpoints Test
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
+      const apiEndpoints: Record<string, { url: string; status: string }> = {
+        health: { url: `${baseUrl}/health`, status: 'testing...' },
+        dailyReport: {
+          url: `${baseUrl}/api/nutrition/daily-report`,
+          status: 'testing...',
+        },
+        userProfile: {
+          url: `${baseUrl}/api/user/profile`,
+          status: 'testing...',
+        },
+        foodLog: { url: `${baseUrl}/api/food-log`, status: 'testing...' },
       }
 
       // API Status
@@ -54,27 +113,72 @@ export default function DebugPage() {
         reachable: false,
         error: null as string | null,
         response: null as any,
+        responseTime: 0,
       }
 
+      const startTime = Date.now()
       try {
         const response = await healthCheck()
+        const endTime = Date.now()
         apiStatus = {
           reachable: true,
           error: null,
           response: response,
+          responseTime: endTime - startTime,
         }
+
+        // Update endpoint status
+        apiEndpoints.health.status = '✅ OK'
       } catch (error: any) {
+        const endTime = Date.now()
         apiStatus = {
           reachable: false,
           error: error.message,
           response: null,
+          responseTime: endTime - startTime,
+        }
+
+        // Update endpoint status
+        apiEndpoints.health.status = `❌ ${error.message}`
+      }
+
+      // ✅ Test other endpoints
+      const testEndpoint = async (name: string, url: string) => {
+        try {
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
+          })
+
+          if (response.ok) {
+            apiEndpoints[name].status = '✅ OK'
+          } else {
+            apiEndpoints[name].status = `⚠️ ${response.status}`
+          }
+        } catch (error: any) {
+          apiEndpoints[name].status = `❌ ${error.message}`
         }
       }
+
+      // Test main endpoints
+      await Promise.all([
+        testEndpoint(
+          'dailyReport',
+          `${baseUrl}/api/nutrition/daily-report?date=2025-01-03&userId=test`,
+        ),
+        testEndpoint('userProfile', `${baseUrl}/api/user/profile/test`),
+        testEndpoint('foodLog', `${baseUrl}/api/food-log/test`),
+      ])
 
       setDebugInfo({
         environment,
         liffStatus,
         apiStatus,
+        nutritionStore,
+        apiEndpoints,
       })
     } catch (error) {
       console.error('Failed to load debug info:', error)
@@ -88,6 +192,12 @@ export default function DebugPage() {
     liff.profile,
     liff.language,
     liff.error,
+    selectedDate,
+    dailyData,
+    isDailyLoading,
+    dailyError,
+    currentLiffFoodLog,
+    refreshCounter,
   ])
 
   useEffect(() => {
@@ -229,6 +339,50 @@ export default function DebugPage() {
               </Box>
             </Box>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Nutrition Store */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            📦 Nutrition Store
+          </Typography>
+          {Object.entries(debugInfo.nutritionStore).map(([key, value]) => (
+            <Box key={key} display="flex" justifyContent="space-between" mb={1}>
+              <Typography variant="body2" fontWeight="bold">
+                {key}:
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {typeof value === 'boolean'
+                  ? value
+                    ? '✅'
+                    : '❌'
+                  : String(value)}
+              </Typography>
+            </Box>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* API Endpoints */}
+      <Card>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            🌐 API Endpoints
+          </Typography>
+          <List>
+            {Object.entries(debugInfo.apiEndpoints).map(([name, endpoint]) => (
+              <ListItem key={name}>
+                <ListItemText
+                  primary={name}
+                  secondary={
+                    (endpoint as { url: string; status: string }).status
+                  }
+                />
+              </ListItem>
+            ))}
+          </List>
         </CardContent>
       </Card>
 
