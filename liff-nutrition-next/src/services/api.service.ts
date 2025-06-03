@@ -296,9 +296,9 @@ class ApiService {
         `[ApiService] Fetching food log ${logId} for lineUserId: ${userId}`,
       )
 
-      // ✅ แก้ไข path และ parameter names
+      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
       const response = await this.get<any>(
-        `/food-log/${logId}?lineUserId=${userId}`,
+        `/food-log/${logId}/${userId}`,
         token,
       )
 
@@ -336,9 +336,9 @@ class ApiService {
         `[ApiService] Updating food log ${logId} for lineUserId: ${userId}`,
       )
 
-      // ✅ แก้ไข path (ลบ /api)
+      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
       const response = await this.put<any>(
-        `/food-log/${logId}`,
+        `/food-log/${logId}/${userId}`,
         updateData,
         token,
       )
@@ -369,8 +369,8 @@ class ApiService {
         `[ApiService] Deleting food log ${logId} for lineUserId: ${userId}`,
       )
 
-      // ✅ แก้ไข path
-      await this.delete<any>(`/food-log/${logId}`, token)
+      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
+      await this.delete<any>(`/food-log/${logId}/${userId}`, token)
 
       return {
         success: true,
@@ -400,14 +400,25 @@ class ApiService {
         `[ApiService] Fetching recent food logs for lineUserId: ${userId}`,
       )
 
-      // ✅ แก้ไข path และ parameters
+      // ✅ แก้ไข: ใช้ X-Line-User-ID header แทน query parameter
       const queryParams = new URLSearchParams()
-      queryParams.append('lineUserId', userId)
       if (days) queryParams.append('days', days.toString())
       if (limit) queryParams.append('limit', limit.toString())
 
-      const response = await this.get<any[]>(
-        `/food-log/recent?${queryParams.toString()}`,
+      const endpoint = `/food-log/recent${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+
+      // ✅ ใช้ custom request เพื่อส่ง X-Line-User-ID header
+      const response = await this.request<any[]>(
+        endpoint,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Line-User-ID': userId, // ✅ ใช้ header ตาม backend requirement
+            ...(token && { Authorization: `Bearer ${token}` }),
+            ...(token && { 'X-LINE-ID-TOKEN': token }),
+          },
+        },
         token,
       )
 
