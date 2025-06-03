@@ -57,13 +57,21 @@ export interface FoodAnalysisData {
   protein?: number
   carbs?: number
   fat?: number
-  // Additional Nutrients
-  water?: number // Added
+  // Fat breakdown
+  saturated_fat?: number
+  trans_fat?: number // เพิ่มไขมันทรานส์
+  polyunsaturated_fat?: number // เพิ่มไขมันไม่อิ่มตัวหลายพันธะ
+  monounsaturated_fat?: number // เพิ่มไขมันไม่อิ่มตัวเดี่ยว
+  omega3?: number // เพิ่ม omega3 จาก AI tools
+  cholesterol?: number
+  // Carbohydrate breakdown
   fiber?: number
   sugar?: number
-  saturated_fat?: number
-  cholesterol?: number
+  added_sugar?: number // เพิ่มน้ำตาลที่เติม
+  // Other nutrients
+  water?: number
   sodium?: number
+  potassium_nutrient?: number // เพิ่มโพแทสเซียมในส่วนสารอาหารเพิ่มเติม (แยกจาก mineral)
   // Vitamins - matching example + schema
   vitamin_a?: VitaminMineralDetail
   vitamin_c?: VitaminMineralDetail
@@ -81,14 +89,20 @@ export interface FoodAnalysisData {
   calcium?: VitaminMineralDetail
   iron?: VitaminMineralDetail
   magnesium?: VitaminMineralDetail // Added
-  potassium?: VitaminMineralDetail // Added
+  potassium?: VitaminMineralDetail // Added (แร่ธาตุโพแทสเซียม)
   zinc?: VitaminMineralDetail // Added
   phosphorus?: VitaminMineralDetail // Added
   selenium?: VitaminMineralDetail // Added
+  copper?: VitaminMineralDetail // เพิ่มทองแดง
+  manganese?: VitaminMineralDetail // เพิ่มแมงกานีส
+  iodine?: VitaminMineralDetail // เพิ่มไอโอดีน
   // Health Advice
   health_benefits?: string
   health_cautions?: string
   recommendation?: string
+  // New fields for additional nutrients
+  caffeine?: number // Added for caffeine
+  alcohol?: number // Added for alcohol
   // For postback buttons
   lineUserId?: string // Optional: if needed for specific actions
   messageId?: string // For 'save_meal_image' type actions
@@ -105,13 +119,20 @@ interface TranslationSet {
   protein: string
   carbs: string
   fat: string
-  additional_nutrients_group_title: string // Added
-  water: string // Added
+  fat_breakdown_group_title: string // เพิ่มหัวข้อสำหรับไขมันย่อย
+  saturated_fat: string
+  trans_fat: string // เพิ่มไขมันทรานส์
+  polyunsaturated_fat: string // เพิ่มไขมันไม่อิ่มตัวหลายพันธะ
+  monounsaturated_fat: string // เพิ่มไขมันไม่อิ่มตัวเดี่ยว
+  omega3: string // เพิ่ม omega3
+  cholesterol: string
+  carbs_breakdown_group_title: string // เพิ่มหัวข้อสำหรับคาร์โบไฮเดรตย่อย
   fiber: string
   sugar: string
-  saturated_fat: string
-  cholesterol: string
+  additional_nutrients_group_title: string // Added
+  water: string // Added
   sodium: string
+  potassium_nutrient: string // เพิ่มโพแทสเซียมในส่วนสารอาหารเพิ่มเติม
   vitamins_group_title: string // Changed to be more generic
   vitamin_a: string
   vitamin_c: string
@@ -133,6 +154,9 @@ interface TranslationSet {
   zinc: string // Added
   phosphorus: string // Added
   selenium: string // Added
+  copper: string // เพิ่มทองแดง
+  manganese: string // เพิ่มแมงกานีส
+  iodine: string // เพิ่มไอโอดีน
   health_advice_section_title: string // Renamed for clarity
   benefits_subtitle: string // Renamed for clarity
   cautions_subtitle: string // Renamed for clarity
@@ -151,6 +175,8 @@ interface TranslationSet {
   unit_kcal: string
   unit_percent: string
   dv_label: string // Added for "DV"
+  caffeineLabel: string // Added for caffeine
+  alcoholLabel: string // Added for alcohol
   error_fallback_title: string
   error_fallback_text: string
 }
@@ -166,13 +192,20 @@ const translations: Record<string, TranslationSet> = {
     protein: 'โปรตีน',
     carbs: 'คาร์โบไฮเดรต',
     fat: 'ไขมัน',
-    additional_nutrients_group_title: 'สารอาหารเพิ่มเติม',
-    water: 'น้ำ',
+    fat_breakdown_group_title: 'ไขมันย่อย',
+    saturated_fat: 'ไขมันอิ่มตัว',
+    trans_fat: 'ไขมันทรานส์',
+    polyunsaturated_fat: 'ไขมันไม่อิ่มตัวเชิงซ้อน',
+    monounsaturated_fat: 'ไขมันไม่อิ่มตัวเชิงเดี่ยว',
+    omega3: 'omega3',
+    cholesterol: 'คอเลสเตอรอล',
+    carbs_breakdown_group_title: 'คาร์โบไฮเดรตย่อย',
     fiber: 'ใยอาหาร',
     sugar: 'น้ำตาล',
-    saturated_fat: 'ไขมันอิ่มตัว',
-    cholesterol: 'คอเลสเตอรอล',
+    additional_nutrients_group_title: 'สารอาหารเพิ่มเติม',
+    water: 'น้ำ',
     sodium: 'โซเดียม',
+    potassium_nutrient: 'โพแทสเซียม',
     vitamins_group_title: '🌈 วิตามิน',
     vitamin_a: 'วิตามิน A',
     vitamin_c: 'วิตามิน C',
@@ -194,6 +227,9 @@ const translations: Record<string, TranslationSet> = {
     zinc: 'สังกะสี',
     phosphorus: 'ฟอสฟอรัส',
     selenium: 'ซีลีเนียม',
+    copper: 'ทองแดง',
+    manganese: 'แมงกานีส',
+    iodine: 'ไอโอดีน',
     health_advice_section_title: '💡 คำแนะนำสุขภาพ',
     benefits_subtitle: 'ประโยชน์ต่อสุขภาพ',
     cautions_subtitle: 'ข้อควรระวัง',
@@ -213,6 +249,8 @@ const translations: Record<string, TranslationSet> = {
     unit_kcal: 'kcal',
     unit_percent: '%',
     dv_label: 'DV', // Daily Value
+    caffeineLabel: 'คาเฟอีน', // Added for caffeine
+    alcoholLabel: 'แอลกอฮอล์', // Added for alcohol
     error_fallback_title: 'เกิดข้อผิดพลาด',
     error_fallback_text:
       'ไม่สามารถแสดงผลวิเคราะห์อาหารได้ในขณะนี้ โปรดลองอีกครั้ง',
@@ -227,13 +265,20 @@ const translations: Record<string, TranslationSet> = {
     protein: 'Protein',
     carbs: 'Carbohydrates',
     fat: 'Fat',
-    additional_nutrients_group_title: 'Additional Nutrients',
-    water: 'Water',
+    fat_breakdown_group_title: 'Fat Breakdown',
+    saturated_fat: 'Saturated Fat',
+    trans_fat: 'Trans Fat',
+    polyunsaturated_fat: 'Polyunsaturated Fat',
+    monounsaturated_fat: 'Monounsaturated Fat',
+    omega3: 'Omega-3 Fatty Acids',
+    cholesterol: 'Cholesterol',
+    carbs_breakdown_group_title: 'Carbohydrate Breakdown',
     fiber: 'Fiber',
     sugar: 'Sugar',
-    saturated_fat: 'Saturated Fat',
-    cholesterol: 'Cholesterol',
+    additional_nutrients_group_title: 'Additional Nutrients',
+    water: 'Water',
     sodium: 'Sodium',
+    potassium_nutrient: 'Potassium',
     vitamins_group_title: '🌈 Vitamins',
     vitamin_a: 'Vitamin A',
     vitamin_c: 'Vitamin C',
@@ -255,6 +300,9 @@ const translations: Record<string, TranslationSet> = {
     zinc: 'Zinc',
     phosphorus: 'Phosphorus',
     selenium: 'Selenium',
+    copper: 'Copper',
+    manganese: 'Manganese',
+    iodine: 'Iodine',
     health_advice_section_title: '💡 Health Advice',
     benefits_subtitle: 'Health Benefits',
     cautions_subtitle: 'Health Cautions',
@@ -274,6 +322,8 @@ const translations: Record<string, TranslationSet> = {
     unit_kcal: 'kcal',
     unit_percent: '%',
     dv_label: 'DV',
+    caffeineLabel: 'Caffeine', // Added for caffeine
+    alcoholLabel: 'Alcohol', // Added for alcohol
     error_fallback_title: 'An Error Occurred',
     error_fallback_text:
       'Could not display food analysis at this time. Please try again.',
@@ -327,13 +377,59 @@ const createNutrientRow = (
   value: string | undefined | null,
   unitLabel: string, // Expecting translated unit or empty string
   t: TranslationSet,
-  labelFlex = 2, // Flex for label part
+  labelFlex = 4, // Flex for label part
   valueFlex = 3, // Flex for value part
 ): FlexComponent => {
   const valueText =
     value === undefined || value === null || value.trim() === '-'
       ? t.not_specified
       : `${value} ${unitLabel}`.trim()
+
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    margin: 'sm',
+    contents: [
+      {
+        type: 'text',
+        text: label,
+        size: 'sm',
+        color: '#555555',
+        flex: labelFlex,
+        wrap: true,
+      },
+      {
+        type: 'text',
+        text: valueText,
+        size: 'sm',
+        color: '#111111',
+        align: 'end',
+        flex: valueFlex,
+        wrap: true,
+      },
+    ],
+  }
+}
+
+// Helper function to create a row for vitamin/mineral with %DV display
+const createVitaminMineralRow = (
+  label: string,
+  detail: VitaminMineralDetail | undefined,
+  t: TranslationSet,
+  language: string,
+  labelFlex = 2, // Flex for label part
+  valueFlex = 3, // Flex for value part
+): FlexComponent | null => {
+  if (!detail || detail.value === undefined || detail.value === null) {
+    return null
+  }
+
+  let valueText = `${formatNumber(detail.value, 1)} ${getUnitLabel(detail.unit, language, t)}`
+
+  // เพิ่ม %DV ถ้ามี
+  if (detail.dv !== undefined && detail.dv !== null) {
+    valueText += ` (${formatNumber(detail.dv, 0)}${t.unit_percent}${t.dv_label})`
+  }
 
   return {
     type: 'box',
@@ -461,7 +557,7 @@ export function createFoodAnalysisFlexMessage(
         componentAmountText += ` (${formatNumber(component.percentage, 0)}${getUnitLabel('%', language, t)})`
       }
       bodyContents.push(
-        createNutrientRow(componentName, componentAmountText, '', t, 2, 3), // unitLabel is part of componentAmountText
+        createNutrientRow(componentName, componentAmountText, '', t, 3, 3), // unitLabel is part of componentAmountText
       )
     })
     bodyContents.push({ type: 'separator', margin: 'lg' })
@@ -520,58 +616,67 @@ export function createFoodAnalysisFlexMessage(
     ),
   )
 
-  // Sub-section: Additional Nutrients
-  // Check if there are any additional nutrients to display before showing the title
-  const additionalNutrientsExist =
-    foodData.water !== undefined ||
-    foodData.fiber !== undefined ||
-    foodData.sugar !== undefined ||
+  // Sub-section: Fat Breakdown
+  const fatBreakdownExists =
     foodData.saturated_fat !== undefined ||
-    foodData.cholesterol !== undefined ||
-    foodData.sodium !== undefined
+    foodData.trans_fat !== undefined ||
+    foodData.polyunsaturated_fat !== undefined ||
+    foodData.monounsaturated_fat !== undefined ||
+    foodData.omega3 !== undefined ||
+    foodData.cholesterol !== undefined
 
-  if (additionalNutrientsExist) {
-    bodyContents.push({ type: 'separator', margin: 'lg' })
+  if (fatBreakdownExists) {
+    bodyContents.push({ type: 'separator', margin: 'md' })
     bodyContents.push({
       type: 'text',
-      text: t.additional_nutrients_group_title,
+      text: t.fat_breakdown_group_title,
       weight: 'bold',
-      size: 'md',
-      margin: 'md',
-      color: '#4A90E2', // Secondary theme color
+      size: 'sm',
+      margin: 'sm',
+      color: '#6B73FF', // Tertiary theme color
     })
-    if (foodData.water !== undefined)
-      bodyContents.push(
-        createNutrientRow(
-          t.water,
-          formatNumber(foodData.water, 0),
-          getUnitLabel(t.unit_ml, language, t),
-          t,
-        ),
-      )
-    if (foodData.fiber !== undefined)
-      bodyContents.push(
-        createNutrientRow(
-          t.fiber,
-          formatNumber(foodData.fiber, 1),
-          getUnitLabel(t.unit_g, language, t),
-          t,
-        ),
-      )
-    if (foodData.sugar !== undefined)
-      bodyContents.push(
-        createNutrientRow(
-          t.sugar,
-          formatNumber(foodData.sugar, 1),
-          getUnitLabel(t.unit_g, language, t),
-          t,
-        ),
-      )
+
     if (foodData.saturated_fat !== undefined)
       bodyContents.push(
         createNutrientRow(
-          t.saturated_fat,
+          `  ${t.saturated_fat}`, // เพิ่ม indent
           formatNumber(foodData.saturated_fat, 1),
+          getUnitLabel(t.unit_g, language, t),
+          t,
+        ),
+      )
+    if (foodData.trans_fat !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          `  ${t.trans_fat}`, // เพิ่ม indent
+          formatNumber(foodData.trans_fat, 1),
+          getUnitLabel(t.unit_g, language, t),
+          t,
+        ),
+      )
+    if (foodData.polyunsaturated_fat !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          `  ${t.polyunsaturated_fat}`, // เพิ่ม indent
+          formatNumber(foodData.polyunsaturated_fat, 1),
+          getUnitLabel(t.unit_g, language, t),
+          t,
+        ),
+      )
+    if (foodData.monounsaturated_fat !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          `  ${t.monounsaturated_fat}`, // เพิ่ม indent
+          formatNumber(foodData.monounsaturated_fat, 1),
+          getUnitLabel(t.unit_g, language, t),
+          t,
+        ),
+      )
+    if (foodData.omega3 !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          `  ${t.omega3}`, // เพิ่ม indent
+          formatNumber(foodData.omega3, 1),
           getUnitLabel(t.unit_g, language, t),
           t,
         ),
@@ -585,12 +690,106 @@ export function createFoodAnalysisFlexMessage(
           t,
         ),
       )
+  }
+
+  // Sub-section: Carbohydrate Breakdown
+  const carbsBreakdownExists =
+    foodData.fiber !== undefined ||
+    foodData.sugar !== undefined ||
+    foodData.added_sugar !== undefined
+
+  if (carbsBreakdownExists) {
+    bodyContents.push({ type: 'separator', margin: 'md' })
+    bodyContents.push({
+      type: 'text',
+      text: t.carbs_breakdown_group_title,
+      weight: 'bold',
+      size: 'sm',
+      margin: 'sm',
+      color: '#6B73FF', // Tertiary theme color
+    })
+
+    if (foodData.fiber !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          `  ${t.fiber}`, // เพิ่ม indent
+          formatNumber(foodData.fiber, 1),
+          getUnitLabel(t.unit_g, language, t),
+          t,
+        ),
+      )
+    if (foodData.sugar !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          `  ${t.sugar}`, // เพิ่ม indent
+          formatNumber(foodData.sugar, 1),
+          getUnitLabel(t.unit_g, language, t),
+          t,
+        ),
+      )
+  }
+
+  // Sub-section: Additional Nutrients
+  const additionalNutrientsExist =
+    foodData.water !== undefined ||
+    foodData.sodium !== undefined ||
+    foodData.potassium_nutrient !== undefined ||
+    foodData.caffeine !== undefined ||
+    foodData.alcohol !== undefined
+
+  if (additionalNutrientsExist) {
+    bodyContents.push({ type: 'separator', margin: 'lg' })
+    bodyContents.push({
+      type: 'text',
+      text: t.additional_nutrients_group_title,
+      weight: 'bold',
+      size: 'md',
+      margin: 'md',
+      color: '#4A90E2', // Secondary theme color
+    })
+
+    if (foodData.water !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          t.water,
+          formatNumber(foodData.water, 0),
+          getUnitLabel(t.unit_ml, language, t),
+          t,
+        ),
+      )
     if (foodData.sodium !== undefined)
       bodyContents.push(
         createNutrientRow(
           t.sodium,
           formatNumber(foodData.sodium, 0),
           getUnitLabel(t.unit_mg, language, t),
+          t,
+        ),
+      )
+    if (foodData.potassium_nutrient !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          t.potassium_nutrient,
+          formatNumber(foodData.potassium_nutrient, 0),
+          getUnitLabel(t.unit_mg, language, t),
+          t,
+        ),
+      )
+    if (foodData.caffeine !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          t.caffeineLabel,
+          formatNumber(foodData.caffeine, 0),
+          getUnitLabel(t.unit_mg, language, t),
+          t,
+        ),
+      )
+    if (foodData.alcohol !== undefined)
+      bodyContents.push(
+        createNutrientRow(
+          t.alcoholLabel,
+          formatNumber(foodData.alcohol, 1),
+          getUnitLabel(t.unit_g, language, t),
           t,
         ),
       )

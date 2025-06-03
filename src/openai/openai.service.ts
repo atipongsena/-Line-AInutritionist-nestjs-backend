@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { AzureOpenAI } from 'openai'
@@ -13,135 +12,38 @@ import type {
 } from 'openai/resources/index.mjs'
 import { DefaultAzureCredential } from '@azure/identity'
 import OpenAI from 'openai'
-import type { Responses } from 'openai/resources/responses/responses'
+import { type Response as ResponsesResponse } from 'openai/resources/responses/responses'
 
 export interface OpenaiResponseInputMessage {
   role: 'user' | 'assistant' | 'system' | 'developer'
-  content: string | Responses.ResponseInputMessageContentList
+  content: string | OpenAI.Responses.ResponseInputMessageContentList
 }
 
 export interface OpenaiResponseCreateParams {
-  model: string
   instructions?: string
-  input: string | Responses.ResponseInput
-  tools?: Responses.Tool[]
+  input: string | OpenAI.Responses.ResponseInput
+  tools?: OpenAI.Responses.Tool[]
   tool_choice?:
-    | Responses.ToolChoiceOptions
-    | Responses.ToolChoiceTypes
-    | Responses.ToolChoiceFunction
+    | OpenAI.Responses.ToolChoiceOptions
+    | OpenAI.Responses.ToolChoiceTypes
+    | OpenAI.Responses.ToolChoiceFunction
   previous_response_id?: string
   temperature?: number
   max_output_tokens?: number
   top_p?: number
   stream?: boolean
-  text?: Responses.ResponseTextConfig
+  text?: OpenAI.Responses.ResponseTextConfig
   metadata?: OpenAI.Metadata
-}
-
-// เพิ่ม type definitions สำหรับ Responses API
-export interface ResponsesApiUsage {
-  input_tokens?: number
-  output_tokens?: number
-  total_tokens?: number
-}
-
-export interface ResponsesApiContentItem {
-  type: 'output_text' | 'text'
-  text?: string
-}
-
-export interface ResponsesApiMessage {
-  type: 'message'
-  role: 'assistant' | 'user' | 'system'
-  content: string | ResponsesApiContentItem[]
-}
-
-export interface ResponsesApiFunctionCall {
-  type: 'function_call'
-  name: string
-  arguments: string
-}
-
-export interface ResponsesApiOutput {
-  output?: (ResponsesApiMessage | ResponsesApiFunctionCall)[]
-  output_text?: string
-  usage?: ResponsesApiUsage
-}
-
-// Type guard functions
-export function isResponsesApiMessage(
-  item: unknown,
-): item is ResponsesApiMessage {
-  return (
-    typeof item === 'object' &&
-    item !== null &&
-    'type' in item &&
-    (item as { type: unknown }).type === 'message'
-  )
-}
-
-export function isResponsesApiFunctionCall(
-  item: unknown,
-): item is ResponsesApiFunctionCall {
-  return (
-    typeof item === 'object' &&
-    item !== null &&
-    'type' in item &&
-    (item as { type: unknown }).type === 'function_call'
-  )
-}
-
-export function hasOutputArray(
-  response: unknown,
-): response is { output: unknown[] } {
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    'output' in response &&
-    Array.isArray((response as { output: unknown }).output)
-  )
-}
-
-export function hasOutputText(
-  response: unknown,
-): response is { output_text: string } {
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    'output_text' in response &&
-    typeof (response as { output_text: unknown }).output_text === 'string'
-  )
-}
-
-export function hasUsage(
-  response: unknown,
-): response is { usage: ResponsesApiUsage } {
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    'usage' in response &&
-    typeof (response as { usage: unknown }).usage === 'object' &&
-    (response as { usage: unknown }).usage !== null
-  )
 }
 
 @Injectable()
 export class OpenaiService {
   private readonly logger = new Logger(OpenaiService.name)
-  private chatClientGpt4: AzureOpenAI | null = null
-  private chatClientGpt4Mini: AzureOpenAI | null = null
-  private embeddingClient: AzureOpenAI | null = null
-  private azureOpenAiClient?: AzureOpenAI
-  private azureOpenAiEmbeddingClient?: AzureOpenAI
-  private azureOpenAiNanoClient?: AzureOpenAI
+  private clients: Map<string, AzureOpenAI> = new Map()
 
   private readonly azureOpenAIApiEndpoint: string
   private readonly azureOpenAIApiVersion: string
   private readonly azureOpenAIEmbeddingApiVersion: string
-  private readonly azureOpenAIDeploymentNameGpt4: string | undefined
-  private readonly azureOpenAIDeploymentNameGpt4Mini: string | undefined
-  private readonly azureOpenAIDeploymentNameGpt4Nano: string | undefined
-  private readonly azureOpenAIEmbeddingDeploymentName: string | undefined
 
   constructor(private readonly configService: ConfigService) {
     this.azureOpenAIApiEndpoint = this.configService.get<string>(
@@ -154,19 +56,6 @@ export class OpenaiService {
       this.configService.get<string>('AZURE_OPENAI_EMBEDDING_API_VERSION') ||
       '2023-05-15'
 
-    this.azureOpenAIDeploymentNameGpt4 = this.configService.get<string>(
-      'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1',
-    )
-    this.azureOpenAIDeploymentNameGpt4Mini = this.configService.get<string>(
-      'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_MINI',
-    )
-    this.azureOpenAIDeploymentNameGpt4Nano = this.configService.get<string>(
-      'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_NANO',
-    )
-    this.azureOpenAIEmbeddingDeploymentName = this.configService.get<string>(
-      'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME',
-    )
-
     if (!this.azureOpenAIApiEndpoint) {
       this.logger.error('AZURE_OPENAI_ENDPOINT is not configured.')
       throw new Error('Azure OpenAI API endpoint is not configured.')
@@ -178,216 +67,174 @@ export class OpenaiService {
 
     const tokenCredential = new DefaultAzureCredential()
 
-    if (this.azureOpenAIDeploymentNameGpt4) {
-      this.chatClientGpt4 = new AzureOpenAI({
-        endpoint: this.azureOpenAIApiEndpoint,
-        apiVersion: this.azureOpenAIApiVersion,
-        deployment: this.azureOpenAIDeploymentNameGpt4,
-        azureADTokenProvider: async () => {
-          const accessToken = await tokenCredential.getToken(
-            'https://cognitiveservices.azure.com/.default',
-          )
-          if (!accessToken)
-            throw new Error('Failed to get token from DefaultAzureCredential')
-          return accessToken.token
-        },
-      })
-      this.logger.log(
-        `AzureOpenAI client initialized for GPT-4: ${this.azureOpenAIDeploymentNameGpt4} using Entra ID`,
-      )
-    } else {
-      this.logger.warn(
-        'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1 is not configured. GPT-4 client will not be available.',
-      )
-    }
+    const deploymentConfigs: Array<{
+      configName: string
+      deploymentNameKey: string
+      endpointKeySuffix: string
+      apiVersionKeySuffix: string
+      isEmbedding: boolean
+    }> = [
+      {
+        configName: 'GPT-4.1',
+        deploymentNameKey: 'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1',
+        endpointKeySuffix: '_GPT4_1',
+        apiVersionKeySuffix: '_GPT4_1',
+        isEmbedding: false,
+      },
+      {
+        configName: 'GPT-4.1-Mini',
+        deploymentNameKey: 'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_MINI',
+        endpointKeySuffix: '_GPT4_1_MINI',
+        apiVersionKeySuffix: '_GPT4_1_MINI',
+        isEmbedding: false,
+      },
+      {
+        configName: 'GPT-4.1-Nano',
+        deploymentNameKey: 'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_NANO',
+        endpointKeySuffix: '_GPT4_1_NANO',
+        apiVersionKeySuffix: '_GPT4_1_NANO',
+        isEmbedding: false,
+      },
+      {
+        configName: 'Embedding',
+        deploymentNameKey: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME',
+        endpointKeySuffix: '_EMBEDDING',
+        apiVersionKeySuffix: '_EMBEDDING',
+        isEmbedding: true,
+      },
+    ]
 
-    if (this.azureOpenAIDeploymentNameGpt4Mini) {
-      this.chatClientGpt4Mini = new AzureOpenAI({
-        endpoint: this.azureOpenAIApiEndpoint,
-        apiVersion: this.azureOpenAIApiVersion,
-        deployment: this.azureOpenAIDeploymentNameGpt4Mini,
-        azureADTokenProvider: async () => {
-          const accessToken = await tokenCredential.getToken(
-            'https://cognitiveservices.azure.com/.default',
-          )
-          if (!accessToken)
-            throw new Error('Failed to get token from DefaultAzureCredential')
-          return accessToken.token
-        },
-      })
-      this.logger.log(
-        `AzureOpenAI client initialized for GPT-4.1 (mini): ${this.azureOpenAIDeploymentNameGpt4Mini} using Entra ID`,
+    for (const config of deploymentConfigs) {
+      const deploymentName = this.configService.get<string>(
+        config.deploymentNameKey,
       )
-    } else {
-      this.logger.warn(
-        'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_MINI is not configured. GPT-4.1 (mini) client will not be available.',
-      )
-    }
+      if (!deploymentName) {
+        this.logger.warn(
+          `${config.deploymentNameKey} is not configured. Client for ${config.configName} will not be available.`,
+        )
+        continue
+      }
 
-    if (this.azureOpenAIDeploymentNameGpt4Nano) {
-      this.azureOpenAiNanoClient = new AzureOpenAI({
-        endpoint: this.azureOpenAIApiEndpoint,
-        apiVersion: this.azureOpenAIApiVersion,
-        deployment: this.azureOpenAIDeploymentNameGpt4Nano,
-        azureADTokenProvider: async () => {
-          const accessToken = await tokenCredential.getToken(
-            'https://cognitiveservices.azure.com/.default',
-          )
-          if (!accessToken)
-            throw new Error('Failed to get token from DefaultAzureCredential')
-          return accessToken.token
-        },
-      })
-      this.logger.log(
-        `AzureOpenAI client initialized for GPT-4.1 (nano): ${this.azureOpenAIDeploymentNameGpt4Nano} using Entra ID`,
+      const specificEndpoint = this.configService.get<string>(
+        `AZURE_OPENAI_ENDPOINT${config.endpointKeySuffix}`,
       )
-    } else {
-      this.logger.warn(
-        'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_NANO is not configured. GPT-4.1 (nano) client will not be available.',
-      )
-    }
+      const endpointToUse = specificEndpoint || this.azureOpenAIApiEndpoint
 
-    if (this.azureOpenAIEmbeddingDeploymentName) {
-      this.embeddingClient = new AzureOpenAI({
-        endpoint: this.azureOpenAIApiEndpoint,
-        apiVersion: this.azureOpenAIEmbeddingApiVersion,
-        deployment: this.azureOpenAIEmbeddingDeploymentName,
-        azureADTokenProvider: async () => {
-          const accessToken = await tokenCredential.getToken(
-            'https://cognitiveservices.azure.com/.default',
-          )
-          if (!accessToken)
-            throw new Error('Failed to get token from DefaultAzureCredential')
-          return accessToken.token
-        },
-      })
-      this.logger.log(
-        `AzureOpenAI client initialized for Embeddings: ${this.azureOpenAIEmbeddingDeploymentName} with API version: ${this.azureOpenAIEmbeddingApiVersion} using Entra ID`,
+      const specificApiVersion = this.configService.get<string>(
+        `AZURE_OPENAI_API_VERSION${config.apiVersionKeySuffix}`,
       )
-    } else {
-      this.logger.warn(
-        'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME is not configured. Embedding client will not be available.',
-      )
-    }
+      const apiVersionToUse =
+        specificApiVersion ||
+        (config.isEmbedding
+          ? this.azureOpenAIEmbeddingApiVersion
+          : this.azureOpenAIApiVersion)
 
-    if (!this.chatClientGpt4 && !this.chatClientGpt4Mini) {
-      this.logger.error(
-        'No chat clients (GPT-4 or GPT-4.1-mini) could be initialized. Check deployment name configurations.',
-      )
+      if (!endpointToUse) {
+        this.logger.error(
+          `Endpoint for ${deploymentName} (${config.configName}) could not be determined and is not configured.`,
+        )
+        continue
+      }
+      if (!apiVersionToUse) {
+        this.logger.error(
+          `API version for ${deploymentName} (${config.configName}) could not be determined and is not configured.`,
+        )
+        continue
+      }
+
+      try {
+        const client = new AzureOpenAI({
+          endpoint: endpointToUse,
+          apiVersion: apiVersionToUse,
+          deployment: deploymentName,
+          azureADTokenProvider: async () => {
+            const accessToken = await tokenCredential.getToken(
+              'https://cognitiveservices.azure.com/.default',
+            )
+            if (!accessToken) {
+              throw new Error(
+                'Failed to get token from DefaultAzureCredential for ' +
+                  deploymentName,
+              )
+            }
+            return accessToken.token
+          },
+        })
+        this.clients.set(deploymentName, client)
+        this.logger.log(
+          `AzureOpenAI client initialized for ${config.configName} (Deployment: ${deploymentName}) using Endpoint: ${endpointToUse}, APIVersion: ${apiVersionToUse}, with Entra ID`,
+        )
+      } catch (error) {
+        this.logger.error(
+          `Failed to initialize AzureOpenAI client for ${config.configName} (Deployment: ${deploymentName}): ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
     }
   }
 
-  private getClientByDeploymentName(deploymentName: string): AzureOpenAI {
-    if (
-      deploymentName === this.azureOpenAIDeploymentNameGpt4 &&
-      this.chatClientGpt4
-    ) {
-      return this.chatClientGpt4
-    }
-    if (
-      deploymentName === this.azureOpenAIDeploymentNameGpt4Mini &&
-      this.chatClientGpt4Mini
-    ) {
-      return this.chatClientGpt4Mini
-    }
-    if (
-      deploymentName === this.azureOpenAIDeploymentNameGpt4Nano &&
-      this.azureOpenAiNanoClient
-    ) {
-      return this.azureOpenAiNanoClient
-    }
-    if (this.chatClientGpt4) {
-      this.logger.warn(
-        `Deployment name ${deploymentName} not directly mapped to a client, using GPT-4 client as fallback.`,
+  private getClient(deploymentName: string): AzureOpenAI {
+    const client = this.clients.get(deploymentName)
+    if (!client) {
+      this.logger.error(
+        `Azure OpenAI client for deployment "${deploymentName}" is not initialized or not found. Check configuration.`,
       )
-      return this.chatClientGpt4
-    }
-    if (this.chatClientGpt4Mini) {
-      this.logger.warn(
-        `Deployment name ${deploymentName} not directly mapped to a client, and GPT-4 client not available. Using GPT-4.1-mini client as fallback.`,
+      throw new Error(
+        `Azure OpenAI client for deployment "${deploymentName}" is not available.`,
       )
-      return this.chatClientGpt4Mini
     }
-    throw new Error(
-      `No suitable client configured or available for deployment: ${deploymentName}. Check Azure deployment names.`,
-    )
+    return client
   }
 
   getGpt41DeploymentName(): string | undefined {
-    return this.azureOpenAIDeploymentNameGpt4
+    return this.configService.get<string>('AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1')
   }
 
   getGpt41_miniModelDeployment(): string | undefined {
-    return this.azureOpenAIDeploymentNameGpt4Mini
+    return this.configService.get<string>(
+      'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_MINI',
+    )
   }
 
   getGpt41_nanoModelDeployment(): string | undefined {
-    return this.azureOpenAIDeploymentNameGpt4Nano
+    return this.configService.get<string>(
+      'AZURE_OPENAI_DEPLOYMENT_NAME_GPT4_1_NANO',
+    )
   }
 
   getEmbeddingDeploymentName(): string | undefined {
-    return this.azureOpenAIEmbeddingDeploymentName
+    return this.configService.get<string>(
+      'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME',
+    )
   }
 
   async getChatCompletion(
     deploymentName: string,
     messages: ChatCompletionCreateParamsNonStreaming['messages'],
     options?: Omit<Partial<ChatCompletionCreateParamsNonStreaming>, 'model'>,
-    userId?: string, // Added for prompt caching optimization
+    userId?: string,
   ): Promise<ChatCompletion> {
-    const client = this.getClientByDeploymentName(deploymentName)
-    const modelInOptions = options?.model ?? deploymentName
-    try {
-      this.logger.debug(
-        `Requesting chat completion from deployment: ${deploymentName}, effective model: ${modelInOptions}`,
-      )
+    const client = this.getClient(deploymentName)
 
+    this.logger.debug(
+      `[getChatCompletion] Deployment: ${deploymentName}, Messages: ${JSON.stringify(
+        messages,
+      )}, Options: ${JSON.stringify(options)}, UserId: ${userId}`,
+    )
+
+    try {
       const response = await client.chat.completions.create({
-        model: modelInOptions,
+        model: deploymentName,
         messages,
         ...options,
-        ...(userId && { user: userId }), // Add user parameter for prompt caching optimization
+        user: userId,
       })
-      this.logger.log(
-        `Received chat completion from ${deploymentName}. Usage: ${JSON.stringify(response.usage)}`,
+      this.logger.debug(
+        `[getChatCompletion] Response for ${deploymentName}: ${JSON.stringify(response)}`,
       )
-
-      // Log cache performance for prompt caching optimization
-      if (response.usage?.prompt_tokens_details?.cached_tokens) {
-        const cachedTokens = response.usage.prompt_tokens_details.cached_tokens
-        const totalPromptTokens = response.usage.prompt_tokens
-        const cacheHitRate = ((cachedTokens / totalPromptTokens) * 100).toFixed(
-          1,
-        )
-        this.logger.log(
-          `🎯 Prompt Cache HIT: ${cachedTokens}/${totalPromptTokens} tokens (${cacheHitRate}%) for ${deploymentName}${userId ? ` (user: ${userId})` : ''}`,
-        )
-      } else if (
-        response.usage?.prompt_tokens &&
-        response.usage.prompt_tokens >= 1024
-      ) {
-        this.logger.log(
-          `❌ Prompt Cache MISS: No cached tokens for eligible prompt (${response.usage.prompt_tokens} tokens) on ${deploymentName}${userId ? ` (user: ${userId})` : ''}`,
-        )
-      }
-
       return response
-    } catch (error: unknown) {
+    } catch (error) {
       this.handleApiError(error, `getChatCompletion for ${deploymentName}`)
-      if (error instanceof Error) {
-        throw error
-      }
-      let errorMessage =
-        'An unknown non-Error exception occurred during getChatCompletion.'
-      try {
-        errorMessage = `An non-Error exception occurred during getChatCompletion: ${JSON.stringify(error)}`
-      } catch (stringifyError) {
-        this.logger.error(
-          'Failed to stringify non-Error exception',
-          stringifyError,
-        )
-      }
-      throw new Error(errorMessage)
+      throw error
     }
   }
 
@@ -396,42 +243,28 @@ export class OpenaiService {
     messages: ChatCompletionCreateParamsStreaming['messages'],
     options?: Omit<Partial<ChatCompletionCreateParamsStreaming>, 'model'>,
   ): Promise<AsyncIterable<ChatCompletionChunk>> {
-    const client = this.getClientByDeploymentName(deploymentName)
-    const modelInOptions = options?.model ?? deploymentName
-    try {
-      this.logger.debug(
-        `Requesting streaming chat completion from deployment: ${deploymentName}, effective model: ${modelInOptions}`,
-      )
+    const client = this.getClient(deploymentName)
 
+    this.logger.debug(
+      `[getChatCompletionStream] Deployment: ${deploymentName}, Messages: ${JSON.stringify(
+        messages,
+      )}, Options: ${JSON.stringify(options)}`,
+    )
+
+    try {
       const stream = await client.chat.completions.create({
-        model: modelInOptions,
+        model: deploymentName,
         messages,
         ...options,
         stream: true,
       })
-      this.logger.log(
-        `Streaming chat completion started from ${deploymentName}.`,
-      )
-      return stream as unknown as AsyncIterable<ChatCompletionChunk>
-    } catch (error: unknown) {
+      return stream
+    } catch (error) {
       this.handleApiError(
         error,
         `getChatCompletionStream for ${deploymentName}`,
       )
-      if (error instanceof Error) {
-        throw error
-      }
-      let errorMessage =
-        'An unknown non-Error exception occurred during getChatCompletionStream.'
-      try {
-        errorMessage = `An non-Error exception occurred during getChatCompletionStream: ${JSON.stringify(error)}`
-      } catch (stringifyError) {
-        this.logger.error(
-          'Failed to stringify non-Error exception',
-          stringifyError,
-        )
-      }
-      throw new Error(errorMessage)
+      throw error
     }
   }
 
@@ -440,109 +273,114 @@ export class OpenaiService {
     input: EmbeddingCreateParams['input'],
     options?: Omit<Partial<EmbeddingCreateParams>, 'model'>,
   ): Promise<CreateEmbeddingResponse> {
-    if (!this.embeddingClient) {
-      this.logger.error(
-        'Embedding client is not initialized. Check AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME.',
+    const client = this.getClient(deploymentName)
+
+    this.logger.debug(
+      `[createEmbedding] Deployment: ${deploymentName}, Input type: ${typeof input}, Options: ${JSON.stringify(
+        options,
+      )}`,
+    )
+    if (typeof input === 'string') {
+      this.logger.debug(
+        `[createEmbedding] Input string length: ${input.length}`,
       )
-      throw new Error('Embedding client is not initialized.')
+    } else if (Array.isArray(input)) {
+      this.logger.debug(`[createEmbedding] Input array length: ${input.length}`)
     }
-    const modelForRequest = options?.model ?? deploymentName
 
     try {
-      this.logger.debug(
-        `Requesting embedding from embedding client (deployment: ${this.azureOpenAIEmbeddingDeploymentName}). Effective model for request: ${modelForRequest}. Input type: ${typeof input}, length/content: ${typeof input === 'string' ? input.length : Array.isArray(input) ? input.length : 'object'}`,
-      )
-
-      const response = await this.embeddingClient.embeddings.create({
-        model: modelForRequest,
+      const response = await client.embeddings.create({
+        model: deploymentName,
         input,
         ...options,
       })
-      this.logger.log(
-        `Received embedding from ${this.azureOpenAIEmbeddingDeploymentName}. Usage: ${JSON.stringify(response.usage)}`,
+      this.logger.debug(
+        `[createEmbedding] Response for ${deploymentName} (Usage): ${JSON.stringify(response.usage)}`,
       )
       return response
-    } catch (error: unknown) {
-      this.handleApiError(
-        error,
-        `createEmbedding for ${this.azureOpenAIEmbeddingDeploymentName} (model: ${modelForRequest})`,
-      )
-      if (error instanceof Error) {
-        throw error
-      }
-      let errorMessage =
-        'An unknown non-Error exception occurred during createEmbedding.'
-      try {
-        errorMessage = `An non-Error exception occurred during createEmbedding: ${JSON.stringify(error)}`
-      } catch (stringifyError) {
-        this.logger.error(
-          'Failed to stringify non-Error exception',
-          stringifyError,
-        )
-      }
-      throw new Error(errorMessage)
+    } catch (error) {
+      this.handleApiError(error, `createEmbedding for ${deploymentName}`)
+      throw error
     }
   }
 
   async createOpenaiResponse(
     deploymentNameOrModelTag: string,
     params: OpenaiResponseCreateParams,
-  ): Promise<Responses.Response | { error: string }> {
-    const client = this.getClientByDeploymentName(deploymentNameOrModelTag)
+  ): Promise<OpenAI.Responses.Response | { error: string }> {
+    this.logger.debug(
+      `[createOpenaiResponse] Received request for deployment/tag: ${deploymentNameOrModelTag}`,
+    )
+    this.logger.verbose(
+      `[createOpenaiResponse] Params: ${JSON.stringify(params)}`,
+    )
+
+    const deploymentName =
+      this.configService.get<string>(
+        `AZURE_OPENAI_DEPLOYMENT_NAME_${deploymentNameOrModelTag.toUpperCase()}`,
+      ) || deploymentNameOrModelTag
+
+    const client = this.getClient(deploymentName)
+    if (!client) {
+      const errorMsg = `[createOpenaiResponse] Failed to get OpenAI client for deployment: ${deploymentName}`
+      this.logger.error(errorMsg)
+      return { error: errorMsg }
+    }
 
     try {
-      this.logger.debug(
-        `Requesting OpenAI Response via client for deployment/tag: ${deploymentNameOrModelTag}, actual model in API call: ${params.model}`,
-      )
-
-      const baseRequestParams: Omit<Responses.ResponseCreateParams, 'stream'> =
-        {
-          model: params.model,
-          input: params.input as Responses.ResponseInput,
-          instructions: params.instructions,
-          tools: params.tools,
-          tool_choice: params.tool_choice,
-          previous_response_id: params.previous_response_id,
-          temperature: params.temperature,
-          max_output_tokens: params.max_output_tokens,
-          top_p: params.top_p,
-          text: params.text,
-          metadata: params.metadata,
-        }
-
       if (params.stream) {
         this.logger.warn(
-          "Streaming for Responses API is not explicitly handled in this method's return type; it would return Stream<Responses.ResponseStreamEvent>.",
+          '[createOpenaiResponse] Streaming is requested but full streaming support in this refactor is pending.',
         )
-        throw new Error(
-          'Streaming for Responses API call needs a different handler or return type.',
+        // TEMPORARY: Force non-streaming even if requested, matching structure for ResponseCreateParamsNonStreaming
+        const requestPayload: OpenAI.Responses.ResponseCreateParamsNonStreaming =
+          {
+            model: deploymentName, // Crucial for routing in "Last Generation API" style
+            input: params.input,
+            instructions: params.instructions,
+            tools: params.tools,
+            tool_choice: params.tool_choice,
+            previous_response_id: params.previous_response_id,
+            temperature: params.temperature,
+            max_output_tokens: params.max_output_tokens,
+            top_p: params.top_p,
+            text: params.text,
+            metadata: params.metadata,
+            stream: false, // Explicitly false for NonStreaming
+          }
+        const response = await client.responses.create(requestPayload)
+        this.logger.debug(
+          `[createOpenaiResponse] Received (forced non-streaming) response: ${JSON.stringify(response)}`,
         )
+        return response
+      } else {
+        const requestPayload: OpenAI.Responses.ResponseCreateParamsNonStreaming =
+          {
+            model: deploymentName, // Crucial for routing in "Last Generation API" style
+            input: params.input,
+            instructions: params.instructions,
+            tools: params.tools,
+            tool_choice: params.tool_choice,
+            previous_response_id: params.previous_response_id,
+            temperature: params.temperature,
+            max_output_tokens: params.max_output_tokens,
+            top_p: params.top_p,
+            text: params.text,
+            metadata: params.metadata,
+            stream: false, // Explicitly false for NonStreaming
+          }
+        const response = await client.responses.create(requestPayload)
+        this.logger.debug(
+          `[createOpenaiResponse] Received response: ${JSON.stringify(response)}`,
+        )
+        return response
       }
-
-      const finalRequestParams: Responses.ResponseCreateParamsNonStreaming = {
-        ...baseRequestParams,
-        stream: false,
-      }
-
-      const response: Responses.Response =
-        await client.responses.create(finalRequestParams)
-
-      this.logger.log(
-        `Received OpenAI Response (ID: ${response.id}) using client for ${deploymentNameOrModelTag}.`,
-      )
-      return response
-    } catch (error: unknown) {
-      this.handleApiError(
-        error,
-        `createOpenaiResponse for ${deploymentNameOrModelTag} (model: ${params.model})`,
-      )
-      if (error instanceof Error) {
-        return { error: error.message }
-      }
-      const errorString =
-        typeof error === 'string' ? error : JSON.stringify(error)
-      const errorMessage = `An unknown non-Error exception occurred during createOpenaiResponse: ${errorString}`
-      this.logger.error(errorMessage)
+    } catch (error) {
+      this.handleApiError(error, 'createOpenaiResponse')
+      const errorMessage =
+        error instanceof APIError
+          ? error.message
+          : 'An unexpected error occurred with OpenAI.'
       return { error: errorMessage }
     }
   }
@@ -555,7 +393,6 @@ export class OpenaiService {
       if (error.headers) {
         this.logger.error(`Error Headers: ${JSON.stringify(error.headers)}`)
       }
-      // Type-safe error details handling
       if (error.error && typeof error.error === 'object') {
         const errorDetails = error.error as Record<string, unknown>
         if (typeof errorDetails.message === 'string') {

@@ -16,6 +16,13 @@ export interface NutritionData {
   cholesterol?: number
   water?: number
   omega3?: number
+  // New fields for other nutrients to align with backend DTOs
+  trans_fat?: number
+  polyunsaturated_fat?: number
+  monounsaturated_fat?: number
+  potassium_nutrient?: number
+  caffeine?: number
+  alcohol?: number
   vitamins?: Record<string, VitaminMineralDetail>
   minerals?: Record<string, VitaminMineralDetail>
 }

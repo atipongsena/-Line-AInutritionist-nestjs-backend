@@ -17,6 +17,7 @@ async function bootstrap() {
       // Development origins
       'http://localhost:3000', // Frontend dev server
       'http://localhost:3001', // LIFF dev server
+      /.*\.ngrok-free\.app$/,
       // ❌ ลบ development HTTPS (Azure จัดการ HTTPS อัตโนมัติ)
       // 'https://localhost:3000',
       // 'https://localhost:3001',
@@ -38,10 +39,12 @@ async function bootstrap() {
       'Accept',
       'Authorization',
       'X-LINE-ID-TOKEN',
+      'X-Line-User-ID',
       'Origin',
       'X-Requested-With',
       'Access-Control-Request-Method',
       'Access-Control-Request-Headers',
+      'ngrok-skip-browser-warning',
     ],
     credentials: true,
     // เปิดใช้ preflight caching สำหรับ performance

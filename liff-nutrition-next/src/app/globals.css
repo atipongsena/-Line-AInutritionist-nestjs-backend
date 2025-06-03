@@ -1,0 +1,240 @@
+/* CSS layer order for Material-UI v7 + Tailwind v4 integration */
+@layer theme, base, mui, components, utilities;
+@import 'tailwindcss';
+
+/* @theme inline directive and its content removed */
+
+/* Base layer styles for mobile-first design */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    height: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    /* Reference variables from :root or tailwind config directly */
+    /* font-size: var(--font-size-sm); */ /* Example, if defined in :root */
+    line-height: 1.5;
+    /* color: var(--color-foreground-og); */ /* Example */
+    /* background-color: var(--color-background-og); */ /* Example */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  button {
+    min-height: 44px;
+    cursor: pointer;
+  }
+
+  a,
+  button,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+}
+
+/* Material UI base styles */
+@layer base {
+  h1 {
+    font: var(--mui-font-h1);
+    letter-spacing: -0.01562em;
+  }
+  h2 {
+    font: var(--mui-font-h2);
+    letter-spacing: -0.00833em;
+  }
+  h3 {
+    font: var(--mui-font-h3);
+  }
+  h4 {
+    font: var(--mui-font-h4);
+    letter-spacing: 0.00735em;
+  }
+  h5 {
+    font: var(--mui-font-h5);
+  }
+  h6 {
+    font: var(--mui-font-h6);
+    letter-spacing: 0.0075em;
+  }
+  p {
+    font: var(--mui-font-body1);
+    letter-spacing: 0.00938em;
+  }
+}
+
+/* @utility typography-* directive and its content removed */
+
+/* @utility elevation-* directive and its content removed */
+
+/* CSS variables for theme */
+:root {
+  /* Variables previously in @theme inline */
+  --color-line-green: #06c755;
+  --color-line-green-dark: #00b900;
+  --color-primary-og: #06c755;
+  --color-primary-foreground-og: #ffffff;
+  --color-secondary-og: #00b900;
+  --color-background-og: #ffffff;
+  --color-foreground-og: #212121;
+  --color-muted-og: #f5f5f5;
+  --color-muted-foreground-og: #757575;
+
+  --breakpoint-sm: 600px;
+  --breakpoint-md: 900px;
+  --breakpoint-lg: 1200px;
+  --breakpoint-xl: 1536px;
+
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  --spacing-2xl: 3rem;
+
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+
+  /* Existing variables from :root */
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 142.1 76.2% 36.3%;
+  --primary-foreground: 355.7 100% 97.3%;
+  --secondary: 210 40% 98%;
+  --secondary-foreground: 222.2 84% 4.9%;
+  --muted: 210 40% 98%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 98%;
+  --accent-foreground: 222.2 84% 4.9%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 142.1 76.2% 36.3%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222.2 84% 4.9%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 142.1 76.2% 36.3%;
+  --primary-foreground: 355.7 100% 97.3%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 142.1 76.2% 36.3%;
+}
+
+/* Base layer styles */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    /* @apply bg-background text-foreground; */ /* Replaced with CSS variables */
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+}
+
+/* Component layer for Material-UI compatibility */
+@layer components {
+  /* .MuiCssBaseline-root removed */
+}
+
+code {
+  font-family:
+    source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+/* Styles from App.css (can be refactored or removed if not needed globally) */
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

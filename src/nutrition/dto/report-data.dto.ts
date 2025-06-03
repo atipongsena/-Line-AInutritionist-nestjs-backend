@@ -45,8 +45,14 @@ export class DailyReportResponseDto {
     sodium?: NutrientDetailWithGoal // Typically a max limit
     cholesterol?: NutrientDetailWithGoal // Typically a max limit
     saturated_fat?: NutrientDetailWithGoal // Typically a max limit
+    trans_fat?: NutrientDetailWithGoal // Typically a max limit
+    polyunsaturated_fat?: NutrientDetailWithGoal // Recommended intake
+    monounsaturated_fat?: NutrientDetailWithGoal // Recommended intake
     omega3?: NutrientDetailWithGoal
     water?: NutrientDetailWithGoal // Typically a min target
+    potassium_nutrient?: NutrientDetailWithGoal // Recommended intake
+    caffeine?: NutrientDetailWithGoal // Added caffeine
+    alcohol?: NutrientDetailWithGoal // Added alcohol
     // Add more as needed based on NutritionGoal schema and what frontend needs
   }
   micronutrients?: {

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "First page JS",
+    "path": ".next/static/chunks/pages/*.js",
+    "limit": "200 KB"
+  },
+  {
+    "name": "Main JS bundle",
+    "path": ".next/static/chunks/*.js",
+    "limit": "500 KB"
+  },
+  {
+    "name": "CSS bundle",
+    "path": ".next/static/css/*.css",
+    "limit": "50 KB"
+  },
+  {
+    "name": "Recharts bundle",
+    "path": ".next/static/chunks/**/recharts*.js",
+    "limit": "150 KB"
+  }
+]

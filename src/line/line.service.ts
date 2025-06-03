@@ -1,5 +1,5 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
+import { ConfigService, ConfigType } from '@nestjs/config'
 import { HttpService } from '@nestjs/axios'
 import { firstValueFrom } from 'rxjs'
 import { AxiosError } from 'axios'
@@ -42,9 +42,22 @@ import {
   TemporaryImageLogDocument,
 } from '../schemas/temporary-image-log.schema'
 import { format } from 'date-fns'
-import { IntentDetectionService } from './intent-detection.service'
+import {
+  IntentDetectionService,
+  IntentDetectionResult,
+} from './intent-detection.service'
 import { ConversationHistoryService } from '../conversation-history/conversation-history.service'
 import { AI_CONFIG } from '../ai/ai.config' // Added import
+import { IntentDetectionMetricsService } from './intent-detection-metrics.service'
+import { SharedUserProfileDto } from '@ai-nutritionist/shared-types' // Corrected import
+import { NonFoodDescriptionResult } from '../ai/ai.service' // Added import for NonFoodDescriptionResult
+import {
+  EatingPatternToolResult,
+  NutritionGoalToolResult,
+  MealRecommendationToolResult,
+} from '../ai/ai.service' // Added import for EatingPatternToolResult and NutritionGoalToolResult
+import { TimezoneService } from '../common/timezone.service'
+import { NutritionGoalDtoForAI } from '../ai/ai.service' // Added import for NutritionGoalDtoForAI
 
 // Define the expected structure of the parsed webhook body
 interface ParsedWebhookBody {
@@ -70,6 +83,8 @@ export class LineService {
     private temporaryImageLogModel: Model<TemporaryImageLogDocument>,
     private readonly intentDetectionService: IntentDetectionService,
     private readonly conversationHistoryService: ConversationHistoryService,
+    private readonly intentDetectionMetricsService: IntentDetectionMetricsService,
+    private readonly timezoneService: TimezoneService,
   ) {
     const channelAccessToken = this.configService.get<string>(
       'LINE_CHANNEL_ACCESS_TOKEN',
@@ -92,10 +107,41 @@ export class LineService {
     this.logger.log('LineService initialized and LINE client configured.')
   }
 
+  /**
+   * ได้เวลาสำหรับบันทึก food log โดยพิจารณา timezone ของ user
+   */
+  private async getLogDateWithTimezone(
+    lineUserId: string,
+    postbackDate?: string,
+  ): Promise<Date> {
+    try {
+      const userTimezone = await this.userService.getUserTimezone(lineUserId)
+
+      if (postbackDate) {
+        // หากมี postbackDate ให้แปลงจาก user timezone เป็น UTC
+        const localTime = new Date(postbackDate)
+        return this.timezoneService.convertToUtc(localTime, userTimezone)
+      } else {
+        // หากไม่มี postbackDate ให้ใช้เวลาปัจจุบันใน timezone ของ user
+        const nowInUserTimezone =
+          this.timezoneService.getNowInTimezone(userTimezone)
+        return this.timezoneService.convertToUtc(
+          nowInUserTimezone,
+          userTimezone,
+        )
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to get timezone for user ${lineUserId}, using server time: ${error.message}`,
+      )
+      return new Date(postbackDate || Date.now())
+    }
+  }
+
   // Method to send typing indicator
   private async sendTypingIndicator(
     userId: string,
-    durationSeconds = 20,
+    durationSeconds = 30,
   ): Promise<void> {
     const channelAccessToken = this.configService.get<string>(
       'LINE_CHANNEL_ACCESS_TOKEN',
@@ -376,50 +422,32 @@ export class LineService {
     userId: string,
     messageId: string, // LINE message ID for the text message
   ): Promise<void> {
-    // Send typing indicator
-    await this.sendTypingIndicator(userId, 30)
+    await this.sendTypingIndicator(userId)
+    const userProfile = await this.userService.getOrCreateUserProfile({
+      lineUserId: userId,
+    }) // Changed: ensureUserProfile to getOrCreateUserProfile
+    await this.sendTypingIndicator(userId) // Send again as ensureUserProfile can take time
 
-    let userProfile: UserProfileDto | null = null
-    let currentLanguage = 'th'
-
-    try {
-      userProfile = await this.userService.getOrCreateUserProfile({
-        lineUserId: userId,
-      })
-      currentLanguage = userProfile.language || 'th'
-    } catch (error) {
-      this.logger.error(
-        `Failed to get user profile for ${userId}:`,
-        error instanceof Error ? error.stack : error,
-      )
-      await this.replyText(
-        replyToken,
-        currentLanguage === 'th'
-          ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการดึงข้อมูลโปรไฟล์ของคุณ โปรดลองใหม่อีกครั้ง'
-          : 'Sorry, there was an error retrieving your profile. Please try again.',
-      )
-      return
-    }
-
+    const currentLanguage = userProfile.language || 'th'
     this.logger.log(
       `Received text from user ${userId}: "${text}", language: ${currentLanguage}`,
     )
 
-    // ✅ ตรวจสอบว่าเป็นคำสั่งที่ขึ้นต้นด้วยสัญลักษณ์เฉพาะหรือไม่
-    const trimmedText = text.trim()
-    const { commandPrefixes } = AI_CONFIG.conversationControl.exclusionRules
-    const isCommand = commandPrefixes.some((prefix) =>
-      trimmedText.startsWith(prefix),
+    // Add to conversation history (User's message)
+    await this.conversationHistoryService.addMessageToHistory(
+      // Changed: addMessage to addMessageToHistory
+      userId,
+      'user',
+      text,
+      undefined, // No analysisResult for user's plain text
+      messageId, // Pass messageId here
     )
 
-    if (isCommand) {
-      this.logger.log(
-        `Processing command message from user ${userId}: "${trimmedText.substring(0, 50)}..." (starts with ${commandPrefixes.find((prefix) => trimmedText.startsWith(prefix))})`,
-      )
-      // จัดการคำสั่งเฉพาะแทนการส่งไป AI
+    // Check for commands first
+    if (text.startsWith('/')) {
       await this.handleCommand(
         replyToken,
-        trimmedText,
+        text.substring(1),
         userId,
         userProfile,
         currentLanguage,
@@ -427,53 +455,7 @@ export class LineService {
       return
     }
 
-    // Special handling for URLs (existing logic)
-    const urlRegex = /(https?:\/\/[^\s]+)/g
-    const urls = text.match(urlRegex)
-
-    if (urls && urls.length > 0) {
-      this.logger.log(`Found URLs in message: ${urls.join(', ')}`)
-      // Try to analyze as food image URL
-      const analysisResult = await this.aiService.analyzeFoodOrMeal(
-        userId,
-        text,
-        userProfile,
-        currentLanguage,
-        'normal',
-        urls[0], // Use first URL as image
-        messageId,
-      )
-
-      if (
-        analysisResult &&
-        'food_name' in analysisResult &&
-        analysisResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
-      ) {
-        const flexData: FlexFoodAnalysisData = {
-          ...analysisResult,
-          lineUserId: userId,
-          messageId: messageId,
-        }
-        const flexMessage = createFoodAnalysisFlexMessage(
-          flexData,
-          currentLanguage,
-        )
-        await this.replyMessages(replyToken, [flexMessage])
-      } else {
-        this.logger.warn(
-          `Unexpected result from analyzeFoodOrMeal (URL) for user ${userId}: ${JSON.stringify(analysisResult)}`,
-        )
-        await this.replyText(
-          replyToken,
-          currentLanguage === 'th'
-            ? 'ขออภัยค่ะ ไม่สามารถดำเนินการวิเคราะห์อาหารจาก URL ได้ในขณะนี้'
-            : "Sorry, I couldn't process the food analysis from the URL at this time.",
-        )
-      }
-      return
-    }
-
-    // ✅ ตรวจสอบว่า user อยู่ในโหมด reanalyze หรือไม่
+    // Check if user is in reanalyze context and provided additional details
     const reanalyzeContextKey = `reanalyze_context:${userId}`
     const reanalyzeContext = this.analysisCacheService.get<{
       originalMessageId: string
@@ -484,310 +466,335 @@ export class LineService {
 
     if (reanalyzeContext) {
       this.logger.log(
-        `User ${userId} is in reanalyze mode. Processing reanalysis with additional details: "${text}"`,
+        `User ${userId} provided reanalysis details: "${text.substring(0, 100)}..."`,
       )
 
-      // ลบ context เพื่อป้องกันการใช้งานซ้ำ
-      this.analysisCacheService.delete(reanalyzeContextKey)
-
       try {
-        // วิเคราะห์ใหม่พร้อมรายละเอียดเพิ่มเติม
-        const reanalysisResult = await this.aiService.analyzeFoodOrMeal(
+        // Combine original image URL (if exists) with user's additional description
+        const analysisText = `${reanalyzeContext.originalAnalysisData.food_name}\n\nรายละเอียดเพิ่มเติมจากผู้ใช้: ${text}`
+
+        // Send typing indicator for longer analysis
+        await this.sendTypingIndicator(userId, 30)
+
+        // Analyze with user's additional context
+        const analysisResult = await this.aiService.analyzeFoodOrMeal(
           userId,
-          `วิเคราะห์อาหารใหม่: ${reanalyzeContext.originalAnalysisData.food_name}. รายละเอียดเพิ่มเติม: ${text}`, // รวมชื่ออาหารเดิมกับรายละเอียดใหม่
+          analysisText,
           userProfile,
           currentLanguage,
           'normal',
-          reanalyzeContext.originalImageUrl, // ใช้ภาพเดิม
-          reanalyzeContext.originalMessageId, // ใช้ messageId เดิม เพื่อ cache ทับ
+          reanalyzeContext.originalImageUrl, // Send original image if available
+          reanalyzeContext.originalMessageId,
         )
 
         if (
-          reanalysisResult &&
-          'food_name' in reanalysisResult &&
-          reanalysisResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
+          analysisResult &&
+          'food_name' in analysisResult &&
+          analysisResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
         ) {
+          const foodAnalysisResult = analysisResult as FoodAnalysisToolResult
           this.logger.log(
-            `Reanalysis successful for user ${userId}: ${reanalysisResult.food_name}`,
+            `Reanalysis successful for user ${userId}: ${foodAnalysisResult.food_name}`,
           )
 
-          const flexData: FlexFoodAnalysisData = {
-            ...reanalysisResult,
+          const flexMessageData: FlexFoodAnalysisData = {
+            ...foodAnalysisResult,
             lineUserId: userId,
-            messageId: reanalyzeContext.originalMessageId, // ใช้ messageId เดิม
-            imageUrl: reanalyzeContext.originalImageUrl, // ใช้ภาพเดิม
+            messageId: reanalyzeContext.originalMessageId,
+            imageUrl: reanalyzeContext.originalImageUrl,
           }
+
           const flexMessage = createFoodAnalysisFlexMessage(
-            flexData,
+            flexMessageData,
             currentLanguage,
           )
-          await this.replyMessages(replyToken, [flexMessage])
-          return
-        } else {
-          this.logger.warn(
-            `Reanalysis failed for user ${userId}:`,
-            reanalysisResult,
+
+          await this.replyMessages(
+            replyToken,
+            [flexMessage],
+            false,
+            currentLanguage,
           )
+
+          // Clear reanalyze context
+          this.analysisCacheService.delete(reanalyzeContextKey)
+
+          this.logger.log(`Cleared reanalyze context for user ${userId}`)
+        } else {
           await this.replyText(
             replyToken,
             currentLanguage === 'th'
-              ? 'ขออภัยค่ะ ไม่สามารถวิเคราะห์ใหม่ได้ โปรดลองอีกครั้ง หรือเริ่มการวิเคราะห์ใหม่'
-              : 'Sorry, I could not reanalyze the food. Please try again or start a new analysis.',
+              ? 'ขออภัยค่ะ ไม่สามารถวิเคราะห์อาหารใหม่ได้ในขณะนี้ โปรดลองอีกครั้งหรือส่งรูปภาพใหม่'
+              : 'Sorry, unable to reanalyze the food at this time. Please try again or send a new image.',
+            'reanalysis_failed',
+            true,
+            currentLanguage,
           )
-          return
+
+          // Clear reanalyze context on failure
+          this.analysisCacheService.delete(reanalyzeContextKey)
         }
-      } catch (reanalysisError) {
+      } catch (error) {
         this.logger.error(
-          `Error during reanalysis for user ${userId}:`,
-          reanalysisError,
+          `Error during reanalysis for user ${userId}: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error.stack : undefined,
+        )
+
+        await this.replyText(
+          replyToken,
+          currentLanguage === 'th'
+            ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์ใหม่'
+            : 'Sorry, an error occurred during reanalysis.',
+          'reanalysis_error',
+          true,
+          currentLanguage,
+        )
+
+        // Clear reanalyze context on error
+        this.analysisCacheService.delete(reanalyzeContextKey)
+      }
+      return
+    }
+
+    // Check for reanalyze last food if "reanalyze" or "วิเคราะห์ใหม่" is sent
+    const reanalyzeKeywords = ['reanalyze', 'วิเคราะห์ใหม่']
+    if (reanalyzeKeywords.includes(text.toLowerCase())) {
+      const cachedContext = await this.analysisCacheService.get<{
+        type: 'image' | 'text'
+        value: string // messageId for image, original text for text
+        messageId?: string // original messageId of the request that was analyzed
+      }>(`reanalyze_context:${userId}`) // Changed: getReanalyzeContext to generic get
+
+      if (cachedContext) {
+        this.logger.log(
+          `Re-analyzing based on cached context for user ${userId}`,
+        )
+        if (cachedContext.type === 'image' && cachedContext.value) {
+          await this.handleImageMessage(replyToken, cachedContext.value, userId)
+        } else if (cachedContext.type === 'text' && cachedContext.value) {
+          const newReanalysisMessageId = `reanalysis-${Date.now()}-${messageId}`
+          await this.handleTextMessage(
+            replyToken,
+            cachedContext.value,
+            userId,
+            newReanalysisMessageId,
+          )
+        } else {
+          await this.replyText(
+            replyToken,
+            currentLanguage === 'th'
+              ? 'ขออภัยค่ะ ไม่พบข้อมูลสำหรับวิเคราะห์ใหม่ หรือข้อมูลไม่ถูกต้อง'
+              : 'Sorry, no valid context found to reanalyze.',
+            'reanalyze_error',
+            true,
+            currentLanguage,
+          )
+        }
+        return
+      } else {
+        this.logger.log(
+          `User ${userId} requested reanalysis, but no context was found.`,
         )
         await this.replyText(
           replyToken,
           currentLanguage === 'th'
-            ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์ใหม่ โปรดลองอีกครั้ง'
-            : 'Sorry, an error occurred during reanalysis. Please try again.',
+            ? 'ยังไม่มีการวิเคราะห์ก่อนหน้านี้ให้วิเคราะห์ใหม่ค่ะ ลองส่งรูปหรือข้อความมาวิเคราะห์ได้เลย'
+            : "There's no previous analysis to reanalyze. Feel free to send an image or text to analyze!",
+          'reanalyze_no_context',
+          true,
+          currentLanguage,
         )
         return
       }
     }
 
-    // **NEW: Use AI-based Intent Detection**
-    try {
-      // ✅ ไม่ส่ง conversation history ไปกับ intent detection เพื่อลด token และ latency
-      const intentResult = await this.intentDetectionService.detectIntent(
+    // Intent Detection
+    const intentResult = await this.intentDetectionService.detectIntent(
+      text,
+      userProfile,
+      currentLanguage,
+    )
+    this.logger.log(
+      `Intent detected for user ${userId}: ${intentResult.intent} (confidence: ${intentResult.confidence})`,
+    )
+
+    // Handle based on intent
+    if (
+      this.intentDetectionService.isSimpleGreetingOrThanks(
         text,
-        userProfile,
         currentLanguage,
       )
-
+    ) {
       this.logger.log(
-        `Intent detected for user ${userId}: ${intentResult.intent} (confidence: ${intentResult.confidence})`,
+        `Simple greeting or thanks from user ${userId}: "${text}"`,
       )
+      const greeting =
+        currentLanguage === 'th'
+          ? `สวัสดีค่ะ ${userProfile.displayName || ''} มีอะไรให้ช่วยไหมคะ?` // Handle potential null displayName
+          : `Hello ${userProfile.displayName || ''}! How can I help you today?` // Handle potential null displayName
+      await this.replyText(
+        replyToken,
+        greeting,
+        'greeting',
+        true,
+        currentLanguage,
+      )
+      return
+    }
 
-      // Handle based on detected intent
-      switch (intentResult.intent) {
-        case 'food_analysis':
-          // Lower threshold for food analysis - many valid queries have medium confidence
-          if (intentResult.confidence > 0.4) {
-            // Food analysis request - try to analyze
+    switch (intentResult.intent) {
+      case 'food_analysis':
+        this.logger.log(
+          `Processing food analysis request for user ${userId} based on detected intent`,
+        )
+        try {
+          const analysisAiResult = await this.aiService.analyzeFoodOrMeal(
+            // Changed: analyzeFoodFromText to analyzeFoodOrMeal
+            userId,
+            text, // text to analyze
+            userProfile,
+            currentLanguage,
+            'normal', // timeConstraint
+            undefined, // imageUrl - not an image
+            messageId, // Pass messageId
+          )
+
+          // Check if analysisAiResult is FoodAnalysisToolResult and not NonFoodDescriptionResult or error
+          if (
+            analysisAiResult &&
+            'food_name' in analysisAiResult &&
+            analysisAiResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
+          ) {
+            const foodAnalysisDataFromAI =
+              analysisAiResult as FoodAnalysisToolResult
             this.logger.log(
-              `Processing food analysis request for user ${userId} with confidence ${intentResult.confidence}`,
+              `Food analysis successful for user ${userId}: ${foodAnalysisDataFromAI.food_name}`,
             )
 
-            const analysisResult = await this.aiService.analyzeFoodOrMeal(
+            const foodDataForFlex: FlexFoodAnalysisData = {
+              ...foodAnalysisDataFromAI,
+              // Ensure properties for flex message are correctly assigned if names differ
+              // or if some properties are only for flex
+              // FlexFoodAnalysisData in flex.messages.ts expects specific vitamin/mineral properties
+              // and some control properties like lineUserId, messageId for postbacks.
+              lineUserId: userId, // Added for flex message context
+              messageId: messageId, // Added for flex message context
+              // imageUrl: foodAnalysisDataFromAI.imageUrl, // Already part of FoodAnalysisToolResult, so spread operator covers it
+              // language is a separate param for createFoodAnalysisFlexMessage
+            }
+
+            const flexMessage = createFoodAnalysisFlexMessage(
+              foodDataForFlex,
+              currentLanguage,
+            )
+            await this.replyMessages(
+              replyToken,
+              [flexMessage],
+              false,
+              currentLanguage,
+            )
+
+            await this.analysisCacheService.set<{
+              type: 'image' | 'text'
+              value: string
+              messageId?: string
+            }>(`reanalyze_context:${userId}`, {
+              // Changed: setReanalyzeContext to generic set
+              type: 'text',
+              value: text,
+              messageId: messageId,
+            })
+          } else if (analysisAiResult && 'description' in analysisAiResult) {
+            // NonFoodDescriptionResult
+            const nonFoodData = analysisAiResult as NonFoodDescriptionResult
+            this.logger.log(
+              `Non-food description for user ${userId}: ${nonFoodData.description}`,
+            )
+            await this.replyText(
+              replyToken,
+              nonFoodData.description,
+              'non_food_description',
+              true,
+              currentLanguage,
+            )
+          } else {
+            // This case handles null, { error: string }, or NON_FOOD_IMAGE_DETECTED if it somehow slips through 'food_name' check
+            const fallbackReason =
+              (analysisAiResult as any)?.error ||
+              'Analysis did not return valid food data.'
+            this.logger.warn(
+              `Food analysis from text failed or non-food for user ${userId}. Fallback to general nutrition. Reason: ${fallbackReason}`,
+            )
+            const fallbackMessage =
+              currentLanguage === 'th'
+                ? 'ขออภัยค่ะ ระบบไม่สามารถวิเคราะห์อาหารจากข้อความของคุณได้ ลองถามคำถามทั่วไปเกี่ยวกับโภชนาการ หรือส่งรูปภาพอาหารมาวิเคราะห์นะคะ'
+                : "Sorry, I couldn't analyze the food from your text. Try asking a general nutrition question, or send a food image for analysis."
+            await this.replyText(
+              replyToken,
+              fallbackMessage,
+              'food_analysis_fallback',
+              true,
+              currentLanguage,
+            )
+          }
+        } catch (error) {
+          this.logger.error(
+            `Error during food analysis from text for user ${userId}: ${error instanceof Error ? error.message : String(error)}`,
+            error instanceof Error ? error.stack : undefined,
+          )
+          await this.replyText(
+            replyToken,
+            currentLanguage === 'th'
+              ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์อาหารจากข้อความ'
+              : 'Sorry, an error occurred while analyzing food from text.',
+            'food_analysis_text_error',
+            true,
+            currentLanguage,
+          )
+        }
+        break
+
+      case 'general_nutrition':
+      default:
+        this.logger.log(
+          `Treating as general nutrition question for user ${userId}: "${text}" (Intent: ${intentResult.intent})`,
+        )
+        try {
+          const aiResponse =
+            await this.aiService.answerGeneralNutritionQuestion(
               userId,
               text,
               userProfile,
               currentLanguage,
-              'normal',
-              undefined, // no image
-              messageId,
             )
-
-            if (
-              analysisResult &&
-              'food_name' in analysisResult &&
-              analysisResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
-            ) {
-              // Success - send Flex Message
-              this.logger.log(
-                `Food analysis successful for user ${userId}: ${analysisResult.food_name}`,
-              )
-
-              const flexData: FlexFoodAnalysisData = {
-                ...analysisResult,
-                lineUserId: userId,
-                messageId: messageId,
-              }
-              const flexMessage = createFoodAnalysisFlexMessage(
-                flexData,
-                currentLanguage,
-              )
-              await this.replyMessages(replyToken, [flexMessage])
-              return
-            } else {
-              // Food analysis failed - still try to give nutrition info
-              this.logger.log(
-                `Food analysis failed for user ${userId}, but still treating as food-related query`,
-              )
-            }
-          } else {
-            // Very low confidence - log and fallback
-            this.logger.log(
-              `Very low confidence (${intentResult.confidence}) for food analysis, falling back to general nutrition`,
-            )
-          }
-          // If confidence is low or analysis failed, fallback to general Q&A but mention it's food-related
-          break
-
-        case 'eating_pattern_analysis':
-          // Handle eating pattern analysis with manual workflow
-          this.logger.log(
-            `Processing eating pattern analysis request for user ${userId} with confidence ${intentResult.confidence}`,
+          await this.replyText(
+            replyToken,
+            aiResponse ||
+              (currentLanguage === 'th'
+                ? 'ฉันไม่แน่ใจว่าจะตอบอย่างไร ลองถามใหม่นะคะ'
+                : 'I am not sure how to respond to that. Please try rephrasing.'), // Added fallback for null aiResponse
+            'general_nutrition',
+            true,
+            currentLanguage,
           )
-
-          try {
-            const eatingPatternResult =
-              await this.aiService.analyzeEatingPatternWithAI(
-                userId,
-                userProfile,
-                null, // No nutrition goal for now
-                currentLanguage,
-                'normal',
-              )
-
-            if (
-              eatingPatternResult &&
-              typeof eatingPatternResult === 'object' &&
-              'calories_trend' in eatingPatternResult
-            ) {
-              // Success - format and send the analysis result
-              this.logger.log(
-                `Eating pattern analysis successful for user ${userId}: ${eatingPatternResult.calories_trend}`,
-              )
-
-              const responseText =
-                currentLanguage === 'th'
-                  ? `🔍 การวิเคราะห์รูปแบบการกินของคุณ
-
-📈 แนวโน้มแคลอรี่:\n${eatingPatternResult.calories_trend === 'improving' ? 'ดีขึ้น' : eatingPatternResult.calories_trend === 'stable' ? 'คงที่' : eatingPatternResult.calories_trend === 'worsening' ? 'แย่ลง' : 'ข้อมูลไม่เพียงพอ'}
-
-📊 แคลอรี่เฉลี่ยต่อวัน:\n${eatingPatternResult.average_daily_calories || 'ไม่สามารถคำนวณได้'} กิโลแคลอรี่
-
-🍽️ จำนวนบันทึกอาหาร:\n${eatingPatternResult.basic_analysis_details?.total_logs || 0} รายการ ใน ${eatingPatternResult.basic_analysis_details?.days_analyzed || 0} วัน
-
-🔍 รูปแบบที่พบ:\n${eatingPatternResult.identified_patterns && eatingPatternResult.identified_patterns.length > 0 ? eatingPatternResult.identified_patterns.join(', ') : 'ยังไม่พบรูปแบบเฉพาะ'}
-
-💡 คำแนะนำ:\n${eatingPatternResult.personalized_advice || 'กรุณาบันทึกอาหารให้สม่ำเสมอเพื่อการวิเคราะห์ที่แม่นยำ'}
-
-${
-  eatingPatternResult.improvement_suggestions &&
-  eatingPatternResult.improvement_suggestions.length > 0
-    ? `📝 ข้อเสนอแนะการปรับปรุง:\n${eatingPatternResult.improvement_suggestions.map((s) => `• ${s}`).join('\n')}`
-    : ''
-}`
-                  : `🔍 Your Eating Pattern Analysis
-
-📈 Calorie Trend:\n${eatingPatternResult.calories_trend}
-
-📊 Average Daily Calories:\n${eatingPatternResult.average_daily_calories || 'Cannot calculate'} kcal
-
-🍽️ Food Log Count:\n${eatingPatternResult.basic_analysis_details?.total_logs || 0} entries in ${eatingPatternResult.basic_analysis_details?.days_analyzed || 0} days
-
-🔍 Patterns Found:\n${eatingPatternResult.identified_patterns && eatingPatternResult.identified_patterns.length > 0 ? eatingPatternResult.identified_patterns.join(', ') : 'No specific patterns found'}
-
-💡 Advice: ${eatingPatternResult.personalized_advice || 'Please log your food consistently for more accurate analysis'}
-
-${
-  eatingPatternResult.improvement_suggestions &&
-  eatingPatternResult.improvement_suggestions.length > 0
-    ? `📝 Improvement Suggestions:\n${eatingPatternResult.improvement_suggestions.map((s) => `• ${s}`).join('\n')}`
-    : ''
-}`
-
-              await this.replyText(
-                replyToken,
-                responseText,
-                'eating_pattern_analysis',
-              )
-              return
-            } else if (
-              eatingPatternResult &&
-              typeof eatingPatternResult === 'object' &&
-              'error' in eatingPatternResult
-            ) {
-              // Error from eating pattern analysis
-              this.logger.error(
-                `Eating pattern analysis error for user ${userId}: ${eatingPatternResult.error}`,
-              )
-              await this.replyText(
-                replyToken,
-                currentLanguage === 'th'
-                  ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์รูปแบบการกิน โปรดลองใหม่อีกครั้ง'
-                  : 'Sorry, there was an error analyzing your eating pattern. Please try again.',
-              )
-              return
-            } else {
-              // Unexpected result
-              this.logger.warn(
-                `Unexpected eating pattern analysis result for user ${userId}:`,
-                eatingPatternResult,
-              )
-            }
-          } catch (eatingPatternError) {
-            this.logger.error(
-              `Error in eating pattern analysis for user ${userId}:`,
-              eatingPatternError,
-            )
-            await this.replyText(
-              replyToken,
-              currentLanguage === 'th'
-                ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์รูปแบบการกิน โปรดลองใหม่อีกครั้ง'
-                : 'Sorry, there was an error analyzing your eating pattern. Please try again.',
-            )
-            return
-          }
-          break
-
-        case 'general_nutrition':
-        default: {
-          // Handle as general nutrition question (includes greetings, off-topic, and nutrition questions)
-          break
+        } catch (error) {
+          this.logger.error(
+            `Error getting general nutrition answer for user ${userId}: "${text}". Error: ${error instanceof Error ? error.message : String(error)}`,
+            error instanceof Error ? error.stack : undefined,
+          )
+          const errorMessage =
+            currentLanguage === 'th'
+              ? 'ขออภัยค่ะ มีข้อผิดพลาดในการสื่อสารกับ AI กรุณาลองใหม่อีกครั้งค่ะ'
+              : 'Sorry, there was an error communicating with the AI. Please try again.'
+          await this.replyText(
+            replyToken,
+            errorMessage,
+            'general_ai_error',
+            true,
+            currentLanguage,
+          )
         }
-      }
-
-      // Default: General nutrition question handling (includes all non-food-analysis queries)
-      this.logger.log(
-        `Treating as general nutrition question for user ${userId}: "${text}"`,
-      )
-      const answer = await this.aiService.answerGeneralNutritionQuestion(
-        userId,
-        text,
-        userProfile,
-        currentLanguage,
-      )
-      await this.replyText(
-        replyToken,
-        answer ||
-          (currentLanguage === 'th'
-            ? 'ขออภัยค่ะ ฉันไม่สามารถตอบคำถามนี้ได้ในขณะนี้'
-            : "Sorry, I couldn't answer that question right now."),
-        'general_nutrition', // เพิ่ม context เพื่อไม่ให้ตัดข้อความ
-      )
-    } catch (intentError) {
-      this.logger.error(
-        `Intent detection failed for user ${userId}, using fallback:`,
-        intentError,
-      )
-
-      // Fallback to general nutrition Q&A if intent detection fails
-      try {
-        const answer = await this.aiService.answerGeneralNutritionQuestion(
-          userId,
-          text,
-          userProfile,
-          currentLanguage,
-        )
-        await this.replyText(
-          replyToken,
-          answer ||
-            (currentLanguage === 'th'
-              ? 'ขออภัยค่ะ ฉันไม่สามารถตอบคำถามนี้ได้ในขณะนี้'
-              : "Sorry, I couldn't answer that question right now."),
-          'general_nutrition', // เพิ่ม context เพื่อไม่ให้ตัดข้อความ
-        )
-      } catch (error) {
-        this.logger.error(
-          `Error answering general nutrition question for user ${userId}:`,
-          error,
-        )
-        await this.replyText(
-          replyToken,
-          currentLanguage === 'th'
-            ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการพยายามตอบคำถามของคุณ โปรดลองถามใหม่หรือถามอย่างอื่นนะคะ'
-            : 'Sorry, I encountered an error trying to answer your question. Please try rephrasing or ask something else.',
-        )
-      }
+        break
     }
   }
 
@@ -813,8 +820,11 @@ ${
       await this.replyText(
         replyToken,
         langForError === 'th'
-          ? 'ขออภัยค่ะ มีปัญหาในการเข้าถึงข้อมูลโปรไฟล์ของคุณ โปรดลองอีกครั้งในภายหลัง'
-          : 'Sorry, there was an issue accessing your profile. Please try again later.',
+          ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการดึงข้อมูลโปรไฟล์ของคุณ โปรดลองใหม่อีกครั้ง'
+          : 'Sorry, there was an error retrieving your profile. Please try again.',
+        'user_profile_error_image_flow',
+        false, // No main menu QR on critical error
+        // currentLanguage, // Not needed if false
       )
       return
     }
@@ -870,6 +880,21 @@ ${
         // Continue without re-throwing, as the primary goal (image upload and AI analysis) might still proceed
         // or has already sent a reply.
       }
+
+      // Log intent for image message as food_analysis
+      const imageIntentResult: IntentDetectionResult = {
+        intent: 'food_analysis',
+        confidence: 1.0, // Image is always considered food analysis
+        reasoning: 'Image received, assumed food analysis',
+      }
+      this.intentDetectionMetricsService.logDetection(
+        // Corrected: use intentDetectionMetricsService
+        `Image: ${originalFileName}`, // User message can be image identifier
+        imageIntentResult,
+        0, // Latency for intent detection itself is minimal/not applicable here
+        false, // Not a fallback in the traditional sense for this path
+        userId,
+      )
 
       const analysisResult = await this.aiService.analyzeFoodOrMeal(
         userId,
@@ -960,7 +985,12 @@ ${
                 )
               }
             }
-            await this.replyMessages(replyToken, [flexMessage])
+            await this.replyMessages(
+              replyToken,
+              [flexMessage],
+              true,
+              currentLanguage,
+            )
           } else if (
             'error' in analysisResult &&
             typeof analysisResult.error === 'string'
@@ -974,6 +1004,9 @@ ${
               currentLanguage === 'th'
                 ? `ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ: ${errorResult.error}`
                 : `Sorry, an error occurred while analyzing the image: ${errorResult.error}`,
+              'image_analysis_error',
+              true,
+              currentLanguage,
             )
           } else {
             this.logger.warn(
@@ -986,6 +1019,9 @@ ${
               currentLanguage === 'th'
                 ? 'ขออภัยค่ะ ไม่สามารถวิเคราะห์รูปภาพนี้ได้ในขณะนี้'
                 : 'Sorry, I could not analyze the image at this time.',
+              'image_analysis_unexpected',
+              true,
+              currentLanguage,
             )
           }
         } else {
@@ -998,6 +1034,9 @@ ${
             currentLanguage === 'th'
               ? 'ขออภัยค่ะ ไม่สามารถวิเคราะห์รูปภาพนี้ได้ในขณะนี้'
               : 'Sorry, I could not analyze the image at this time.',
+            'image_analysis_null',
+            true,
+            currentLanguage,
           )
         }
       } else {
@@ -1010,6 +1049,9 @@ ${
           currentLanguage === 'th'
             ? 'ขออภัยค่ะ ไม่สามารถวิเคราะห์รูปภาพนี้ได้ในขณะนี้'
             : 'Sorry, I could not analyze the image at this time.',
+          'image_analysis_falsy',
+          true,
+          currentLanguage,
         )
       }
     } catch (error) {
@@ -1017,9 +1059,15 @@ ${
         `Error handling image message for messageId ${messageId}:`,
         error instanceof Error ? error.stack : undefined,
       )
-      await this.pushText(
-        userId,
-        'Sorry, there was an error processing your image. Please try again.',
+      // ใช้ replyText แทน pushText เพื่อให้มี Quick Reply
+      await this.replyText(
+        replyToken,
+        currentLanguage === 'th' // Use currentLanguage if available from userProfile, else default
+          ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการประมวลผลรูปภาพของคุณ โปรดลองอีกครั้ง'
+          : 'Sorry, there was an error processing your image. Please try again.',
+        'image_processing_error',
+        true,
+        currentLanguage,
       )
     }
   }
@@ -1059,7 +1107,13 @@ ${
         type: 'text',
         text: `Welcome to AI Nutritionist, ${userProfile.displayName || 'friend'}! I'm here to help. Send a food pic or ask a nutrition question. Use /help for more.`,
       }
-      await this.replyMessages(replyToken, [welcomeMessage])
+      await this.replyMessages(
+        replyToken,
+        [welcomeMessage],
+        true,
+        userProfile.language || 'th',
+      )
+      // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
     } catch (error) {
       this.logger.error(
         `Error in handleFollowEvent for userId ${userId}:`,
@@ -1094,14 +1148,37 @@ ${
     this.logger.log(
       `Received postback data: "${data}" from user: ${userId}, params: ${params ? JSON.stringify(params) : 'undefined'}`,
     )
+
+    // Rate limiting for postback events - prevent rapid clicking
+    const queryParams = new URLSearchParams(data)
+    const action = queryParams.get('action')
+    const messageIdFromPostback = queryParams.get('messageId') || undefined
+
+    // Create a unique rate limit key based on userId, action, and messageId
+    const rateLimitKey = `postback_rate_limit:${userId}:${action}:${messageIdFromPostback || 'no_message_id'}`
+    const rateLimitDuration = 3000 // 3 seconds cooldown
+
+    // Check if user recently performed the same action
+    const lastActionTime = this.analysisCacheService.get<number>(rateLimitKey)
+    const currentTime = Date.now()
+
+    if (lastActionTime && currentTime - lastActionTime < rateLimitDuration) {
+      this.logger.warn(
+        `Rate limit triggered for user ${userId}, action ${action}. Last action: ${lastActionTime}, current: ${currentTime}, diff: ${currentTime - lastActionTime}ms`,
+      )
+
+      // Silent block - no message sent to user
+      return
+    }
+
+    // Set rate limit timestamp
+    this.analysisCacheService.set(rateLimitKey, currentTime, rateLimitDuration)
+
     const userProfile = await this.userService.getOrCreateUserProfile({
       lineUserId: userId,
     })
     const currentLanguage = userProfile.language || 'th'
 
-    const queryParams = new URLSearchParams(data)
-    const action = queryParams.get('action')
-    const messageIdFromPostback = queryParams.get('messageId') || undefined
     const mealTypeFromPostback = queryParams.get('mealType') // This is the mealType
     const postbackDate = params?.date // Assign postbackDate from params
 
@@ -1117,7 +1194,7 @@ ${
           action === 'view_vitamins_minerals' ||
           action === 'save_food_analysis' ||
           action === 'confirm_save_meal' ||
-          action === 'reanalyze_food') // ✅ เปลี่ยนจาก edit_food_analysis เป็น reanalyze_food
+          action === 'reanalyze_food')
       ) {
         this.logger.warn(
           `Postback action '${action}' called without a messageId. Cannot retrieve cached data.`,
@@ -1127,7 +1204,11 @@ ${
           currentLanguage === 'th'
             ? 'ขออภัยค่ะ ข้อมูลการวิเคราะห์เดิมไม่สมบูรณ์ โปรดลองวิเคราะห์ใหม่อีกครั้ง'
             : 'Sorry, the original analysis data is incomplete. Please try analyzing again.',
+          'postback_missing_messageId',
+          true,
+          currentLanguage,
         )
+        // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
         return
       }
 
@@ -1140,633 +1221,888 @@ ${
           this.logger.warn(
             `Cache miss for messageId ${messageIdFromPostback} for postback action '${action}'.`,
           )
-          // It's possible for cache to expire, or messageId to be invalid.
         }
       }
 
-      if (action === 'analyze_again') {
-        this.logger.log(
-          `Postback: Handling 'analyze_again' for user ${userProfile.lineUserId}. MessageId: ${messageIdFromPostback}`,
-        )
-
-        if (!cachedData) {
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'ขออภัย ไม่พบข้อมูลเดิมที่จะวิเคราะห์อีกครั้ง โปรดลองเริ่มใหม่'
-              : 'Sorry, the original data to analyze again was not found. Please try starting over.',
+      switch (action) {
+        case 'analyze_again': {
+          this.logger.log(
+            `Postback: Handling 'analyze_again' for user ${userProfile.lineUserId}. MessageId: ${messageIdFromPostback}`,
           )
-          return
-        }
 
-        // Determine original analysis type (image or text) from cachedData or how it was initiated
-        const originalImageUrl = cachedData.imageUrl
-        const originalTextQuery = cachedData.food_name // Or a more specific field if available from initial analysis
-
-        const analysisResult = await this.aiService.analyzeFoodOrMeal(
-          userProfile.lineUserId,
-          originalTextQuery, // Text prompt for AI, could be generic like "Analyze this food" if it was an image
-          userProfile,
-          currentLanguage,
-          undefined, // mode - let AI decide or use cached mode if available
-          originalImageUrl, // imageUrl - pass if it was an image analysis
-          messageIdFromPostback, // original messageId for context (now string | undefined)
-        )
-
-        if (analysisResult && 'food_name' in analysisResult) {
-          // Assuming analysisResult is already FoodAnalysisToolResult due to the 'food_name' in analysisResult check
-          const foodAnalysisResult = analysisResult
-
-          const flexMessageData: FlexFoodAnalysisData = {
-            // Explicitly type flexMessageData
-            ...foodAnalysisResult, // Spread analysisResult, ensure its type is compatible with parts of FlexFoodAnalysisData
-            lineUserId: userProfile.lineUserId,
-            messageId: messageIdFromPostback || new Date().getTime().toString(),
-            imageUrl: originalImageUrl,
-          }
-
-          const flexMessage = createFoodAnalysisFlexMessage(
-            flexMessageData,
-            currentLanguage,
-          )
-          await this.replyMessages(replyToken, [flexMessage])
-        } else {
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'ขออภัย ไม่สามารถวิเคราะห์ผลลัพธ์ได้ในขณะนี้'
-              : `Sorry, I couldn't process the analysis result at this time.`,
-          )
-        }
-      } else if (action === 'view_vitamins_minerals') {
-        this.logger.log(
-          `Postback: Handling 'view_vitamins_minerals' for user ${userProfile.lineUserId}, messageId: ${messageIdFromPostback}`,
-        )
-        if (cachedData) {
-          const { vitamins, minerals } =
-            this.extractVitaminsAndMinerals(cachedData)
-
-          const flexMessage = createVitaminMineralDetailsFlexMessage(
-            cachedData.food_name,
-            vitamins, // This is Record<string, AiVitaminMineralDetail>
-            minerals, // This is Record<string, AiVitaminMineralDetail>
-            currentLanguage,
-            // messageIdFromPostback // Removed: createVitaminMineralDetailsFlexMessage doesn't take this according to its definition in flex.messages.ts
-          )
-          await this.replyMessages(replyToken, [flexMessage])
-        } else {
-          this.logger.warn(
-            `Cache miss for messageId ${messageIdFromPostback} for view_vitamins_minerals action. Attempting to fetch from database.`,
-          )
-          // Attempt to fetch from FoodLog using lineUserId and sourceMessageId
-          const foodLogEntry = await this.foodLogModel
-            .findOne({
-              lineUserId: userId,
-              sourceMessageId: messageIdFromPostback,
-            })
-            .sort({ createdAt: -1 }) // Get the most recent one if multiple exist (though unlikely for same sourceMessageId)
-
-          if (
-            foodLogEntry &&
-            foodLogEntry.food &&
-            foodLogEntry.food.micronutrients
-          ) {
-            this.logger.log(
-              `Found food log entry for user ${userId} and sourceMessageId ${messageIdFromPostback}. Extracting micronutrients.`,
-            )
-
-            const foodNameFromDb =
-              foodLogEntry.food.foodName?.th ||
-              foodLogEntry.food.foodName?.en ||
-              (currentLanguage === 'th' ? 'อาหารที่บันทึกไว้' : 'Saved Food')
-
-            // Convert Map<string, VitaminMineralDetailSchemaDocument> to Record<string, AiVitaminMineralDetail>
-            const vitaminsFromDb: Record<string, AiVitaminMineralDetail> = {}
-            const mineralsFromDb: Record<string, AiVitaminMineralDetail> = {}
-
-            const vitaminKeys = [
-              'vitamin_a',
-              'vitamin_c',
-              'vitamin_d',
-              'vitamin_e',
-              'vitamin_k',
-              'vitamin_b1',
-              'vitamin_b2',
-              'vitamin_b3',
-              'vitamin_b5',
-              'vitamin_b6',
-              'vitamin_b9',
-              'vitamin_b12',
-            ]
-            // const mineralKeys = [ // Not strictly needed for separation logic here, but good for reference
-            //   'calcium', 'iron', 'magnesium', 'potassium', 'zinc', 'phosphorus', 'selenium'
-            // ];
-
-            foodLogEntry.food.micronutrients.forEach((detail, key) => {
-              const aiDetail: AiVitaminMineralDetail = {
-                value: detail.value,
-                unit: detail.unit,
-                dv: detail.dv,
-              }
-              if (vitaminKeys.includes(key)) {
-                vitaminsFromDb[key] = aiDetail
-              } else {
-                mineralsFromDb[key] = aiDetail
-              }
-            })
-
-            this.logger.debug(
-              `Vitamins from DB for ${foodNameFromDb}: ${Object.keys(vitaminsFromDb).join(', ')}`,
-            )
-            this.logger.debug(
-              `Minerals from DB for ${foodNameFromDb}: ${Object.keys(mineralsFromDb).join(', ')}`,
-            )
-
-            const flexMessage = createVitaminMineralDetailsFlexMessage(
-              foodNameFromDb,
-              vitaminsFromDb,
-              mineralsFromDb,
+          if (!cachedData) {
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัย ไม่พบข้อมูลเดิมที่จะวิเคราะห์อีกครั้ง โปรดลองเริ่มใหม่'
+                : 'Sorry, the original data to analyze again was not found. Please try starting over.',
+              'analyze_again_no_cache',
+              true,
               currentLanguage,
             )
-            await this.replyMessages(replyToken, [flexMessage])
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+            return
+          }
+          const originalImageUrl = cachedData.imageUrl
+          const originalTextQuery = cachedData.food_name
+
+          const analysisResult = await this.aiService.analyzeFoodOrMeal(
+            userProfile.lineUserId,
+            originalTextQuery,
+            userProfile,
+            currentLanguage,
+            undefined,
+            originalImageUrl,
+            messageIdFromPostback,
+          )
+
+          if (analysisResult && 'food_name' in analysisResult) {
+            const foodAnalysisResult = analysisResult
+            const flexMessageData: FlexFoodAnalysisData = {
+              ...foodAnalysisResult,
+              lineUserId: userProfile.lineUserId,
+              messageId:
+                messageIdFromPostback || new Date().getTime().toString(),
+              imageUrl: originalImageUrl,
+            }
+            const flexMessage = createFoodAnalysisFlexMessage(
+              flexMessageData,
+              currentLanguage,
+            )
+            await this.replyMessages(
+              replyToken,
+              [flexMessage],
+              false,
+              currentLanguage,
+            )
+          } else {
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัย ไม่สามารถวิเคราะห์ผลลัพธ์ได้ในขณะนี้'
+                : `Sorry, I couldn't process the analysis result at this time.`,
+              'food_analysis_text_error',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+          }
+          break
+        }
+        case 'view_vitamins_minerals': {
+          this.logger.log(
+            `Postback: Handling 'view_vitamins_minerals' for user ${userProfile.lineUserId}, messageId: ${messageIdFromPostback}`,
+          )
+          if (cachedData) {
+            const { vitamins, minerals } =
+              this.extractVitaminsAndMinerals(cachedData)
+            const flexMessage = createVitaminMineralDetailsFlexMessage(
+              cachedData.food_name,
+              vitamins,
+              minerals,
+              currentLanguage,
+            )
+            await this.replyMessages(
+              replyToken,
+              [flexMessage],
+              false,
+              currentLanguage,
+            )
           } else {
             this.logger.warn(
-              `Food log entry not found for user ${userId} and sourceMessageId ${messageIdFromPostback} after cache miss.`,
+              `Cache miss for messageId ${messageIdFromPostback} for view_vitamins_minerals action. Attempting to fetch from database.`,
             )
-            const notFoundText =
-              currentLanguage === 'th'
-                ? 'ขออภัย ไม่พบข้อมูลการวิเคราะห์เดิมหรือที่บันทึกไว้ โปรดลองวิเคราะห์ใหม่อีกครั้ง'
-                : 'Sorry, the original or saved analysis data was not found. Please try analyzing again.'
-            await this.replyText(replyToken, notFoundText)
+            const foodLogEntry = await this.foodLogModel
+              .findOne({
+                lineUserId: userId,
+                sourceMessageId: messageIdFromPostback,
+              })
+              .sort({ createdAt: -1 })
+
+            if (
+              foodLogEntry &&
+              foodLogEntry.food &&
+              foodLogEntry.food.micronutrients
+            ) {
+              this.logger.log(
+                `Found food log entry for user ${userId} and sourceMessageId ${messageIdFromPostback}. Extracting micronutrients.`,
+              )
+              const foodNameFromDb =
+                foodLogEntry.food.foodName?.th ||
+                foodLogEntry.food.foodName?.en ||
+                (currentLanguage === 'th' ? 'อาหารที่บันทึกไว้' : 'Saved Food')
+              const vitaminsFromDb: Record<string, AiVitaminMineralDetail> = {}
+              const mineralsFromDb: Record<string, AiVitaminMineralDetail> = {}
+              const vitaminKeys = [
+                'vitamin_a',
+                'vitamin_c',
+                'vitamin_d',
+                'vitamin_e',
+                'vitamin_k',
+                'vitamin_b1',
+                'vitamin_b2',
+                'vitamin_b3',
+                'vitamin_b5',
+                'vitamin_b6',
+                'vitamin_b9',
+                'vitamin_b12',
+              ]
+              foodLogEntry.food.micronutrients.forEach((detail, key) => {
+                const aiDetail: AiVitaminMineralDetail = {
+                  value: detail.value,
+                  unit: detail.unit,
+                  dv: detail.dv,
+                }
+                if (vitaminKeys.includes(key)) {
+                  vitaminsFromDb[key] = aiDetail
+                } else {
+                  mineralsFromDb[key] = aiDetail
+                }
+              })
+              const flexMessage = createVitaminMineralDetailsFlexMessage(
+                foodNameFromDb,
+                vitaminsFromDb,
+                mineralsFromDb,
+                currentLanguage,
+              )
+              await this.replyMessages(
+                replyToken,
+                [flexMessage],
+                false,
+                currentLanguage,
+              )
+            } else {
+              this.logger.warn(
+                `Food log entry not found for user ${userId} and sourceMessageId ${messageIdFromPostback} after cache miss.`,
+              )
+              const notFoundText =
+                currentLanguage === 'th'
+                  ? 'ขออภัย ไม่พบข้อมูลการวิเคราะห์เดิมหรือที่บันทึกไว้ โปรดลองวิเคราะห์ใหม่อีกครั้ง'
+                  : 'Sorry, the original or saved analysis data was not found. Please try analyzing again.'
+              await this.replyText(
+                replyToken,
+                notFoundText,
+                'vitamins_minerals_not_found',
+                true,
+                currentLanguage,
+              )
+              // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+            }
           }
+          break
         }
-      } else if (action === 'save_food_analysis') {
-        this.logger.log(
-          `Postback: Handling 'save_food_analysis' (initiate save) for user ${userProfile.lineUserId}, messageId: ${messageIdFromPostback}`,
-        )
-
-        if (!messageIdFromPostback) {
-          // This should be caught by the initial check, but as a safeguard:
-          this.logger.error('save_food_analysis called without messageId.')
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'เกิดข้อผิดพลาด: ไม่พบข้อมูลการวิเคราะห์เดิม'
-              : 'Error: Original analysis data not found.',
+        case 'save_food_analysis': {
+          this.logger.log(
+            `Postback: Handling 'save_food_analysis' (initiate save) for user ${userProfile.lineUserId}, messageId: ${messageIdFromPostback}`,
           )
-          return
-        }
-
-        // Check if cachedData exists, though we might not need it here, just the messageId for the next step.
-        if (!cachedData) {
-          this.logger.warn(
-            `Cache miss for messageId ${messageIdFromPostback} when initiating save_food_analysis. This might be okay if only messageId is forwarded.`,
-          )
-          // Optionally, reply if data is absolutely necessary for context before showing meal types
-          // For now, we assume messageId is enough to carry forward.
-        }
-
-        const mealTypes = [
-          {
-            label: currentLanguage === 'th' ? '☀️ อาหารเช้า' : '☀️ Breakfast',
-            type: 'breakfast',
-          },
-          {
-            label: currentLanguage === 'th' ? '🕛 อาหารกลางวัน' : '🕛 Lunch',
-            type: 'lunch',
-          },
-          {
-            label: currentLanguage === 'th' ? '🌙 อาหารเย็น' : '🌙 Dinner',
-            type: 'dinner',
-          },
-          {
-            label: currentLanguage === 'th' ? '🍎 อาหารว่าง' : '🍎 Snack',
-            type: 'snack',
-          },
-          {
-            label: currentLanguage === 'th' ? '🍽️ อื่นๆ' : '🍽️ Other',
-            type: 'other',
-          },
-        ]
-
-        const quickReplyItems: QuickReplyItem[] = mealTypes.map((meal) => ({
-          type: 'action' as const,
-          action: {
-            type: 'postback',
-            label: meal.label,
-            data: `action=confirm_save_meal&messageId=${messageIdFromPostback}&mealType=${meal.type}`,
-            displayText: meal.label,
-          },
-        }))
-
-        await this.replyMessages(replyToken, [
-          {
-            type: 'text',
-            text:
+          if (!messageIdFromPostback) {
+            this.logger.error('save_food_analysis called without messageId.')
+            await this.replyText(
+              replyToken,
               currentLanguage === 'th'
-                ? 'ต้องการบันทึกเป็นมื้ออาหารประเภทใดคะ?'
-                : 'Which meal type would you like to save this as?',
-            quickReply: {
-              items: quickReplyItems,
+                ? 'เกิดข้อผิดพลาด: ไม่พบข้อมูลการวิเคราะห์เดิม'
+                : 'Error: Original analysis data not found.',
+              'save_food_analysis_no_data',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+            return
+          }
+          if (!cachedData) {
+            this.logger.warn(
+              `Cache miss for messageId ${messageIdFromPostback} when initiating save_food_analysis. This might be okay if only messageId is forwarded.`,
+            )
+          }
+          const mealTypes = [
+            {
+              label: currentLanguage === 'th' ? '☀️ อาหารเช้า' : '☀️ Breakfast',
+              type: 'breakfast',
             },
-          },
-        ])
-      } else if (action === 'confirm_save_meal') {
-        this.logger.log(
-          `Postback: Handling 'confirm_save_meal' for user ${userId}, mealType: ${mealTypeFromPostback}, messageId: ${messageIdFromPostback}`,
-        )
-
-        if (!messageIdFromPostback || !cachedData) {
-          this.logger.warn(
-            `confirm_save_meal called without messageId or cachedData for user ${userId}.`,
-          )
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'ขออภัยค่ะ ไม่พบข้อมูลเดิมที่จะบันทึก โปรดลองเริ่มการวิเคราะห์ใหม่อีกครั้ง'
-              : 'Sorry, the original data for saving was not found. Please try starting a new analysis.',
-          )
-          return
+            {
+              label: currentLanguage === 'th' ? '🕛 อาหารกลางวัน' : '🕛 Lunch',
+              type: 'lunch',
+            },
+            {
+              label: currentLanguage === 'th' ? '🌙 อาหารเย็น' : '🌙 Dinner',
+              type: 'dinner',
+            },
+            {
+              label: currentLanguage === 'th' ? '🍎 อาหารว่าง' : '🍎 Snack',
+              type: 'snack',
+            },
+          ]
+          const quickReplyItems: QuickReplyItem[] = mealTypes.map((meal) => ({
+            type: 'action' as const,
+            action: {
+              type: 'postback',
+              label: meal.label,
+              data: `action=confirm_save_meal&messageId=${messageIdFromPostback}&mealType=${meal.type}`,
+              displayText: meal.label,
+            },
+          }))
+          await this.replyMessages(replyToken, [
+            {
+              type: 'text',
+              text:
+                currentLanguage === 'th'
+                  ? 'ต้องการบันทึกเป็นมื้ออาหารประเภทใดคะ?'
+                  : 'Which meal type would you like to save this as?',
+              quickReply: { items: quickReplyItems },
+            },
+          ])
+          break
         }
-
-        if (!mealTypeFromPostback) {
-          this.logger.error(
-            `mealType not found in postback data for confirm_save_meal. User: ${userId}`,
+        case 'confirm_save_meal': {
+          this.logger.log(
+            `Postback: Handling 'confirm_save_meal' for user ${userId}, mealType: ${mealTypeFromPostback}, messageId: ${messageIdFromPostback}`,
           )
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'เกิดข้อผิดพลาด: ไม่พบประเภทมื้ออาหาร โปรดลองอีกครั้ง'
-              : 'Error: Meal type not found. Please try again.',
-          )
-          return
-        }
-
-        try {
-          const userDoc = await this.userService.getUserDocumentByLineId(
-            userId,
-            // true, // createIfNotExist - Removed second argument based on linter error
-          )
-          if (!userDoc) {
-            this.logger.error(
-              `User not found for lineUserId: ${userId} during confirm_save_meal. Cannot save food log.`,
+          if (!messageIdFromPostback || !cachedData) {
+            this.logger.warn(
+              `confirm_save_meal called without messageId or cachedData for user ${userId}.`,
             )
             await this.replyText(
               replyToken,
               currentLanguage === 'th'
-                ? 'ขออภัยค่ะ ไม่พบข้อมูลผู้ใช้ของคุณในระบบ ไม่สามารถบันทึกข้อมูลได้'
-                : 'Sorry, your user profile was not found. Unable to save food log.',
+                ? 'ขออภัยค่ะ ไม่พบข้อมูลเดิมที่จะบันทึก โปรดลองเริ่มการวิเคราะห์ใหม่อีกครั้ง'
+                : 'Sorry, the original data for saving was not found. Please try starting a new analysis.',
+              'confirm_save_meal_no_data',
+              true,
+              currentLanguage,
             )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
             return
           }
-
-          // Attempt to parse amount and unit from portion
-          let foodAmount = 1
-          let foodUnit = 'หน่วย' // Changed default unit
-          if (cachedData.portion) {
-            // Regex to capture:
-            // 1. Optional leading text (e.g., "ประมาณ ")
-            // 2. The amount (digits, possibly with a decimal)
-            // 3. The unit (common food units, trying to be more specific)
-            // 4. Optional trailing text (e.g., " (ประมาณ 300 กรัม)")
-            const portionRegex =
-              /^(?:ประมาณ\s*)?([\d.]+)\s*(กล่อง|จาน|ชาม|ชิ้น|ถ้วย|กรัม|กก\.|กิโลกรัม|มล\.|ลิตร|หน่วย|portion|serving|piece|g|kg|ml|l)(?:\s*\(.*\))?/i
-            const portionParts = cachedData.portion.match(portionRegex)
-
-            if (portionParts && portionParts.length >= 3) {
-              // portionParts[0] is full match, [1] is amount, [2] is unit
-              foodAmount = parseFloat(portionParts[1]) || 1
-              foodUnit = portionParts[2] || 'หน่วย'
-            } else {
-              // Fallback for simpler cases or if the above regex fails
-              const simplerParts = cachedData.portion.match(/([\d.]+)\s*(\S+)/)
-              if (simplerParts && simplerParts.length === 3) {
-                foodAmount = parseFloat(simplerParts[1]) || 1
-                foodUnit = simplerParts[2] || 'หน่วย'
-              }
-              this.logger.warn(
-                `[confirm_save_meal] Could not parse unit precisely from portion: "${cachedData.portion}". Using amount: ${foodAmount}, unit: ${foodUnit}`,
-              )
-            }
-          }
-
-          // Log cachedData for debugging image issue
-          this.logger.log(
-            `[confirm_save_meal] Cached data for messageId ${messageIdFromPostback}: Food Name - "${cachedData.food_name}", Image URL - "${cachedData.imageUrl}"`,
-          )
-
-          // Define azureBaseUrl before its use
-          const azureBaseUrl = this.configService.get<string>(
-            'AZURE_STORAGE_CONTAINER_URL',
-          )
-
-          const foodLog = new this.foodLogModel({
-            userId: userDoc._id,
-            lineUserId: userId,
-            sourceMessageId: messageIdFromPostback, // Save the original messageId
-            logDate: new Date(postbackDate || Date.now()),
-            mealType: mealTypeFromPostback,
-            food: {
-              foodName: {
-                th: cachedData.food_name, // Use food_name for th
-                en: cachedData.food_name, // Fallback to food_name for en for now
-              },
-              amount: foodAmount,
-              unit: foodUnit,
-              portion: cachedData.portion,
-              nutrition: {
-                calories: cachedData.calories || 0,
-                protein: cachedData.protein,
-                carbs: cachedData.carbs,
-                fat: cachedData.fat,
-                fiber: cachedData.fiber,
-                sugar: cachedData.sugar,
-                sodium: cachedData.sodium,
-                cholesterol: cachedData.cholesterol, // Added
-                saturated_fat: cachedData.saturated_fat, // Added
-                water: cachedData.water, // Added
-                omega3: cachedData.omega3, // Add if schema supports
-              },
-              micronutrients: this.extractMicronutrients(cachedData), // Ensure this returns a Map compatible with the schema
-            },
-            tags: cachedData.tags || [], // Added tags from cachedData
-            imageUrl: cachedData.imageUrl,
-            image: cachedData.imageUrl
-              ? {
-                  url: cachedData.imageUrl,
-                  blobName:
-                    azureBaseUrl && cachedData.imageUrl.startsWith(azureBaseUrl)
-                      ? cachedData.imageUrl
-                          .substring(
-                            azureBaseUrl.length +
-                              (cachedData.imageUrl.startsWith(
-                                azureBaseUrl + '/',
-                              )
-                                ? 1
-                                : 0),
-                          )
-                          .split('?')[0]
-                      : cachedData.imageUrl.includes('/') // Basic check if it's a URL
-                        ? cachedData.imageUrl
-                            .substring(cachedData.imageUrl.lastIndexOf('/') + 1)
-                            .split('?')[0]
-                        : undefined,
-                  alt: cachedData.food_name, // Use food_name for alt text
-                  uploadDate: new Date(),
-                  isPermanent: true, // Mark as permanent as it's part of a saved log
-                  retentionDays: 30, // Set retention for 30 days for saved logs
-                }
-              : undefined,
-            aiAnalyzed: true,
-            confidenceScore: cachedData.confidence_score,
-          })
-
-          const savedFoodLog: FoodLogDocument = await foodLog.save()
-          this.logger.log(
-            `Food log saved successfully for user ${userId}, meal type ${mealTypeFromPostback}, food log ID: ${String(savedFoodLog._id)}`,
-          )
-
-          // Clear temporary image log ONLY if the original input was an image that we temporarily stored
-          // The current cachedData.imageUrl might be the AI's analysis image or the original uploaded one.
-          // Need a more robust way to know if cachedData.imageUrl refers to a temp blob we own.
-          if (
-            messageIdFromPostback &&
-            cachedData.imageUrl &&
-            azureBaseUrl &&
-            cachedData.imageUrl.startsWith(azureBaseUrl)
-          ) {
-            // This check is a heuristic. A better way is to pass a specific tempBlobName in cachedData if applicable.
-            const tempBlobName = cachedData.imageUrl.substring(
-              azureBaseUrl.length,
+          if (!mealTypeFromPostback) {
+            this.logger.error(
+              `mealType not found in postback data for confirm_save_meal. User: ${userId}`,
             )
-            if (tempBlobName) {
-              this.logger.log(
-                `Attempting to delete temporary image log for potential blob: ${tempBlobName} based on cached imageUrl.`,
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'เกิดข้อผิดพลาด: ไม่พบประเภทมื้ออาหาร โปรดลองอีกครั้ง'
+                : 'Error: Meal type not found. Please try again.',
+              'confirm_save_meal_no_meal_type',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+            return
+          }
+          try {
+            const userDoc =
+              await this.userService.getUserDocumentByLineId(userId)
+            if (!userDoc) {
+              this.logger.error(
+                `User not found for lineUserId: ${userId} during confirm_save_meal. Cannot save food log.`,
               )
-              await this.temporaryImageLogModel.deleteOne({
-                blobName: tempBlobName,
-                lineUserId: userId,
-              })
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ขออภัยค่ะ ไม่พบข้อมูลโปรไฟล์ของคุณ ไม่สามารถบันทึกข้อมูลอาหารได้'
+                  : 'Sorry, your user profile was not found. Unable to save food log.',
+                'confirm_save_meal_no_profile',
+                true,
+                currentLanguage,
+              )
+              // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+              return
             }
-          }
-          this.analysisCacheService.delete(messageIdFromPostback)
-
-          const liffId =
-            this.configService.get<string>('LIFF_ID_FOOD_REPORT') ||
-            'YOUR_LIFF_ID_FOR_FOOD_REPORT'
-          const foodLogId = String(savedFoodLog._id)
-          // Use savedFoodLog.logDate for the LIFF URL date parameter
-          const liffUrl = `https://liff.line.me/${liffId}/daily-report?logId=${foodLogId}&date=${format(new Date(savedFoodLog.logDate), 'yyyy-MM-dd')}`
-
-          const successMessage =
-            currentLanguage === 'th'
-              ? `บันทึก "${cachedData.food_name}" เป็น "${this.getThaiMealName(mealTypeFromPostback)}" เรียบร้อยแล้วค่ะ! 🍽️`
-              : `"${cachedData.food_name}" has been saved as "${mealTypeFromPostback}"! 🍽️`
-
-          const viewDetailsMessage =
-            currentLanguage === 'th'
-              ? 'ดู/แก้ไขรายละเอียด'
-              : 'View/Edit Details'
-
-          const replyFlexMessage: Message = {
-            type: 'flex',
-            altText: successMessage,
-            contents: {
-              type: 'bubble',
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: successMessage,
-                    wrap: true,
-                    weight: 'bold',
-                    size: 'md',
-                  },
-                  {
-                    type: 'text',
-                    text:
-                      currentLanguage === 'th'
-                        ? 'คุณสามารถดูรายละเอียดหรือแก้ไขข้อมูลได้โดยคลิกปุ่มด้านล่าง'
-                        : 'You can view or edit the details by clicking the button below.',
-                    wrap: true,
-                    size: 'sm',
-                    margin: 'md',
-                  },
-                ],
+            let foodAmount = 1
+            let foodUnit = 'หน่วย'
+            if (cachedData.portion) {
+              const portionRegex =
+                /^(?:ประมาณ\s*)?([\d.]+)\s*(กล่อง|จาน|ชาม|ชิ้น|ถ้วย|กรัม|กก\.|กิโลกรัม|มล\.|ลิตร|หน่วย|portion|serving|piece|g|kg|ml|l)(?:\s*\(.*\))?/i
+              const portionParts = cachedData.portion.match(portionRegex)
+              if (portionParts && portionParts.length >= 3) {
+                foodAmount = parseFloat(portionParts[1]) || 1
+                foodUnit = portionParts[2] || 'หน่วย'
+              } else {
+                const simplerParts =
+                  cachedData.portion.match(/([\d.]+)\s*(\S+)/)
+                if (simplerParts && simplerParts.length === 3) {
+                  foodAmount = parseFloat(simplerParts[1]) || 1
+                  foodUnit = simplerParts[2] || 'หน่วย'
+                }
+                this.logger.warn(
+                  `[confirm_save_meal] Could not parse unit precisely from portion: "${cachedData.portion}". Using amount: ${foodAmount}, unit: ${foodUnit}`,
+                )
+              }
+            }
+            const azureBaseUrl = this.configService.get<string>(
+              'AZURE_STORAGE_CONTAINER_URL',
+            )
+            const foodLog = new this.foodLogModel({
+              userId: userDoc._id,
+              lineUserId: userId,
+              sourceMessageId: messageIdFromPostback,
+              logDate: await this.getLogDateWithTimezone(userId, postbackDate),
+              mealType: mealTypeFromPostback,
+              food: {
+                foodName: {
+                  th: cachedData.food_name,
+                  en: cachedData.food_name,
+                },
+                amount: foodAmount,
+                unit: foodUnit,
+                portion: cachedData.portion,
+                nutrition: {
+                  calories: cachedData.calories || 0,
+                  protein: cachedData.protein,
+                  carbs: cachedData.carbs,
+                  fat: cachedData.fat,
+                  fiber: cachedData.fiber,
+                  sugar: cachedData.sugar,
+                  sodium: cachedData.sodium,
+                  cholesterol: cachedData.cholesterol,
+                  saturated_fat: cachedData.saturated_fat,
+                  water: cachedData.water,
+                  omega3: cachedData.omega3,
+                  potassium_nutrient: cachedData.potassium_nutrient,
+                  caffeine: cachedData.caffeine,
+                  alcohol: cachedData.alcohol,
+                  trans_fat: cachedData.trans_fat, // Added trans_fat
+                  polyunsaturated_fat: cachedData.polyunsaturated_fat, // Added polyunsaturated_fat
+                  monounsaturated_fat: cachedData.monounsaturated_fat, // Added monounsaturated_fat
+                  added_sugar: cachedData.added_sugar, // Added added_sugar
+                  copper: cachedData.copper, // Added copper
+                  manganese: cachedData.manganese, // Added manganese
+                  iodine: cachedData.iodine, // Added iodine
+                },
+                micronutrients: this.extractMicronutrients(cachedData),
               },
-              footer: {
-                type: 'box',
-                layout: 'vertical',
-                spacing: 'sm',
-                contents: [
-                  {
-                    type: 'button',
-                    style: 'link',
-                    height: 'sm',
-                    action: {
-                      type: 'uri',
-                      label: viewDetailsMessage,
-                      uri: liffUrl,
+              tags: cachedData.tags || [],
+              imageUrl: cachedData.imageUrl,
+              image: cachedData.imageUrl
+                ? {
+                    url: cachedData.imageUrl,
+                    blobName:
+                      azureBaseUrl &&
+                      cachedData.imageUrl.startsWith(azureBaseUrl)
+                        ? cachedData.imageUrl
+                            .substring(
+                              azureBaseUrl.length +
+                                (cachedData.imageUrl.startsWith(
+                                  azureBaseUrl + '/',
+                                )
+                                  ? 1
+                                  : 0),
+                            )
+                            .split('?')[0]
+                        : cachedData.imageUrl.includes('/')
+                          ? cachedData.imageUrl
+                              .substring(
+                                cachedData.imageUrl.lastIndexOf('/') + 1,
+                              )
+                              .split('?')[0]
+                          : undefined,
+                    alt: cachedData.food_name,
+                    uploadDate: new Date(),
+                    isPermanent: true,
+                    retentionDays: 30,
+                  }
+                : undefined,
+              aiAnalyzed: true,
+              confidenceScore: cachedData.confidence_score,
+            })
+            const savedFoodLog: FoodLogDocument = await foodLog.save()
+            this.logger.log(
+              `Food log saved successfully for user ${userId}, meal type ${mealTypeFromPostback}, food log ID: ${String(savedFoodLog._id)}`,
+            )
+            if (
+              messageIdFromPostback &&
+              cachedData.imageUrl &&
+              azureBaseUrl &&
+              cachedData.imageUrl.startsWith(azureBaseUrl)
+            ) {
+              const tempBlobName = cachedData.imageUrl.substring(
+                azureBaseUrl.length,
+              )
+              if (tempBlobName) {
+                this.logger.log(
+                  `Attempting to delete temporary image log for potential blob: ${tempBlobName} based on cached imageUrl.`,
+                )
+                await this.temporaryImageLogModel.deleteOne({
+                  blobName: tempBlobName,
+                  lineUserId: userId,
+                })
+              }
+            }
+            this.analysisCacheService.delete(messageIdFromPostback)
+            const liffId =
+              this.configService.get<string>('LIFF_ID_FOOD_REPORT') ||
+              'YOUR_LIFF_ID_FOR_FOOD_REPORT'
+            const foodLogId = String(savedFoodLog._id)
+            const liffUrl = `https://liff.line.me/${liffId}/daily-report?logId=${foodLogId}&date=${format(new Date(savedFoodLog.logDate), 'yyyy-MM-dd')}`
+            const successMessage =
+              currentLanguage === 'th'
+                ? `บันทึก "${cachedData.food_name}" เป็น "${this.getThaiMealName(mealTypeFromPostback)}" เรียบร้อยแล้วค่ะ! 🍽️`
+                : `"${cachedData.food_name}" has been saved as "${mealTypeFromPostback}"! 🍽️`
+            const viewDetailsMessage =
+              currentLanguage === 'th'
+                ? 'ดู/แก้ไขรายละเอียด'
+                : 'View/Edit Details'
+            const replyFlexMessage: Message = {
+              type: 'flex',
+              altText: successMessage,
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: successMessage,
+                      wrap: true,
+                      weight: 'bold',
+                      size: 'md',
                     },
-                  },
-                  {
-                    type: 'spacer',
-                    size: 'sm',
-                  },
-                ],
-                flex: 0,
+                    {
+                      type: 'text',
+                      text:
+                        currentLanguage === 'th'
+                          ? 'คุณสามารถดูรายละเอียดหรือแก้ไขข้อมูลได้โดยคลิกปุ่มด้านล่าง'
+                          : 'You can view or edit the details by clicking the button below.',
+                      wrap: true,
+                      size: 'sm',
+                      margin: 'md',
+                    },
+                  ],
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: viewDetailsMessage,
+                        uri: liffUrl,
+                      },
+                    },
+                    { type: 'spacer', size: 'sm' },
+                  ],
+                  flex: 0,
+                },
               },
+            }
+            await this.replyMessages(
+              replyToken,
+              replyFlexMessage,
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+          } catch (error) {
+            this.logger.error(
+              `Error saving food log for user ${userId}:`,
+              error instanceof Error ? error.stack : error,
+            )
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการบันทึกข้อมูลมื้ออาหาร'
+                : 'Sorry, an error occurred while saving your meal.',
+              'save_meal_error',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+          }
+          break
+        }
+        case 'reanalyze_food': {
+          this.logger.log(
+            `Postback: Handling 'reanalyze_food' for user ${userProfile.lineUserId}, messageId: ${messageIdFromPostback}`,
+          )
+          if (!messageIdFromPostback || !cachedData) {
+            this.logger.warn(
+              `reanalyze_food called without messageId (${messageIdFromPostback}) or missing cachedData for user ${userId}.`,
+            )
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัยค่ะ ไม่พบข้อมูลเดิมที่จะวิเคราะห์ใหม่ โปรดลองเริ่มการวิเคราะห์ใหม่อีกครั้ง'
+                : 'Sorry, the original data for reanalysis was not found. Please try starting a new analysis.',
+              'reanalyze_food_no_data',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+            return
+          }
+          const reanalyzeContextKey = `reanalyze_context:${userId}`
+          const contextToCache = {
+            originalMessageId: messageIdFromPostback,
+            originalAnalysisData: cachedData,
+            originalImageUrl: cachedData.imageUrl,
+            timestamp: new Date().getTime(),
+          }
+          this.analysisCacheService.set(
+            reanalyzeContextKey,
+            contextToCache,
+            600 * 1000,
+          )
+          this.logger.log(
+            `Cached reanalyze context for user ${userId}, messageId ${messageIdFromPostback}, imageUrl: ${cachedData.imageUrl ? 'present' : 'none'}`,
+          )
+          const cancelQuickReply: QuickReplyItem = {
+            type: 'action',
+            action: {
+              type: 'postback',
+              label: currentLanguage === 'th' ? '❌ ยกเลิก' : '❌ Cancel',
+              data: `action=cancel_reanalyze&userId=${userId}`,
+              displayText:
+                currentLanguage === 'th'
+                  ? 'ยกเลิกการวิเคราะห์ใหม่'
+                  : 'Cancel reanalysis',
             },
           }
-          await this.replyMessages(replyToken, replyFlexMessage)
-        } catch (error) {
-          this.logger.error(
-            `Error saving food log for user ${userId}:`,
-            error instanceof Error ? error.stack : error, // Log stack if available
-          )
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการบันทึกข้อมูลมื้ออาหาร'
-              : 'Sorry, an error occurred while saving your meal.',
-          )
-        }
-      } else if (action === 'reanalyze_food') {
-        // ✅ ใหม่: ถาม user ให้ระบุรายละเอียดเพิ่มเติมสำหรับการวิเคราะห์ใหม่
-        this.logger.log(
-          `Postback: Handling 'reanalyze_food' for user ${userProfile.lineUserId}, messageId: ${messageIdFromPostback}`,
-        )
-
-        if (!messageIdFromPostback || !cachedData) {
-          this.logger.warn(
-            `reanalyze_food called without messageId (${messageIdFromPostback}) or missing cachedData for user ${userId}.`,
-          )
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'ขออภัยค่ะ ไม่พบข้อมูลเดิมที่จะวิเคราะห์ใหม่ โปรดลองเริ่มการวิเคราะห์ใหม่อีกครั้ง'
-              : 'Sorry, the original data for reanalysis was not found. Please try starting a new analysis.',
-          )
-          return
-        }
-
-        // ✅ เก็บ context สำหรับการวิเคราะห์ใหม่
-        const reanalyzeContextKey = `reanalyze_context:${userId}`
-        const contextToCache = {
-          originalMessageId: messageIdFromPostback,
-          originalAnalysisData: cachedData,
-          originalImageUrl: cachedData.imageUrl, // เก็บ imageUrl เดิม
-          timestamp: new Date().getTime(),
-        }
-        this.analysisCacheService.set(
-          reanalyzeContextKey,
-          contextToCache,
-          600 * 1000, // Cache for 10 minutes (in milliseconds)
-        )
-        this.logger.log(
-          `Cached reanalyze context for user ${userId}, messageId ${messageIdFromPostback}, imageUrl: ${cachedData.imageUrl ? 'present' : 'none'}`,
-        )
-
-        // ✅ ถาม user ให้ระบุรายละเอียดเพิ่มเติม พร้อม Quick Reply สำหรับยกเลิก
-        const cancelQuickReply: QuickReplyItem = {
-          type: 'action',
-          action: {
-            type: 'postback',
-            label: currentLanguage === 'th' ? '❌ ยกเลิก' : '❌ Cancel',
-            data: `action=cancel_reanalyze&userId=${userId}`,
-            displayText:
-              currentLanguage === 'th'
-                ? 'ยกเลิกการวิเคราะห์ใหม่'
-                : 'Cancel reanalysis',
-          },
-        }
-
-        await this.replyMessages(replyToken, [
-          {
-            type: 'text',
-            text:
-              currentLanguage === 'th'
-                ? `กรุณาบอกรายละเอียดเพิ่มเติมเกี่ยวกับ "${cachedData.food_name}" ที่ต้องการให้วิเคราะห์ใหม่ค่ะ
-
-📝 ตัวอย่างรายละเอียดที่ช่วยได้:
-• ชื่ออาหารที่ถูกต้อง
-• ส่วนประกอบที่แน่ใจ  
-• ปริมาณที่แท้จริง
-• สิ่งที่ผิดจากการวิเคราะห์เดิม
-
-💬 พิมพ์รายละเอียดในข้อความเดียว หรือกดยกเลิกถ้าเปลี่ยนใจ`
-                : `Please provide additional details about "${cachedData.food_name}" for reanalysis.
-
-📝 Helpful details examples:
-• Correct food name
-• Known ingredients
-• Actual portion size  
-• What was wrong in previous analysis
-
-💬 Type details in one message or cancel if you changed your mind`,
-            quickReply: {
-              items: [cancelQuickReply],
+          await this.replyMessages(replyToken, [
+            {
+              type: 'text',
+              text:
+                currentLanguage === 'th'
+                  ? `กรุณาบอกรายละเอียดเพิ่มเติมเกี่ยวกับ "${cachedData.food_name}" ที่ต้องการให้วิเคราะห์ใหม่ค่ะ\n\n📝 ตัวอย่างรายละเอียดที่ช่วยได้:\n• ชื่ออาหารที่ถูกต้อง\n• ส่วนประกอบที่แน่ใจ\n• ปริมาณที่แท้จริง\n• สิ่งที่ผิดจากการวิเคราะห์เดิม\n\n💬 พิมพ์รายละเอียดในข้อความเดียว หรือกดยกเลิกถ้าเปลี่ยนใจ`
+                  : `Please provide additional details about "${cachedData.food_name}" for reanalysis.\n\n📝 Helpful details examples:\n• Correct food name\n• Known ingredients\n• Actual portion size\n• What was wrong in previous analysis\n\n💬 Type details in one message or cancel if you changed your mind`,
+              quickReply: { items: [cancelQuickReply] },
             },
-          },
-        ])
-      } else if (action === 'cancel_reanalyze') {
-        // ✅ ใหม่: ยกเลิกการวิเคราะห์ใหม่
-        this.logger.log(
-          `Postback: Handling 'cancel_reanalyze' for user ${userProfile.lineUserId}`,
-        )
-
-        const reanalyzeContextKey = `reanalyze_context:${userId}`
-        const reanalyzeContext = this.analysisCacheService.get<{
-          originalMessageId: string
-          originalAnalysisData: FoodAnalysisToolResult
-          originalImageUrl?: string
-          timestamp: number
-        }>(reanalyzeContextKey)
-
-        if (reanalyzeContext) {
-          // ลบ context การวิเคราะห์ใหม่
-          this.analysisCacheService.delete(reanalyzeContextKey)
-          this.logger.log(`Cancelled reanalyze context for user ${userId}`)
-
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? '✅ ยกเลิกการวิเคราะห์ใหม่เรียบร้อยแล้ว คุณสามารถถามคำถามหรือส่งรูปอาหารใหม่ได้เลยค่ะ'
-              : '✅ Reanalysis cancelled successfully. You can now ask questions or send new food images.',
-          )
-        } else {
-          this.logger.warn(
-            `Cancel reanalyze called but no context found for user ${userId}`,
-          )
-          await this.replyText(
-            replyToken,
-            currentLanguage === 'th'
-              ? 'ไม่พบสถานะการวิเคราะห์ใหม่ที่จะยกเลิก คุณสามารถใช้งานปกติได้เลยค่ะ'
-              : 'No reanalysis status found to cancel. You can continue using normally.',
-          )
+          ])
+          // No MainMenuQR here, as user is in a specific flow with a cancel QR
+          break
         }
-      } else if (action === 'request_delete_food_log') {
-        // Placeholder from original, might need different handling
-        this.logger.log(
-          `Postback: Handling 'request_delete_food_log' for user ${userProfile.lineUserId}`,
-        )
-        // This would likely involve getting a foodLogId from the postback data
-        // and then possibly confirming deletion with the user or directly deleting.
-        // Example: const foodLogIdToDelete = queryParams.get('foodLogId');
-        await this.replyText(
-          replyToken,
-          'Delete functionality for saved logs is under development.',
-        )
-      } else {
-        this.logger.log(
-          `Received unhandled postback action: ${action} for user ${userProfile.lineUserId}`,
-        )
-        await this.replyText(
-          replyToken,
-          `ขออภัย การดำเนินการ '${action}' ยังไม่รองรับในขณะนี้`,
-        )
+        case 'cancel_reanalyze': {
+          this.logger.log(
+            `Postback: Handling 'cancel_reanalyze' for user ${userProfile.lineUserId}`,
+          )
+          const reanalyzeContextKey = `reanalyze_context:${userId}`
+          const reanalyzeContext = this.analysisCacheService.get<{
+            originalMessageId: string
+            originalAnalysisData: FoodAnalysisToolResult
+            originalImageUrl?: string
+            timestamp: number
+          }>(reanalyzeContextKey)
+          if (reanalyzeContext) {
+            this.analysisCacheService.delete(reanalyzeContextKey)
+            this.logger.log(`Cancelled reanalyze context for user ${userId}`)
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? '✅ ยกเลิกการวิเคราะห์ใหม่เรียบร้อยแล้ว คุณสามารถถามคำถามหรือส่งรูปอาหารใหม่ได้เลยค่ะ'
+                : '✅ Reanalysis cancelled successfully. You can now ask questions or send new food images.',
+              'cancel_reanalyze_success',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+          } else {
+            this.logger.warn(
+              `Cancel reanalyze called but no context found for user ${userId}`,
+            )
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ไม่พบสถานะการวิเคราะห์ใหม่ที่จะยกเลิก คุณสามารถใช้งานปกติได้เลยค่ะ'
+                : 'No reanalysis status found to cancel. You can continue using normally.',
+              'cancel_reanalyze_no_context',
+              true,
+              currentLanguage,
+            )
+            // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+          }
+          break
+        }
+        case 'request_delete_food_log': {
+          this.logger.log(
+            `Postback: Handling 'request_delete_food_log' for user ${userProfile.lineUserId}`,
+          )
+          await this.replyText(
+            replyToken,
+            'Delete functionality for saved logs is under development.',
+            'delete_food_log_not_implemented',
+            true,
+            currentLanguage,
+          )
+          // ไม่ต้องส่งข้อความแยกเพิ่มเติม เนื่องจากมี Quick Reply แล้ว
+          break
+        }
+        case 'trigger_calculate_nutrition_goals': {
+          try {
+            const userProfileResult =
+              await this.userService.getUserProfile(userId)
+            if (!userProfileResult) {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ไม่พบข้อมูลผู้ใช้ค่ะ'
+                  : 'User profile not found.',
+                'nutrition_goal_profile_error',
+                true,
+                currentLanguage,
+              )
+              return
+            }
+            const aiUserProfile: UserProfileDto = userProfileResult
+
+            // ใช้ Direct Chat Completion แทนการเรียก tool + presentation แยกกัน
+            const directNutritionGoalResponse =
+              await this.aiService.answerGeneralNutritionQuestion(
+                userId,
+                currentLanguage === 'th'
+                  ? 'คำนวณเป้าหมายโภชนาการประจำวันตามโปรไฟล์และเป้าหมายสุขภาพของฉัน ให้แสดงผล BMR, TDEE, และเป้าหมายแคลอรี่ โปรตีน คาร์บ ไขมัน ในรูปแบบที่สวยงามและครบถ้วน พร้อมคำแนะนำเพิ่มเติม'
+                  : 'Calculate my daily nutrition goals based on my profile and health goals. Display BMR, TDEE, and targets for calories, protein, carbs, fat in beautiful and comprehensive format with additional advice.',
+                aiUserProfile,
+                currentLanguage,
+              )
+
+            if (directNutritionGoalResponse) {
+              await this.replyText(
+                replyToken,
+                directNutritionGoalResponse,
+                'nutrition_goal_success',
+                true,
+                currentLanguage,
+              )
+            } else {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ขออภัยค่ะ ไม่สามารถคำนวณเป้าหมายได้ในขณะนี้'
+                  : 'Sorry, unable to calculate goals at this time.',
+                'nutrition_goal_error',
+                true,
+                currentLanguage,
+              )
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error in trigger_calculate_nutrition_goals: ${error.message}`,
+              error.stack,
+            )
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการคำนวณเป้าหมายโภชนาการ'
+                : 'Sorry, an error occurred while calculating nutrition goals.',
+              'nutrition_goal_exception',
+              true,
+              currentLanguage,
+            )
+          }
+          break
+        }
+        case 'trigger_meal_planning': {
+          try {
+            const userProfileResult =
+              await this.userService.getUserProfile(userId)
+            if (!userProfileResult) {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ไม่พบข้อมูลผู้ใช้ค่ะ'
+                  : 'User profile not found.',
+                'meal_planning_profile_error',
+                true,
+                currentLanguage,
+              )
+              return
+            }
+            const aiUserProfile: UserProfileDto = userProfileResult
+
+            // ใช้ Direct Chat Completion แทนการเรียก tool + presentation แยกกัน
+            const directMealPlanResponse =
+              await this.aiService.answerGeneralNutritionQuestion(
+                userId,
+                currentLanguage === 'th'
+                  ? 'วางแผนมื้ออาหารประจำวันตามโปรไฟล์และเป้าหมายสุขภาพของฉัน ให้แนะนำอาหารพร้อมรายละเอียดโภชนาการ แคลอรี่ โปรตีน คาร์บ ไขมัน และคำแนะนำเพิ่มเติม ในรูปแบบที่สวยงามและครบถ้วน'
+                  : 'Create a daily meal plan based on my profile and health goals. Recommend foods with detailed nutrition info (calories, protein, carbs, fat) and additional advice in beautiful and comprehensive format.',
+                aiUserProfile,
+                currentLanguage,
+              )
+
+            if (directMealPlanResponse) {
+              await this.replyText(
+                replyToken,
+                directMealPlanResponse,
+                'meal_planning_success',
+                true,
+                currentLanguage,
+              )
+            } else {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ขออภัยค่ะ ไม่สามารถสร้างแผนมื้ออาหารได้ในขณะนี้'
+                  : 'Sorry, unable to create meal plan at this time.',
+                'meal_planning_error',
+                true,
+                currentLanguage,
+              )
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error in trigger_meal_planning: ${error.message}`,
+              error.stack,
+            )
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการสร้างแผนมื้ออาหาร'
+                : 'Sorry, an error occurred while creating meal plan.',
+              'meal_planning_exception',
+              true,
+              currentLanguage,
+            )
+          }
+          break
+        }
+        case 'trigger_food_history_summary': {
+          // เปลี่ยนเป็นการวิเคราะห์ eating pattern แบบเต็ม
+          this.logger.log(
+            `Processing eating pattern analysis request for user ${userId}`,
+          )
+
+          try {
+            const userProfileResult =
+              await this.userService.getUserProfile(userId)
+            if (!userProfileResult) {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ไม่พบข้อมูลผู้ใช้ค่ะ'
+                  : 'User profile not found.',
+                'eating_pattern_profile_error',
+                true,
+                currentLanguage,
+              )
+              return
+            }
+
+            const aiUserProfile: UserProfileDto = userProfileResult
+
+            // 🚀 ใช้ Tool Response แบบ structured data แทนการเรียก Chat Completion
+            // ดึงข้อมูล food logs สำหรับการวิเคราะห์
+            const foodLogs = await this.aiService.getFoodHistoryForAI(
+              userId,
+              aiUserProfile,
+              7, // วิเคราะห์ 7 วันย้อนหลัง
+              50, // จำกัด 50 รายการ
+              currentLanguage,
+            )
+
+            if ('error' in foodLogs) {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ไม่สามารถดึงข้อมูลประวัติอาหารได้ค่ะ'
+                  : 'Unable to retrieve food history.',
+                'eating_pattern_data_error',
+                true,
+                currentLanguage,
+              )
+              return
+            }
+
+            // ดึงข้อมูล nutrition goal (ถ้ามี)
+            const nutritionGoal =
+              await this.aiService.calculateNutritionGoalsForUser(
+                userId,
+                aiUserProfile,
+                currentLanguage,
+              )
+
+            const nutritionGoalForAI: NutritionGoalDtoForAI | null =
+              nutritionGoal && !('error' in nutritionGoal)
+                ? {
+                    daily_calories: nutritionGoal.daily_goals.calories,
+                    daily_protein_g: nutritionGoal.daily_goals.protein,
+                    daily_carbs_g: nutritionGoal.daily_goals.carbs,
+                    daily_fat_g: nutritionGoal.daily_goals.fat,
+                    daily_fiber_g: nutritionGoal.daily_goals.fiber,
+                  }
+                : null
+
+            // เรียก analyzeEatingPattern เพื่อได้ structured response
+            const eatingPatternResult =
+              await this.aiService.analyzeEatingPattern(
+                userId,
+                aiUserProfile,
+                foodLogs.food_logs.map((log) => ({
+                  timestamp: new Date(log.timestamp),
+                  mealType: log.mealType,
+                  foodName: log.foodName,
+                  calories: log.calories,
+                  protein: log.protein,
+                  carbs: log.carbs,
+                  fat: log.fat,
+                  fiber: log.fiber,
+                })),
+                nutritionGoalForAI,
+                currentLanguage,
+              )
+
+            if (eatingPatternResult && !('error' in eatingPatternResult)) {
+              // สร้าง response text จาก structured data
+              const responseText = this.formatEatingPatternResponse(
+                eatingPatternResult,
+                currentLanguage,
+              )
+
+              await this.replyText(
+                replyToken,
+                responseText,
+                'eating_pattern_success',
+                true,
+                currentLanguage,
+              )
+            } else {
+              await this.replyText(
+                replyToken,
+                currentLanguage === 'th'
+                  ? 'ขออภัยค่ะ ไม่สามารถวิเคราะห์พฤติกรรมการกินได้ในขณะนี้'
+                  : 'Sorry, unable to analyze eating patterns at this time.',
+                'eating_pattern_error',
+                true,
+                currentLanguage,
+              )
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error in trigger_food_history_summary: ${error.message}`,
+              error.stack,
+            )
+            await this.replyText(
+              replyToken,
+              currentLanguage === 'th'
+                ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการวิเคราะห์พฤติกรรมการกิน'
+                : 'Sorry, an error occurred while analyzing eating patterns.',
+              'eating_pattern_exception',
+              true,
+              currentLanguage,
+            )
+          }
+          break
+        }
+        default: {
+          this.logger.log(
+            `Received unhandled postback action: ${action} for user ${userProfile.lineUserId}`,
+          )
+          await this.replyText(
+            replyToken,
+            currentLanguage === 'th'
+              ? `ขออภัย การดำเนินการ '${action}' ยังไม่รองรับในขณะนี้`
+              : `Sorry, action '${action}' is not supported at this time.`,
+            'unhandled_postback',
+            true,
+            currentLanguage,
+          )
+          break
+        }
       }
     } catch (error) {
       this.logger.error(
@@ -1778,6 +2114,9 @@ ${
         currentLanguage === 'th'
           ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการประมวลผลการดำเนินการของคุณ'
           : 'Sorry, an error occurred while processing your action.',
+        'postback_error',
+        true,
+        currentLanguage,
       )
     }
   }
@@ -1852,101 +2191,94 @@ ${
     replyToken: string,
     text: string,
     context?: string, // เพิ่ม context parameter
+    addMainMenuQuickReply: boolean = false,
+    languageForQuickReply?: string,
   ): Promise<MessageAPIResponseBase> {
-    if (text.length === 0) {
-      this.logger.warn('Attempted to reply with an empty text message.')
-      return Promise.resolve({} as MessageAPIResponseBase)
+    const message: TextMessage = {
+      type: 'text',
+      text: this.smartTruncateText(text, context),
     }
-    try {
-      return await this.lineClient.replyMessage(replyToken, {
-        type: 'text',
-        text: this.smartTruncateText(text, context), // ใช้ smartTruncateText แทน substring
-      } as TextMessage)
-    } catch (error: unknown) {
-      if (error instanceof HTTPError) {
-        this.logger.error(
-          `LINE HTTP Error during reply: ${error.statusCode} ${error.message}`,
-          error.stack,
-        )
-        if (error.originalError) {
-          let detailsToLog: string
-          if (error.originalError instanceof Error) {
-            detailsToLog = `OriginalError: ${error.originalError.message}`
-            if (error.originalError.stack) {
-              detailsToLog += `\nStack: ${error.originalError.stack}`
-            }
-          } else if (
-            typeof error.originalError === 'object' &&
-            error.originalError !== null
-          ) {
-            detailsToLog = JSON.stringify(error.originalError)
-          } else {
-            detailsToLog = String(error.originalError)
-          }
-          this.logger.error(
-            'LINE HTTP Original Error details for replyText:',
-            detailsToLog,
-          )
+
+    if (addMainMenuQuickReply && languageForQuickReply) {
+      if (message.type === 'text') {
+        // Ensure it's a TextMessage before adding quickReply
+        message.quickReply = {
+          items: this.createMainMenuQuickReplyItems(languageForQuickReply),
         }
-      } else if (error instanceof Error) {
-        this.logger.error(`Error replying text: ${error.message}`, error.stack)
       } else {
-        this.logger.error('Unknown error occurred during replyText', error)
+        this.logger.warn(
+          `Cannot add MainMenuQuickReply to a non-text message type: ${message.type}`,
+        )
       }
-      return Promise.resolve({} as MessageAPIResponseBase)
+    }
+
+    this.logger.log(
+      `Replying with text to token ${replyToken.substring(0, 10)}... (context: ${context || 'none'}, QR: ${addMainMenuQuickReply}): "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+    )
+    try {
+      return await this.lineClient.replyMessage(replyToken, message)
+    } catch (error) {
+      this.logger.error(
+        `Error replying with text (context: ${context || 'none'}): ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+        JSON.stringify(message, null, 2),
+      )
+      throw error
     }
   }
 
   async replyMessages(
     replyToken: string,
     messages: Message | Message[],
+    addMainMenuQuickReply: boolean = false,
+    languageForQuickReply?: string,
   ): Promise<MessageAPIResponseBase> {
-    if (!messages || (Array.isArray(messages) && messages.length === 0)) {
-      this.logger.warn(
-        'Attempted to reply with an empty message or message array.',
-      )
-      return Promise.resolve({} as MessageAPIResponseBase) // Or throw error
-    }
-    try {
-      return await this.lineClient.replyMessage(replyToken, messages)
-    } catch (error: unknown) {
-      // Consolidate error logging from replyText
-      if (error instanceof HTTPError) {
-        this.logger.error(
-          `LINE HTTP Error during reply via replyMessages: ${error.statusCode} ${error.message}`,
-          error.stack,
-        )
-        if (error.originalError) {
-          let detailsToLog: string
-          if (error.originalError instanceof Error) {
-            detailsToLog = `OriginalError: ${error.originalError.message}`
-            if (error.originalError.stack) {
-              detailsToLog += `\nStack: ${error.originalError.stack}`
-            }
-          } else if (
-            typeof error.originalError === 'object' &&
-            error.originalError !== null
-          ) {
-            detailsToLog = JSON.stringify(error.originalError)
-          } else {
-            detailsToLog = String(error.originalError)
-          }
-          this.logger.error(
-            'LINE HTTP Original Error details for replyMessages:',
-            detailsToLog,
-          )
+    let messagesArray = Array.isArray(messages) ? messages : [messages]
+
+    messagesArray = messagesArray.map((msg) => {
+      if (msg.type === 'text' && typeof msg.text === 'string') {
+        return {
+          ...msg,
+          text: this.smartTruncateText(msg.text, 'replyMessages'),
         }
-      } else if (error instanceof Error) {
-        this.logger.error(
-          `Error replying messages: ${error.message}`,
-          error.stack,
-        )
-      } else {
-        this.logger.error('Unknown error occurred during replyMessages', error)
       }
-      // Depending on policy, could throw, or return a specific error object, or resolve empty.
-      // For now, resolving empty to avoid unhandled promise rejections if caller doesn't catch.
-      return Promise.resolve({} as MessageAPIResponseBase)
+      return msg
+    })
+
+    if (
+      addMainMenuQuickReply &&
+      languageForQuickReply &&
+      messagesArray.length > 0
+    ) {
+      const lastMessage = messagesArray[messagesArray.length - 1]
+      if (lastMessage.type === 'text') {
+        // Ensure it's a TextMessage before adding quickReply
+        lastMessage.quickReply = {
+          items: this.createMainMenuQuickReplyItems(languageForQuickReply),
+        }
+      } else if (lastMessage.type === 'flex') {
+        // For FlexMessages, quickReply is a direct property
+        lastMessage.quickReply = {
+          items: this.createMainMenuQuickReplyItems(languageForQuickReply),
+        }
+      } else {
+        this.logger.warn(
+          `Cannot add MainMenuQuickReply to the last message of type: ${lastMessage.type}. It must be 'text' or 'flex'.`,
+        )
+      }
+    }
+    this.logger.log(
+      `Replying with ${messagesArray.length} message(s) to token ${replyToken.substring(0, 10)}... (QR: ${addMainMenuQuickReply})`,
+    )
+    try {
+      return await this.lineClient.replyMessage(replyToken, messagesArray)
+    } catch (error) {
+      this.logger.error(
+        `Error replying with messages: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+        JSON.stringify(messagesArray, null, 2),
+      )
+      throw error
     }
   }
 
@@ -2280,32 +2612,28 @@ ${
       )
 
       switch (mainCommand) {
-        case '/help':
-        case '/start':
+        case 'help':
+        case 'start':
           await this.handleHelpCommand(replyToken, language)
           break
 
-        case '/setlang':
-        case '/language':
+        case 'setlang':
+        case 'language':
           await this.handleLanguageCommand(replyToken, userId, args, language)
           break
 
-        case '/profile':
-        case '/me':
+        case 'profile':
+        case 'me':
           await this.handleProfileCommand(replyToken, userProfile, language)
           break
 
-        case '/menu':
-          await this.handleMenuCommand(replyToken, language)
-          break
-
-        case '/clear':
-        case '/reset':
+        case 'clear':
+        case 'reset':
           await this.handleClearCommand(replyToken, userId, language)
           break
 
-        case '/stats':
-        case '/status':
+        case 'stats':
+        case 'status':
           await this.handleStatsCommand(replyToken, userId, language)
           break
 
@@ -2323,6 +2651,9 @@ ${
         language === 'th'
           ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการประมวลผลคำสั่ง'
           : 'Sorry, an error occurred while processing the command.',
+        'command_error',
+        true,
+        language,
       )
     }
   }
@@ -2426,46 +2757,6 @@ ${
 📅 Member since: ${userProfile.createdAt ? new Date(userProfile.createdAt).toLocaleDateString('en-US') : 'Unknown'}`
 
     await this.replyText(replyToken, profileText)
-  }
-
-  private async handleMenuCommand(
-    replyToken: string,
-    language: string,
-  ): Promise<void> {
-    const menuText =
-      language === 'th'
-        ? `📋 เมนูหลัก
-
-🍽️ การวิเคราะห์อาหาร:
-• ส่งรูปอาหาร
-• พิมพ์ชื่ออาหาร
-
-📊 การวิเคราะห์:
-• "วิเคราะห์รูปแบบการกิน"
-• "คำนวณเป้าหมายโภชนาการ"
-• "แนะนำอาหาร"
-
-❓ การถามคำถาม:
-• ถามเกี่ยวกับโภชนาการ
-• ถามประวัติการกิน
-• ขอคำแนะนำสุขภาพ`
-        : `📋 Main Menu
-
-🍽️ Food Analysis:
-• Send food photos
-• Type food names
-
-📊 Analysis:
-• "Analyze eating patterns"
-• "Calculate nutrition goals"
-• "Recommend meals"
-
-❓ Questions:
-• Ask about nutrition
-• Ask food history
-• Request health advice`
-
-    await this.replyText(replyToken, menuText)
   }
 
   private async handleClearCommand(
@@ -2609,5 +2900,269 @@ ${
       )
       throw error
     }
+  }
+
+  // ========== QUICK REPLY HELPERS ==========
+  private createMainMenuQuickReplyItems(language: string): QuickReplyItem[] {
+    const t = (textKey: string) => {
+      // Simple translator stub, replace with a more robust i18n solution if needed
+      const translations: Record<string, Record<string, string>> = {
+        th: {
+          camera: 'ถ่ายรูปอาหาร',
+          cameraRoll: 'เลือกรูป',
+          foodHistory: '📊 วิเคราะห์การกิน',
+          nutritionGoals: '🎯 เป้าหมายสุขภาพ',
+          mealPlanning: '🍽️ วางแผนมื้ออาหาร',
+        },
+        en: {
+          camera: 'Take Photo',
+          cameraRoll: 'Choose from Album',
+          foodHistory: '📊 Food Analysis',
+          nutritionGoals: '🎯 Health Goals',
+          mealPlanning: '🍽️ Meal Planning',
+        },
+      }
+      return translations[language]?.[textKey] || translations['en'][textKey]
+    }
+
+    return [
+      {
+        type: 'action',
+        action: {
+          type: 'camera',
+          label: t('camera'),
+        },
+      },
+      {
+        type: 'action',
+        action: {
+          type: 'cameraRoll',
+          label: t('cameraRoll'),
+        },
+      },
+      {
+        type: 'action',
+        action: {
+          type: 'postback',
+          label: t('foodHistory'),
+          data: 'action=trigger_food_history_summary',
+          displayText: t('foodHistory'),
+        },
+      },
+      {
+        type: 'action',
+        action: {
+          type: 'postback',
+          label: t('nutritionGoals'),
+          data: 'action=trigger_calculate_nutrition_goals',
+          displayText: t('nutritionGoals'),
+        },
+      },
+      {
+        type: 'action',
+        action: {
+          type: 'postback',
+          label: t('mealPlanning'),
+          data: 'action=trigger_meal_planning',
+          displayText: t('mealPlanning'),
+        },
+      },
+    ]
+  }
+
+  // ========== NEW: Helper to send Main Menu Quick Reply if appropriate ==========
+  private async sendMainMenuQuickReplyIfNeeded(
+    userId: string,
+    language: string,
+    // TODO: Add a parameter or mechanism to check if a sub-flow QR is active
+    // to prevent sending this QR when another specific QR is expected.
+    // For now, it will send unless explicitly skipped by the calling logic.
+  ): Promise<void> {
+    // แทนที่จะส่งข้อความแยก เราจะแค่ log ไว้
+    // Quick reply จะถูกเพิ่มโดย caller ที่เรียกใช้
+    this.logger.log(
+      `Main menu quick reply requested for user ${userId} (language: ${language}) - will be added by caller`,
+    )
+
+    // ไม่ส่งข้อความแยก เพื่อหลีกเลี่ยงความซ้ำซ้อน
+    // Quick reply จะถูกเพิ่มใน replyText และ replyMessages โดยตรง
+  }
+
+  private formatEatingPatternResponse(
+    result: EatingPatternToolResult,
+    language: string,
+  ): string {
+    const isThaiLang = language === 'th'
+
+    // Header
+    let response = isThaiLang
+      ? '📊 **รายงานการวิเคราะห์พฤติกรรมการกิน** 📊\n\n'
+      : '📊 **Eating Pattern Analysis Report** 📊\n\n'
+
+    // Calorie Analysis
+    const trendText = isThaiLang
+      ? result.calories_trend === 'improving'
+        ? '📈 ดีขึ้น'
+        : result.calories_trend === 'stable'
+          ? '➡️ คงที่'
+          : result.calories_trend === 'worsening'
+            ? '📉 แย่ลง'
+            : '❓ ข้อมูลไม่เพียงพอ'
+      : result.calories_trend === 'improving'
+        ? '📈 Improving'
+        : result.calories_trend === 'stable'
+          ? '➡️ Stable'
+          : result.calories_trend === 'worsening'
+            ? '📉 Worsening'
+            : '❓ Insufficient Data'
+
+    response += isThaiLang
+      ? `🔥 **แคลอรี่เฉลี่ยต่อวัน:** ${result.average_daily_calories} แคลอรี่\n`
+      : `🔥 **Average Daily Calories:** ${result.average_daily_calories} calories\n`
+
+    response += isThaiLang
+      ? `📊 **แนวโน้มแคลอรี่:** ${trendText}\n\n`
+      : `📊 **Calorie Trend:** ${trendText}\n\n`
+
+    // Meal Timing Analysis
+    if (result.meal_timings && result.meal_timings.length > 0) {
+      response += isThaiLang
+        ? '⏰ **เวลาทานอาหาร:**\n'
+        : '⏰ **Meal Timings:**\n'
+
+      result.meal_timings.forEach((timing) => {
+        const consistencyText = timing.consistency
+          ? isThaiLang
+            ? timing.consistency >= 0.8
+              ? ' (สม่ำเสมอมาก)'
+              : timing.consistency >= 0.6
+                ? ' (สม่ำเสมอดี)'
+                : timing.consistency >= 0.4
+                  ? ' (สม่ำเสมอปานกลาง)'
+                  : ' (ไม่สม่ำเสมอ)'
+            : timing.consistency >= 0.8
+              ? ' (Very Consistent)'
+              : timing.consistency >= 0.6
+                ? ' (Good Consistency)'
+                : timing.consistency >= 0.4
+                  ? ' (Moderate Consistency)'
+                  : ' (Inconsistent)'
+          : ''
+
+        response += `   • ${timing.meal_name}: ${timing.average_time}${consistencyText}\n`
+      })
+      response += '\n'
+    }
+
+    // Nutrition Balance
+    if (result.nutrient_balance) {
+      response += isThaiLang
+        ? '🥗 **สมดุลสารอาหาร (เทียบกับเป้าหมาย):**\n'
+        : '🥗 **Nutrient Balance (vs Goals):**\n'
+
+      if (result.nutrient_balance.protein_balance !== null) {
+        response += isThaiLang
+          ? `   • โปรตีน: ${result.nutrient_balance.protein_balance.toFixed(1)}%\n`
+          : `   • Protein: ${result.nutrient_balance.protein_balance.toFixed(1)}%\n`
+      }
+      if (result.nutrient_balance.carbs_balance !== null) {
+        response += isThaiLang
+          ? `   • คาร์โบไฮเดรต: ${result.nutrient_balance.carbs_balance.toFixed(1)}%\n`
+          : `   • Carbohydrates: ${result.nutrient_balance.carbs_balance.toFixed(1)}%\n`
+      }
+      if (result.nutrient_balance.fat_balance !== null) {
+        response += isThaiLang
+          ? `   • ไขมัน: ${result.nutrient_balance.fat_balance.toFixed(1)}%\n`
+          : `   • Fat: ${result.nutrient_balance.fat_balance.toFixed(1)}%\n`
+      }
+      if (result.nutrient_balance.fiber_balance !== null) {
+        response += isThaiLang
+          ? `   • ใยอาหาร: ${result.nutrient_balance.fiber_balance.toFixed(1)}%\n`
+          : `   • Fiber: ${result.nutrient_balance.fiber_balance.toFixed(1)}%\n`
+      }
+      response += '\n'
+    }
+
+    // Additional Insights
+    if (result.eating_window_hours) {
+      response += isThaiLang
+        ? `⏱️ **ช่วงเวลาการกิน:** ${result.eating_window_hours} ชั่วโมง\n`
+        : `⏱️ **Eating Window:** ${result.eating_window_hours} hours\n`
+    }
+
+    if (result.most_skipped_meal) {
+      response += isThaiLang
+        ? `⚠️ **มื้อที่ข้ามบ่อยที่สุด:** ${result.most_skipped_meal}\n`
+        : `⚠️ **Most Skipped Meal:** ${result.most_skipped_meal}\n`
+    }
+
+    if (
+      result.late_night_eating_frequency &&
+      result.late_night_eating_frequency > 0
+    ) {
+      const percentage = (result.late_night_eating_frequency * 100).toFixed(1)
+      response += isThaiLang
+        ? `🌙 **การกินดึก:** ${percentage}% ของวัน\n`
+        : `🌙 **Late Night Eating:** ${percentage}% of days\n`
+    }
+
+    response += '\n'
+
+    // Identified Patterns
+    if (result.identified_patterns && result.identified_patterns.length > 0) {
+      response += isThaiLang
+        ? '🔍 **รูปแบบที่พบ:**\n'
+        : '🔍 **Identified Patterns:**\n'
+
+      result.identified_patterns.forEach((pattern) => {
+        response += `   • ${pattern}\n`
+      })
+      response += '\n'
+    }
+
+    // Problematic Behaviors
+    if (
+      result.problematic_behaviors &&
+      result.problematic_behaviors.length > 0
+    ) {
+      response += isThaiLang
+        ? '⚠️ **พฤติกรรมที่ควรปรับปรุง:**\n'
+        : '⚠️ **Areas for Improvement:**\n'
+
+      result.problematic_behaviors.forEach((behavior) => {
+        response += `   • ${behavior}\n`
+      })
+      response += '\n'
+    }
+
+    // Improvement Suggestions
+    if (
+      result.improvement_suggestions &&
+      result.improvement_suggestions.length > 0
+    ) {
+      response += isThaiLang
+        ? '💡 **คำแนะนำการปรับปรุง:**\n'
+        : '💡 **Improvement Suggestions:**\n'
+
+      result.improvement_suggestions.forEach((suggestion) => {
+        response += `   • ${suggestion}\n`
+      })
+      response += '\n'
+    }
+
+    // Personalized Advice
+    if (result.personalized_advice) {
+      response += isThaiLang
+        ? '🎯 **คำแนะนำเฉพาะบุคคล:**\n'
+        : '🎯 **Personalized Advice:**\n'
+      response += `${result.personalized_advice}\n\n`
+    }
+
+    // Footer
+    response += isThaiLang
+      ? '📈 ขอให้คุณมีสุขภาพที่ดีและการกินที่สมดุลนะคะ! 🌟'
+      : '📈 Wishing you good health and balanced eating! 🌟'
+
+    return response
   }
 }

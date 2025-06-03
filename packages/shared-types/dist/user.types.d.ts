@@ -7,6 +7,7 @@ export interface SharedUserProfileDto {
     displayName?: string;
     pictureUrl?: string;
     language: string;
+    timezone?: string;
     goal?: string;
     gender?: Gender;
     age?: number;
@@ -28,6 +29,17 @@ export interface SharedUserProfileDto {
     targetWeightKg?: number | null;
     calculatedBmr?: number | null;
     calculatedTdee?: number | null;
+    dailyCaloriesGoal?: number;
+    dailyProteinGoal?: number;
+    dailyCarbsGoal?: number;
+    dailyFatGoal?: number;
+    dailyFiberGoal?: number;
+    dailySugarGoal?: number;
+    dailySodiumGoal?: number;
+    dailyWaterGoal?: number;
+    dailyCholesterolGoal?: number;
+    dailySaturatedFatGoal?: number;
+    dailyOmega3Goal?: number;
 }
 export interface SharedCreateUserProfileDto {
     lineUserId: string;
@@ -39,6 +51,7 @@ export interface SharedUpdateUserProfileDto {
     displayName?: string;
     pictureUrl?: string;
     language?: string;
+    timezone?: string;
     goal?: string;
     gender?: Gender;
     age?: number;
@@ -55,4 +68,18 @@ export interface SharedUpdateUserProfileDto {
     pregnancyLactationStatus?: PregnancyLactationStatus;
     preferredCuisine?: string[];
     preferredFlavorProfiles?: string[];
+    targetWeightKg?: number | null;
+    calculatedBmr?: number | null;
+    calculatedTdee?: number | null;
+    dailyCaloriesGoal?: number;
+    dailyProteinGoal?: number;
+    dailyCarbsGoal?: number;
+    dailyFatGoal?: number;
+    dailyFiberGoal?: number;
+    dailySugarGoal?: number;
+    dailySodiumGoal?: number;
+    dailyWaterGoal?: number;
+    dailyCholesterolGoal?: number;
+    dailySaturatedFatGoal?: number;
+    dailyOmega3Goal?: number;
 }

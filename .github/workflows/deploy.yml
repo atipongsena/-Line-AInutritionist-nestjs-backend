@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_backend:
+        description: 'Deploy Backend'
+        required: false
+        default: true
+        type: boolean
+      deploy_frontend:
+        description: 'Deploy Frontend'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -17,10 +28,39 @@ env:
   ACR_NAME: ainutritionistacr
   BACKEND_APP_NAME: ai-nutritionist-backend
   FRONTEND_APP_NAME: ai-nutritionist-frontend
+  NODE_VERSION: '24'
+  PNPM_VERSION: '9'
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            backend:
+              - 'src/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig*.json'
+              - 'nest-cli.json'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'packages/**'
+              - 'scripts/**'
+            frontend:
+              - 'liff-nutrition-next/**'
+
   test:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,37 +68,51 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
 
-      - name: Install pnpm
-        run: npm install -g pnpm
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run backend tests
-        run: pnpm test
+        if: needs.changes.outputs.backend == 'true'
+        run: |
+          pnpm test
+          pnpm lint
 
-      - name: Run backend linting
-        run: pnpm lint
+      - name: Test backend build
+        if: needs.changes.outputs.backend == 'true'
+        run: pnpm build
 
       - name: Test frontend build
+        if: needs.changes.outputs.frontend == 'true'
         run: |
-          cd liff-profile-app
+          cd liff-nutrition-next
+          pnpm install --frozen-lockfile
           pnpm build
 
   deploy-backend:
-    if: github.ref == 'refs/heads/main'
-    needs: test
+    if: |
+      github.ref == 'refs/heads/main' && 
+      (needs.changes.outputs.backend == 'true' || github.event.inputs.deploy_backend == 'true')
+    needs: [changes, test]
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Azure
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -67,23 +121,42 @@ jobs:
           az acr login --name ${{ env.ACR_NAME }}
 
       - name: Build and push Docker image
-        run: |
-          docker build -t ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }} .
-          docker push ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }}
-          docker tag ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:latest
-          docker push ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:latest
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }}
+            ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
       - name: Deploy to Azure Container Apps
         run: |
           az containerapp update \
             --name ${{ env.BACKEND_APP_NAME }} \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }}
+            --image ${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:${{ github.sha }} \
+            --revision-suffix sha-${{ github.sha }}
+
+      - name: Verify deployment
+        run: |
+          # รอให้ deployment เสร็จ
+          az containerapp revision show \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --revision ${{ env.BACKEND_APP_NAME }}--sha-${{ github.sha }} \
+            --query "properties.provisioningState" -o tsv
 
   deploy-frontend:
-    if: github.ref == 'refs/heads/main'
-    needs: test
+    if: |
+      github.ref == 'refs/heads/main' && 
+      (needs.changes.outputs.frontend == 'true' || github.event.inputs.deploy_frontend == 'true')
+    needs: [changes, test]
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - name: Checkout code
@@ -92,20 +165,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
 
-      - name: Install pnpm
-        run: npm install -g pnpm
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Build frontend
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          VITE_LIFF_ID: ${{ secrets.VITE_LIFF_ID }}
-          VITE_VERSION: ${{ github.sha }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_LIFF_ID: ${{ secrets.NEXT_PUBLIC_LIFF_ID }}
+          NEXT_PUBLIC_VERSION: ${{ github.sha }}
           NODE_ENV: production
         run: |
-          cd liff-profile-app
+          cd liff-nutrition-next
           pnpm install --frozen-lockfile
           pnpm build
 
@@ -115,27 +190,99 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: 'upload'
-          app_location: 'liff-profile-app'
-          output_location: 'dist'
+          app_location: 'liff-nutrition-next'
+          output_location: '.next'
           skip_app_build: true
 
+  security-scan:
+    if: github.ref == 'refs/heads/main'
+    needs: [changes]
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        if: needs.changes.outputs.backend == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.ACR_NAME }}.azurecr.io/ai-nutritionist-backend:latest'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: needs.changes.outputs.backend == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
   notify:
-    if: always()
+    if: always() && github.ref == 'refs/heads/main'
     needs: [deploy-backend, deploy-frontend]
     runs-on: ubuntu-latest
+
     steps:
-      - name: Notify deployment status
+      - name: Determine deployment status
+        id: status
         run: |
           BACKEND_STATUS="${{ needs.deploy-backend.result }}"
           FRONTEND_STATUS="${{ needs.deploy-frontend.result }}"
 
+          # ถ้า job ถูกข้าม (skipped) ให้ถือว่าสำเร็จ
+          if [ "$BACKEND_STATUS" == "skipped" ]; then
+            BACKEND_STATUS="success"
+          fi
+          if [ "$FRONTEND_STATUS" == "skipped" ]; then
+            FRONTEND_STATUS="success"
+          fi
+
           if [ "$BACKEND_STATUS" == "success" ] && [ "$FRONTEND_STATUS" == "success" ]; then
-            echo "✅ Deployment successful!"
-            echo "Backend: $BACKEND_STATUS"
-            echo "Frontend: $FRONTEND_STATUS"
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ Deployment successful!" >> $GITHUB_OUTPUT
           else
-            echo "❌ Deployment failed!"
-            echo "Backend: $BACKEND_STATUS"
-            echo "Frontend: $FRONTEND_STATUS"
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Deployment failed!" >> $GITHUB_OUTPUT
+          fi
+
+          echo "backend_status=$BACKEND_STATUS" >> $GITHUB_OUTPUT
+          echo "frontend_status=$FRONTEND_STATUS" >> $GITHUB_OUTPUT
+
+      - name: Create deployment status comment
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const { status, message, backend_status, frontend_status } = context.payload.outputs;
+
+            const body = `## 🚀 Deployment Status
+
+            **Overall**: ${message}
+
+            | Service | Status |
+            |---------|---------|
+            | Backend | ${backend_status === 'success' ? '✅' : '❌'} ${backend_status} |
+            | Frontend | ${frontend_status === 'success' ? '✅' : '❌'} ${frontend_status} |
+
+            **Commit**: \`${context.sha.substring(0, 7)}\`
+            **Branch**: \`${context.ref}\`
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Notify deployment status
+        run: |
+          echo "${{ steps.status.outputs.message }}"
+          echo "Backend: ${{ steps.status.outputs.backend_status }}"
+          echo "Frontend: ${{ steps.status.outputs.frontend_status }}"
+
+          if [ "${{ steps.status.outputs.status }}" != "success" ]; then
             exit 1
           fi

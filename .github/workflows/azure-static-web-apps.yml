@@ -6,7 +6,7 @@ on:
       - main
       - master
     paths:
-      - 'liff-profile-app/**'
+      - 'liff-nutrition-next/**'
       - '.github/workflows/azure-static-web-apps.yml'
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -14,61 +14,83 @@ on:
       - main
       - master
     paths:
-      - 'liff-profile-app/**'
+      - 'liff-nutrition-next/**'
       - '.github/workflows/azure-static-web-apps.yml'
+
+env:
+  NODE_VERSION: '24'
+  PNPM_VERSION: '9'
 
 jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           submodules: true
           lfs: false
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Install dependencies
         run: |
-          cd liff-profile-app
-          pnpm install
+          cd liff-nutrition-next
+          pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: |
+          cd liff-nutrition-next
+          pnpm type-check
+
+      - name: Lint check
+        run: |
+          cd liff-nutrition-next
+          pnpm lint
 
       - name: Build application
         run: |
-          cd liff-profile-app
-          pnpm run build
+          cd liff-nutrition-next
+          pnpm build
         env:
           NODE_ENV: production
-          VITE_LIFF_ID: 2007349762-AJ9J432d
-          VITE_API_BASE_URL: https://ai-nutritionist-backend.wittyground-3784ecfe.southeastasia.azurecontainerapps.io
+          NEXT_PUBLIC_LIFF_ID: ${{ secrets.NEXT_PUBLIC_LIFF_ID }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_VERSION: ${{ github.sha }}
 
-      - name: Copy build files to deploy folder
-        run: |
-          mkdir -p deploy
-          cp -r liff-profile-app/build/* deploy/
-          cp liff-profile-app/staticwebapp.config.json deploy/
-          ls -la deploy/
-
-      - name: Build And Deploy
+      - name: Deploy to Azure Static Web Apps
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_SALMON_POND_09F432200 }}
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: 'upload'
-          app_location: '/deploy'
-          output_location: ''
+          app_location: 'liff-nutrition-next'
+          output_location: '.next'
           skip_app_build: true
+
+      - name: Create deployment summary
+        if: success()
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Status**: Successful" >> $GITHUB_STEP_SUMMARY
+          echo "📦 **App**: liff-nutrition-next" >> $GITHUB_STEP_SUMMARY
+          echo "🌐 **URL**: ${{ steps.builddeploy.outputs.static_web_app_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "📝 **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 **Branch**: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
@@ -79,6 +101,6 @@ jobs:
         id: closepullrequest
         uses: Azure/static-web-apps-deploy@v1
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_SALMON_POND_09F432200 }}
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           action: 'close'
-          app_location: '/liff-profile-app'
+          app_location: 'liff-nutrition-next'

@@ -26,6 +26,7 @@
     "node_modules",
     "dist",
     "liff-profile-app",
+    "liff-nutrition-next/**/*",
     "*.js",
     "test-*.js",
     "check-database.js",

@@ -1,0 +1,24 @@
+{
+  "name": "AI Nutritionist",
+  "short_name": "AI Nutritionist",
+  "description": "AI-powered nutrition tracking and analysis app",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#00B900",
+  "theme_color": "#00B900",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

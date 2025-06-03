@@ -9,6 +9,7 @@ import { UserModule } from '../user/user.module' // Added UserModule import
 import { AnalysisCacheModule } from '../analysis-cache/analysis-cache.module' // Added import
 import { FoodLogModule } from '../schemas/food-log.module' // Added FoodLogModule import
 import { TemporaryImageLogModule } from '../schemas/temporary-image-log.module'
+import { CommonModule } from '../common/common.module'
 import { IntentDetectionService } from './intent-detection.service'
 import { IntentDetectionMetricsService } from './intent-detection-metrics.service'
 import { MongooseModule } from '@nestjs/mongoose'
@@ -29,6 +30,7 @@ import { OpenaiModule } from '../openai/openai.module'
     AnalysisCacheModule, // Added module
     FoodLogModule, // Added FoodLogModule to imports
     TemporaryImageLogModule, // Added TemporaryImageLogModule to imports
+    CommonModule, // To provide TimezoneService
     MongooseModule.forFeature([
       { name: FoodLog.name, schema: FoodLogSchema },
       { name: TemporaryImageLog.name, schema: TemporaryImageLogSchema },

@@ -126,52 +126,75 @@ ${dynamicContent}
       )
     }
 
-    // Health and activity
+    // Metabolic calculations (if available)
+    const profileWithCalculations = userProfile as any
+    if (profileWithCalculations.calculatedBmr) {
+      profile.push(`BMR: ${profileWithCalculations.calculatedBmr} kcal/day`)
+    }
+
+    if (profileWithCalculations.calculatedTdee) {
+      profile.push(`TDEE: ${profileWithCalculations.calculatedTdee} kcal/day`)
+    }
+
+    // Pre-calculated nutrition goals
+    const nutritionGoals: string[] = []
+    if (profileWithCalculations.dailyCaloriesGoal) {
+      nutritionGoals.push(
+        `Calories: ${profileWithCalculations.dailyCaloriesGoal} kcal`,
+      )
+    }
+    if (profileWithCalculations.dailyProteinGoal) {
+      nutritionGoals.push(
+        `Protein: ${profileWithCalculations.dailyProteinGoal}g`,
+      )
+    }
+    if (profileWithCalculations.dailyCarbsGoal) {
+      nutritionGoals.push(`Carbs: ${profileWithCalculations.dailyCarbsGoal}g`)
+    }
+    if (profileWithCalculations.dailyFatGoal) {
+      nutritionGoals.push(`Fat: ${profileWithCalculations.dailyFatGoal}g`)
+    }
+    if (profileWithCalculations.dailyFiberGoal) {
+      nutritionGoals.push(`Fiber: ${profileWithCalculations.dailyFiberGoal}g`)
+    }
+    if (profileWithCalculations.dailyWaterGoal) {
+      nutritionGoals.push(`Water: ${profileWithCalculations.dailyWaterGoal}ml`)
+    }
+
+    if (nutritionGoals.length > 0) {
+      profile.push(`Daily Nutrition Targets: ${nutritionGoals.join(', ')}`)
+    }
+
+    // Goals and preferences
+    if (userProfile.goal) profile.push(`Goal: ${userProfile.goal}`)
     if (userProfile.activityLevel)
       profile.push(`Activity Level: ${userProfile.activityLevel}`)
-    if (userProfile.goal) profile.push(`Health Goal: ${userProfile.goal}`)
     if (userProfile.dietType) profile.push(`Diet Type: ${userProfile.dietType}`)
 
-    // Restrictions and conditions
-    if (userProfile.healthConditions?.length) {
+    // Health considerations
+    if (
+      userProfile.healthConditions &&
+      userProfile.healthConditions.length > 0
+    ) {
       profile.push(
         `Health Conditions: ${userProfile.healthConditions.join(', ')}`,
       )
     }
-    if (userProfile.foodAllergies?.length) {
-      profile.push(
-        `Food Allergies/Restrictions: ${userProfile.foodAllergies.join(', ')}`,
-      )
+    if (userProfile.foodAllergies && userProfile.foodAllergies.length > 0) {
+      profile.push(`Food Allergies: ${userProfile.foodAllergies.join(', ')}`)
     }
 
-    // Preferences
-    if (userProfile.preferredCuisine?.length) {
-      profile.push(
-        `Preferred Cuisine: ${userProfile.preferredCuisine.join(', ')}`,
-      )
-    }
-    if (userProfile.preferredFlavorProfiles?.length) {
-      profile.push(
-        `Flavor Preferences: ${userProfile.preferredFlavorProfiles.join(', ')}`,
-      )
-    }
-
-    // Special considerations
+    // Food preferences
     if (
-      userProfile.pregnancyLactationStatus &&
-      userProfile.pregnancyLactationStatus !== 'not_applicable'
+      userProfile.preferredCuisine &&
+      userProfile.preferredCuisine.length > 0
     ) {
-      profile.push(`Special Status: ${userProfile.pregnancyLactationStatus}`)
-    }
-    if (userProfile.ethicalFoodConsiderations?.length) {
       profile.push(
-        `Ethical Considerations: ${userProfile.ethicalFoodConsiderations.join(', ')}`,
+        `Preferred Cuisines: ${userProfile.preferredCuisine.join(', ')}`,
       )
     }
 
-    return profile.length > 0
-      ? `USER PROFILE:\n${profile.map((item) => `- ${item}`).join('\n')}`
-      : 'USER PROFILE: Basic profile (limited information available)'
+    return profile.join('\n')
   }
 
   /**

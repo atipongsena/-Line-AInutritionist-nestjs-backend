@@ -8,6 +8,47 @@
   ระบบ Backend สำหรับ AI Nutritionist LINE Bot พัฒนาด้วย NestJS ทำหน้าที่วิเคราะห์ข้อมูลโภชนาการจากรูปภาพและข้อความอาหาร รวมถึงการจัดการข้อมูลผู้ใช้และการสนทนาผ่าน LINE Messaging API
 </p>
 
+<p align="center">
+  <a href="#🚀-deployment">🚀 Deployment</a> |
+  <a href="#⚡-quick-start">⚡ Quick Start</a> |
+  <a href="#📚-api-docs">📚 API Docs</a> |
+  <a href="#🛠️-tech-stack">🛠️ Tech Stack</a>
+</p>
+
+---
+
+## 🚀 Deployment
+
+### Quick Deploy to Azure
+
+```bash
+# ตั้งค่า Azure resources (ครั้งแรกเท่านั้น)
+./scripts/setup-azure.sh
+
+# Deploy ผ่าน GitHub Actions (แนะนำ)
+git push origin main
+
+# หรือ deploy manual
+./scripts/deploy-manual.ps1
+```
+
+📋 **คู่มือ Deployment:**
+
+- [📖 DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) - คู่มือการ deploy แบบละเอียด
+- [⚡ QUICK_DEPLOY_REFERENCE.md](./QUICK_DEPLOY_REFERENCE.md) - คำสั่งสำหรับ deploy ด่วน
+
+### Production URLs
+
+- **Backend API**: `https://ai-nutritionist-backend.{domain}.azurecontainerapps.io`
+- **Frontend App**: `https://{static-web-app-name}.azurestaticapps.net`
+
+### GitHub Actions Status
+
+- **Backend Deploy**: [![Deploy Backend](https://github.com/YOUR_USERNAME/ai-nutritionist-nestjs-backend/actions/workflows/deploy.yml/badge.svg)](https://github.com/YOUR_USERNAME/ai-nutritionist-nestjs-backend/actions/workflows/deploy.yml)
+- **Frontend Deploy**: [![Deploy Frontend](https://github.com/YOUR_USERNAME/ai-nutritionist-nestjs-backend/actions/workflows/azure-static-web-apps.yml/badge.svg)](https://github.com/YOUR_USERNAME/ai-nutritionist-nestjs-backend/actions/workflows/azure-static-web-apps.yml)
+
+---
+
 ## Features
 
 ### 🤖 AI-Powered Food Analysis
@@ -46,6 +87,36 @@
 - แนะนำเมนูอาหารตามความต้องการ
 - คำนวณสัดส่วนโภชนาการ
 - ปรับแต่งตามข้อจำกัดทางอาหาร
+
+## ⚡ Quick Start
+
+### Prerequisites Checklist
+
+- [ ] Node.js 24+ installed
+- [ ] pnpm 9+ installed
+- [ ] MongoDB running
+- [ ] Azure account with resources
+- [ ] LINE Developer account
+
+### 1-Minute Setup
+
+```bash
+# Clone และ install
+git clone https://github.com/YOUR_USERNAME/ai-nutritionist-nestjs-backend.git
+cd ai-nutritionist-nestjs-backend
+pnpm install
+
+# Setup environment
+cp .env.example .env  # แก้ไขค่าต่างๆ
+
+# Start development
+pnpm run start:dev
+```
+
+### Health Check
+
+- **API**: `GET http://localhost:3001/health`
+- **API Docs**: `http://localhost:3001/api-docs`
 
 ## Command Filtering
 

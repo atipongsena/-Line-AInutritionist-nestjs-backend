@@ -39,6 +39,7 @@ export interface SharedUserProfileDto {
   displayName?: string
   pictureUrl?: string
   language: string // e.g., 'th' | 'en'
+  timezone?: string // e.g., 'Asia/Bangkok', 'UTC', etc.
   goal?: string // e.g., 'weight_loss', 'muscle_gain', 'maintenance', 'general_health'
   gender?: Gender
   age?: number
@@ -64,6 +65,21 @@ export interface SharedUserProfileDto {
   targetWeightKg?: number | null
   calculatedBmr?: number | null
   calculatedTdee?: number | null
+
+  // Daily nutrition goals - main macronutrients
+  dailyCaloriesGoal?: number
+  dailyProteinGoal?: number
+  dailyCarbsGoal?: number
+  dailyFatGoal?: number
+
+  // Daily nutrition goals - micronutrients and others
+  dailyFiberGoal?: number
+  dailySugarGoal?: number
+  dailySodiumGoal?: number
+  dailyWaterGoal?: number
+  dailyCholesterolGoal?: number
+  dailySaturatedFatGoal?: number
+  dailyOmega3Goal?: number
 }
 
 export interface SharedCreateUserProfileDto {
@@ -77,6 +93,7 @@ export interface SharedUpdateUserProfileDto {
   displayName?: string
   pictureUrl?: string
   language?: string
+  timezone?: string
   goal?: string
   gender?: Gender
   age?: number
@@ -95,4 +112,22 @@ export interface SharedUpdateUserProfileDto {
   pregnancyLactationStatus?: PregnancyLactationStatus
   preferredCuisine?: string[]
   preferredFlavorProfiles?: string[]
+
+  // Nutrition calculation fields
+  targetWeightKg?: number | null
+  calculatedBmr?: number | null
+  calculatedTdee?: number | null
+
+  // Daily nutrition goals
+  dailyCaloriesGoal?: number
+  dailyProteinGoal?: number
+  dailyCarbsGoal?: number
+  dailyFatGoal?: number
+  dailyFiberGoal?: number
+  dailySugarGoal?: number
+  dailySodiumGoal?: number
+  dailyWaterGoal?: number
+  dailyCholesterolGoal?: number
+  dailySaturatedFatGoal?: number
+  dailyOmega3Goal?: number
 }

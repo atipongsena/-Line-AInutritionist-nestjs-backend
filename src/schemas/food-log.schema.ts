@@ -42,10 +42,28 @@ class FoodNutrition {
   saturated_fat?: number
 
   @Prop({ default: 0 })
+  trans_fat?: number
+
+  @Prop({ default: 0 })
+  polyunsaturated_fat?: number
+
+  @Prop({ default: 0 })
+  monounsaturated_fat?: number
+
+  @Prop({ default: 0 })
   water?: number
 
   @Prop({ default: 0 })
   omega3?: number
+
+  @Prop({ default: 0 })
+  potassium_nutrient?: number
+
+  @Prop({ default: 0 })
+  caffeine?: number
+
+  @Prop({ default: 0 })
+  alcohol?: number
 }
 
 @Schema({ _id: false })

@@ -1,7 +1,8 @@
 packages:
   - 'packages/*'
   - '.'
-  - 'liff-profile-app'
+  # - 'liff-profile-app' # Removed as this project has been deleted
+  - 'liff-nutrition-next' # Added the Next.js app to the workspace
 
 ignoredBuiltDependencies:
   - '@nestjs/core'

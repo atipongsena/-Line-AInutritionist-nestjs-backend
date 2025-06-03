@@ -9,6 +9,7 @@ import {
 import { UpdateFoodLogDto } from './dto/update-food-log.dto'
 import { FoodLogResponseDto } from './dto/food-log-response.dto'
 import { UserService } from '../user/user.service' // To fetch user ObjectId
+import { TimezoneService } from '../common/timezone.service'
 // Import ImageService if needed for image URL validation or other image-related tasks
 
 @Injectable()
@@ -18,6 +19,7 @@ export class FoodLogService {
   constructor(
     @InjectModel(FoodLog.name) private foodLogModel: Model<FoodLogDocument>,
     private readonly userService: UserService,
+    private readonly timezoneService: TimezoneService,
     // @Inject(ImageService) private readonly imageService: ImageService, // Example if needed
   ) {}
 
@@ -77,6 +79,25 @@ export class FoodLogService {
       throw new NotFoundException(
         `Food log with ID ${logId} not found for your account.`,
       )
+    }
+
+    // จัดการ clientTimestamp หากมีการส่งมา
+    if (updateFoodLogDto.clientTimestamp) {
+      try {
+        const userTimezone = await this.userService.getUserTimezone(lineUserId)
+        const clientTime = new Date(updateFoodLogDto.clientTimestamp)
+        const utcTime = this.timezoneService.convertToUtc(
+          clientTime,
+          userTimezone,
+        )
+        existingFoodLog.logDate = utcTime
+        this.logger.log(
+          `Updated logDate from client timestamp: ${updateFoodLogDto.clientTimestamp} (${userTimezone}) -> ${utcTime.toISOString()} (UTC)`,
+        )
+      } catch (error) {
+        this.logger.warn(`Failed to process clientTimestamp: ${error.message}`)
+        // ไม่ throw error เพื่อให้การอัปเดตอื่นๆ ดำเนินต่อไปได้
+      }
     }
 
     // Apply updates from DTO to the Mongoose document

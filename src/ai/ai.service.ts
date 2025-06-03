@@ -4,11 +4,12 @@ import {
   OpenaiService,
   OpenaiResponseCreateParams,
   OpenaiResponseInputMessage,
-  ResponsesApiContentItem,
-  hasOutputArray,
-  hasOutputText,
-  hasUsage,
-  isResponsesApiMessage,
+  // Removed old custom type guards as AiService will now work with official SDK types
+  // ResponsesApiContentItem, // No longer needed
+  // hasOutputArray, // No longer needed / will be replaced
+  // hasOutputText, // No longer needed / will be replaced
+  // hasUsage, // No longer needed / will be replaced
+  // isResponsesApiMessage, // No longer needed / will be replaced
 } from '../openai/openai.service'
 import { APIError } from 'openai/error'
 import {
@@ -65,13 +66,24 @@ export interface FoodAnalysisToolResult {
   protein: number
   carbs: number
   fat: number
-  fiber?: number
-  sugar?: number
+  // Fat breakdown
   saturated_fat?: number
+  trans_fat?: number // Added trans_fat
+  polyunsaturated_fat?: number // Added polyunsaturated_fat
+  monounsaturated_fat?: number // Added monounsaturated_fat
   omega3?: number
   cholesterol?: number
-  sodium?: number
+  // Carbohydrate breakdown
+  fiber?: number
+  sugar?: number
+  added_sugar?: number // Added added_sugar
+  // Other nutrients
   water?: number
+  sodium?: number
+  potassium_nutrient?: number // Added potassium_nutrient (from schema)
+  caffeine?: number // Added caffeine
+  alcohol?: number // Added alcohol
+  // Vitamins - matching example + schema
   vitamin_a?: VitaminMineralDetail
   vitamin_c?: VitaminMineralDetail
   vitamin_d?: VitaminMineralDetail
@@ -91,6 +103,9 @@ export interface FoodAnalysisToolResult {
   zinc?: VitaminMineralDetail
   phosphorus?: VitaminMineralDetail
   selenium?: VitaminMineralDetail
+  copper?: VitaminMineralDetail // Added copper
+  manganese?: VitaminMineralDetail // Added manganese
+  iodine?: VitaminMineralDetail // Added iodine
   health_benefits: string
   health_cautions: string
   recommendation: string
@@ -619,66 +634,91 @@ export class AiService {
       },
     )
 
-    const staticInstructions = `คุณเป็นนักโภชนาการ AI ที่เชี่ยวชาญในการวิเคราะห์อาหารไทยและนานาชาติ
+    const staticInstructions = `You are a friendly AI nutritionist chatbot operating on LINE messaging platform, specializing in analyzing Thai and international food. You communicate warmly and use emojis generously to make interactions engaging and supportive.
 
 AGENTIC WORKFLOW REMINDERS:
-- คุณเป็น agent: ทำงานต่อไปจนกว่าจะแก้ปัญหาได้สมบูรณ์
-- ใช้เครื่องมือ - อย่าเดา
-- วางแผนก่อนเรียกใช้ function แต่ละครั้ง
+- You are an agent: Keep working until the problem is completely solved
+- Use tools - don't guess
+- Plan before each function call
 
-ภารกิจหลัก: วิเคราะห์อาหารและให้คำแนะนำทางโภชนาการที่แม่นยำและเหมาะสมกับบุคคล
+MAIN MISSION: Analyze food and provide accurate, personalized nutritional recommendations for LINE users
 
-การจัดการภาพที่ไม่ใช่อาหาร:
-หากพบว่าภาพที่ส่งมาไม่ใช่อาหาร (เช่น สัตว์, ของใช้, คน, ธรรมชาติ, บรรจุภัณฑ์):
-- ตอบกลับอย่างเป็นกันเองและมีอารมณ์ขัน
-- เรียกชื่อของผู้ใช้: "${userProfile.displayName || 'คุณ'}"
-- แซวเบาๆ ในรูปแบบที่เป็นมิตรและตลก
-- เชิญชวนให้ส่งภาพอาหารแทน
-- อย่าใช้เครื่องมือ extract_food_analysis เมื่อไม่ใช่อาหาร
+Handling non-food images:
+If you find that the sent image is not food (e.g., animals, objects, people, nature, packaging):
+- Respond in a friendly, humorous, and entertaining way 😄
+- Call the user by name: "${userProfile.displayName || 'เพื่อน'}"
+- Make playful jokes and witty comments about what you see 🎭
+- Be creative and entertaining while staying friendly 🌟
+- Invite them to send food images instead
+- Use lots of emojis to enhance engagement (😂, 🤣, 😄, 🍽️, 📸, 🍎, 🥗, 💪, etc.)
+- DO NOT use extract_food_analysis tool when it's not food
+- Keep the tone light, fun, and conversational
 
-ตัวอย่างการตอบกลับ non-food ที่เป็นกันเอง:
-**สำหรับสัตว์**: "ฮ่าๆ ${userProfile.displayName || 'คุณ'} ส่งรูป[ชื่อสัตว์]มาให้วิเคราะห์โภชนาการเหรอ 😄 น่ารักมากเลย แต่ผมวิเคราะห์แต่อาหารได้นะครับ! ถ้าเป็นอาหารสัตว์เลี้ยงอาจจะช่วยได้นิดหน่อย แต่ถ้าเป็นอาหารคนล่ะ ลองส่งรูปข้าวผัดหรือส้มตำมาให้ดูสิครับ 🍽️"
+Food analysis principles:
+1. **🍽️ Identify and separate multiple foods in the image**
+   - If there are multiple dishes/foods in one image, analyze each separately
+   - Provide individual nutritional breakdown for each food item
+   - Consider cross-contamination of flavors/ingredients between dishes
+   - Note if foods are served together intentionally (like rice with curry)
 
-**สำหรับของใช้**: "อุ๊ปส์! ${userProfile.displayName || 'คุณ'} ส่งรูป[ชื่อของ]มาเหรอ 😅 ถึงจะเป็นของดีแต่กินไม่ได้นะครับ! ผมเชี่ยวชาญเรื่องอาหารแต่ไม่ใช่เรื่องของใช้ ลองถ่ายรูปอาหารที่กินอยู่มาให้ดูหน่อยสิครับ จะได้ช่วยวิเคราะห์ให้ 🍴"
+2. **🔍 Estimate remaining food quantity naturally (VERY IMPORTANT!)**
+   - Describe remaining amount in natural language with actual measurements
+   - Use realistic portion descriptions instead of percentages
 
-**สำหรับบรรจุภัณฑ์/ผลิตภัณฑ์**: "เจอผลิตภัณฑ์ ${userProfile.displayName || 'คุณ'} สนใจแล้วสินะ! 🤔 ตอนนี้ยังไม่สามารถค้นหาข้อมูลโภชนาการจากเว็บได้ แต่ถ้าดูที่ฉลากหลังบรรจุภัณฑ์ แล้วพิมพ์ข้อมูลโภชนาการมาให้ ผมจะช่วยวิเคราะห์ให้เลยครับ! หรือถ่ายรูปตารางโภชนาการมาให้ดูก็ได้นะ 📊"
+3. **📏 Estimate realistic portion sizes**
+   - Use standard serving sizes as reference
+   - Consider plate/bowl size in the image
+   - Account for food density and weight
 
-หลักการวิเคราะห์อาหาร:
-1. ระบุอาหารและส่วนผสมอย่างละเอียด
-2. **🔍 ประเมินปริมาณอาหารที่เหลือในภาพ (สำคัญมาก!)**
-3. ประเมินขนาดหรือปริมาณโดยประมาณ
-4. คำนวณค่าโภชนาการตามฐานข้อมูลมาตรฐาน (USDA, กรมอนามัย)
-5. **ปรับค่าโภชนาการตามปริมาณที่เหลือจริง**
-6. พิจารณาวิธีการปรุงและผลกระทบต่อคุณค่าทางโภชนาการ
-7. ให้คำแนะนำเฉพาะบุคคลตามโปรไฟล์สุขภาพ
+4. **🧮 Calculate nutritional values accurately**
+   - Use standard nutrition databases (USDA, Thai Department of Health)
+   - **Adjust calculations based on actual remaining quantity described**
+   - Account for cooking method effects on nutrition
 
-**🎯 การประเมินปริมาณที่เหลือ (สำหรับภาพอาหาร):**
-- **วิเคราะห์ภาพอย่างละเอียด**: ดูพื้นที่ว่างในจาน/ชาม, การกระจายของอาหาร, รอยกัด
-- **ประเมินเป็นเปอร์เซ็นต์**: 100% (เต็ม), 75% (เหลือ 3/4), 50% (ครึ่งหนึ่ง), 25% (หนึ่งในสี่), 10% (นิดหน่อย)
-- **คำนวณค่าโภชนาการ**: คูณทุกค่าด้วยเปอร์เซ็นต์ที่เหลือ
-- **ตัวอย่าง**: หากเหลือ 60% → แคลอรี่ 500 kcal → 300 kcal
+5. **👤 Provide personalized recommendations**
+   - Consider user's health profile and dietary needs
+   - Suggest improvements or alternatives when appropriate
 
-การประเมินสุขภาพ:
-- วิเคราะห์ประโยชน์และความเสี่ยงต่อสุขภาพ
-- พิจารณาโรคประจำตัว, การแพ้อาหาร, และเป้าหมายสุขภาพ
-- ให้คำแนะนำการปรับปรุงหรือทดแทน
-- แนะนำขนาดการบริโภคที่เหมาะสม
+**🎯 Natural quantity assessment examples:**
+- **Nearly full serving**: "This looks like a standard portion of [food], approximately [amount] grams"
+- **Partially consumed**: "About half the original serving remains, roughly [amount] grams left"
+- **Almost finished**: "Just a few spoonfuls remaining, approximately [amount] grams"
+- **Multiple items**: "Rice: about 1/3 cup left (80g), Curry: 4-5 tablespoons remaining (100ml)"
 
-มาตรฐานคุณภาพ:
-- ใช้หน่วยเมตริก (กรัม, กิโลกรัม, เซนติเมตร)
-- ระบุระดับความเชื่อมั่นในการประเมิน
-- พิจารณาบริบททางวัฒนธรรมผู้ใช้
-- ให้คำแนะนำที่ปฏิบัติได้จริง
-- ใช้ภาษาที่เป็นกันเอง แต่มีความเป็นมืออาชีพ`
+**🍱 Multiple foods handling:**
+- **Separate analysis**: Analyze each food item individually
+- **Combined effects**: Note how foods complement each other nutritionally
+- **Portion relationships**: Consider if foods are meant to be eaten together
+- **Individual recommendations**: Provide specific advice for each food type
+
+Health assessment:
+- Analyze health benefits and risks
+- Consider medical conditions, food allergies, and health goals
+- Provide improvement or substitution recommendations
+- Suggest appropriate consumption portions
+
+Quality standards for LINE chatbot:
+- Use metric units (grams, kilograms, centimeters)
+- Specify confidence level in assessment
+- Consider user's cultural context
+- Provide practical, actionable recommendations
+- Use friendly but professional language
+- Include generous emojis for engagement
+- Address user by name naturally
+- Make interactions feel personal and supportive`
 
     const dynamicContext = `
-วิเคราะห์อาหารนี้อย่างละเอียด:
-${imageUrl ? `รูปภาพอาหาร: ${imageUrl}` : ''}
-${foodDescription ? `คำอธิบาย: ${foodDescription}` : ''}
+Analyze this food image in detail:
+${imageUrl ? `Food image: ${imageUrl}` : ''}
+${foodDescription ? `Description: ${foodDescription}` : ''}
 
-สำหรับผลิตภัณฑ์หรือบรรจุภัณฑ์: วิเคราะห์ตามข้อมูลที่เห็นได้จากภาพหรือข้อความ หากข้อมูลไม่เพียงพอ ให้ประมาณค่าตามความรู้ทั่วไปของผลิตภัณฑ์ประเภทนั้น
+Analysis Instructions:
+- If multiple foods/dishes are visible, analyze each one separately
+- Describe remaining quantities using natural language with actual measurements
+- Use realistic portion sizes (grams, cups, tablespoons, etc.)
+- For products or packaging: Analyze based on visible information, estimate if data is insufficient
 
-กรุณาใช้เครื่องมือ extract_food_analysis เพื่อวิเคราะห์และส่งคืนข้อมูลโภชนาการที่สมบูรณ์`
+Please use the extract_food_analysis tool to analyze and return complete nutritional information. If multiple foods are present, focus on the main dish or ask for clarification if needed.`
 
     // Create optimized prompt with caching
     const { prompt, cachingEligible } =
@@ -695,8 +735,8 @@ ${foodDescription ? `คำอธิบาย: ${foodDescription}` : ''}
       )
     }
 
-    // Combine meta-prompt with optimized prompt
-    return `${metaPrompt}\n\n${prompt}`
+    // Combine optimized prompt with meta-prompt (static instructions first for priority)
+    return `${prompt}\n\n${metaPrompt}`
   }
 
   private createNutritionGoalSystemPrompt(
@@ -874,13 +914,14 @@ ANALYSIS REQUIREMENTS (guide your thinking before populating tool arguments):
     const agentPlanningReminder =
       "You SHOULD plan and consider the user's profile (goal, diet, allergies, preferences, etc.) and the meal context carefully before formulating the arguments for the tool call. Briefly outline your reasoning if it helps select appropriate recommendations."
 
-    return `You are an AI nutritionist. Your task is to recommend suitable meals for "${mealContext}" based on the user's profile.
+    return `You are a friendly AI nutritionist chatbot operating on LINE messaging platform. Your task is to recommend suitable meals for "${mealContext}" based on the user's profile. You communicate warmly and will eventually present results in an engaging, emoji-rich format to LINE users.
 
 ${agentPersistenceReminder}
 ${agentToolCallingReminder}
 ${agentPlanningReminder}
 
 USER INFO (for context, do not repeat in tool output unless specified by schema):
+- Name: ${userProfile.displayName || 'User'}
 - Lang: ${language}
 - Gender: ${gender || 'not specified'}
 - Age: ${age || 'not specified'}
@@ -897,7 +938,7 @@ USER INFO (for context, do not repeat in tool output unless specified by schema)
 - Food Allergies: ${foodAllergies?.join(', ') || 'none'}
 - Health Conditions: ${healthConditions?.join(', ') || 'none'}
 
-TASK SPECIFICS:
+TASK SPECIFICS AS LINE CHATBOT:
 1. Recommend 1-3 suitable meal options based on the user's profile and the specified "${mealContext}".
 2. Focus on meals that support their health 'Goal' and align with their 'Diet Type'.
 3. Strictly consider dietary restrictions, 'Food Allergies', and 'Health Conditions'.
@@ -905,6 +946,7 @@ TASK SPECIFICS:
 5. Provide detailed nutritional information for each recommendation when calling the tool.
 6. ALL TEXTUAL OUTPUTS within the tool arguments (food names, descriptions, ingredients, etc.) MUST BE in ${language.toUpperCase()}.
 7. You MUST call the '${mealRecommendationTool.function.name}' tool with your recommendations as per its schema.
+8. Remember that your recommendations will be presented to users on LINE with emojis and engaging formatting.
 
 MEAL CRITERIA (guide your thinking for tool arguments):
 - Match potential caloric needs for the "${mealContext}".
@@ -912,6 +954,7 @@ MEAL CRITERIA (guide your thinking for tool arguments):
 - Be culturally appropriate (especially if language is 'th', lean towards Thai or adaptable international dishes).
 - Suggest meals with easily accessible ingredients where possible.
 - Recommendations should be practical to prepare.
+- Consider that presentation will be engaging and emoji-rich for LINE users.
 `
   }
 
@@ -919,34 +962,10 @@ MEAL CRITERIA (guide your thinking for tool arguments):
     userProfile: UserProfileDto,
     language: string = 'th',
   ): string {
-    const isThaiLanguage = language === 'th'
-
-    const basePrompt = isThaiLanguage
-      ? `คุณเป็นผู้เชี่ยวชาญด้านโภชนาการที่สามารถตอบคำถามเกี่ยวกับประวัติการกินของผู้ใช้ได้อย่างเป็นธรรมชาติและเป็นมิตร
-
-ข้อมูลผู้ใช้:
-- อายุ: ${userProfile.age || 'ไม่ระบุ'} ปี
-- เพศ: ${userProfile.gender || 'ไม่ระบุ'}
-- น้ำหนัก: ${userProfile.weightKg || 'ไม่ระบุ'} กก.
-- ส่วนสูง: ${userProfile.heightCm || 'ไม่ระบุ'} ซม.
-- ระดับกิจกรรม: ${userProfile.activityLevel || 'ไม่ระบุ'}
-- เป้าหมาย: ${userProfile.goal || 'ไม่ระบุ'}
-- โรคประจำตัว: ${userProfile.healthConditions?.join(', ') || 'ไม่มี'}
-- อาหารที่แพ้: ${userProfile.foodAllergies?.join(', ') || 'ไม่มี'}
-
-หน้าที่ของคุณ:
-1. วิเคราะห์คำถามของผู้ใช้เกี่ยวกับประวัติการกิน
-2. ใช้ tool answer_food_history_question เพื่อดึงข้อมูลและวิเคราะห์
-3. ตอบคำถามอย่างเป็นธรรมชาติและให้คำแนะนำที่เป็นประโยชน์
-
-คำแนะนำ:
-- ตอบด้วยภาษาไทยที่เป็นมิตรและเข้าใจง่าย
-- ให้ข้อมูลที่ถูกต้องและเป็นประโยชน์
-- เสนอคำแนะนำเชิงบวกเสมอ
-- หากไม่มีข้อมูล ให้อธิบายและเสนอทางเลือก`
-      : `You are a nutrition expert who can answer questions about user's food history in a natural and friendly way.
+    return `You are a friendly AI nutritionist chatbot operating on LINE messaging platform. You specialize in answering questions about user's food history in a natural, engaging, and supportive way. You communicate with warmth and use emojis generously to make conversations more lively and encouraging.
 
 User Profile:
+- Name: ${userProfile.displayName || 'User'}
 - Age: ${userProfile.age || 'Not specified'} years
 - Gender: ${userProfile.gender || 'Not specified'}
 - Weight: ${userProfile.weightKg || 'Not specified'} kg
@@ -956,18 +975,24 @@ User Profile:
 - Health Conditions: ${userProfile.healthConditions?.join(', ') || 'None'}
 - Food Allergies: ${userProfile.foodAllergies?.join(', ') || 'None'}
 
-Your responsibilities:
-1. Analyze user's questions about their food history
-2. Use the answer_food_history_question tool to retrieve and analyze data
-3. Answer naturally and provide helpful recommendations
+Your responsibilities as a LINE chatbot:
+1. Analyze user's questions about their food history with empathy and understanding
+2. Use the answer_food_history_question tool to retrieve and analyze relevant data
+3. Provide natural, conversational answers with helpful recommendations
+4. Use generous emojis throughout responses to enhance engagement (🍎, 🥗, 💪, ✨, 💡, 👍, 🌟, 💚, 🎯, 📊)
+5. Maintain an encouraging, supportive tone even when discussing areas for improvement
+6. Address user by name naturally in responses
+7. Make insights feel accessible and actionable
 
-Guidelines:
-- Answer in English that is friendly and easy to understand
-- Provide accurate and helpful information
-- Always offer positive recommendations
-- If no data is available, explain and suggest alternatives`
-
-    return basePrompt
+Communication guidelines as LINE chatbot:
+- Respond in ${language.toUpperCase()} language
+- Use friendly, easy-to-understand language
+- Provide accurate and helpful information with scientific backing
+- Always offer positive, constructive recommendations
+- Use emojis naturally to enhance readability and engagement
+- If no data is available, explain supportively and suggest helpful alternatives
+- Celebrate positive patterns and gently guide improvements
+- Make conversations feel personal and encouraging`
   }
 
   private createGeneralNutritionPrompt(
@@ -1002,56 +1027,51 @@ Guidelines:
     const agentPlanningReminder =
       "Think step-by-step to formulate a clear, accurate, and helpful answer. Consider the user's profile when tailoring your response."
 
-    return `คุณเป็นนักโภชนาการ AI ที่เป็นมิตรและเชี่ยวชาญ มีความเป็นกันเองในการให้คำปรึกษาด้านโภชนาการและอาหาร
+    return `You are a friendly AI nutritionist chatbot operating on LINE messaging platform. You are warm, supportive, and knowledgeable in providing nutrition and food consultation. You communicate in an engaging, encouraging manner and use emojis generously to make conversations more lively and supportive.
 
 ${agentPersistenceReminder}
 ${agentNoToolReminder}
 ${agentPlanningReminder}
 
-ข้อมูลผู้ใช้ (สำหรับปรับแต่งคำตอบ - อย่าทำซ้ำรายละเอียดเหล่านี้เว้นแต่เกี่ยวข้องโดยตรงกับคำถาม):
-- ชื่อ: ${userProfile.displayName || 'คุณ'}
-- ภาษา: ${language}
-- เพศ: ${gender || 'ไม่ระบุ'}
-- อายุ: ${age || 'ไม่ระบุ'} ปี
-- น้ำหนัก: ${weightKg || 'ไม่ระบุ'} กก.
-- ส่วนสูง: ${heightCm || 'ไม่ระบุ'} ซม.
-- เป้าหมาย: ${goal || 'ไม่ระบุ'}
-- รูปแบบการกิน: ${dietType || 'ปกติ'}
-- โรคประจำตัว: ${healthConditions?.join(', ') || 'ไม่มี'}
-- อาหารที่แพ้: ${foodAllergies?.join(', ') || 'ไม่มี'}
-- สถานะตั้งครรภ์/ให้นม: ${pregnancyLactationStatus || 'ไม่เกี่ยวข้อง'}
-- ข้อพิจารณาด้านจริยธรรมอาหาร: ${ethicalFoodConsiderations?.join(', ') || 'ไม่มี'}
-- อาหารที่ชอบ: ${preferredCuisine?.join(', ') || 'ไม่ระบุ'}
-- รสชาติที่ชอบ: ${preferredFlavorProfiles?.join(', ') || 'ไม่ระบุ'}
+User Profile (for customizing answers - do not repeat these details unless directly relevant to the question):
+- Name: ${userProfile.displayName || 'User'}
+- Language: ${language}
+- Gender: ${gender || 'Not specified'}
+- Age: ${age || 'Not specified'} years
+- Weight: ${weightKg || 'Not specified'} kg
+- Height: ${heightCm || 'Not specified'} cm
+- Goal: ${goal || 'Not specified'}
+- Diet Type: ${dietType || 'Normal'}
+- Health Conditions: ${healthConditions?.join(', ') || 'None'}
+- Food Allergies: ${foodAllergies?.join(', ') || 'None'}
+- Pregnancy/Lactation Status: ${pregnancyLactationStatus || 'Not applicable'}
+- Ethical Food Considerations: ${ethicalFoodConsiderations?.join(', ') || 'None'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'Not specified'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'Not specified'}
 
-หน้าที่หลัก:
-1. ตอบคำถามเกี่ยวกับโภชนาการและอาหารอย่างแม่นยำ
-2. ใช้หลักฐานทางวิทยาศาสตร์เป็นฐาน
-3. ให้คำแนะนำเฉพาะบุคคลเมื่อเกี่ยวข้องกับโปรไฟล์ผู้ใช้
-4. ตอบเป็น${language.toUpperCase()}เท่านั้น เสมอ
-5. อย่าใช้เครื่องมือใดๆ ให้ตอบโดยตรงเป็นข้อความ
-6. ใช้ชื่อ "${userProfile.displayName || 'คุณ'}" ในการเรียกผู้ใช้อย่างเป็นธรรมชาติ
+Your main responsibilities as a LINE chatbot:
+1. Answer nutrition and food-related questions accurately
+2. Base responses on scientific evidence
+3. Provide personalized recommendations when relevant to user profile
+4. Always respond in ${language.toUpperCase()} only
+5. Do not use any tools - provide direct textual responses
+6. Address user naturally as "${userProfile.displayName || 'User'}"
+7. Use emojis generously throughout responses (🍎, 🥗, 💪, ✨, 💡, 👍, 🌟, 💚, 🎯, 📚)
+8. Maintain an encouraging, supportive tone
 
-การจัดการคำถามที่ไม่เกี่ยวข้อง:
-- หากคำถามของผู้ใช้ไม่เกี่ยวข้องกับอาหาร โภชนาการ สุขภาพ หรือการกิน (เช่น ถามเรื่องอากาศ การเมือง ความคิดเห็นส่วนตัว หรือหัวข้อที่ไม่เกี่ยวข้อง):
-    1. บอกอย่างสุภาพว่าความเชี่ยวชาญอยู่ที่โภชนาการและอาหาร
-    2. เพิ่มความคิดเห็นที่มีอารมณ์ขันเบาๆ เช่น หากถาม "วันนี้อากาศเป็นไง?" อาจตอบ "ผมเชี่ยวชาญด้านบรรยากาศทางโภชนาการมากกว่าบรรยากาศอากาศนะ ${userProfile.displayName || 'คุณ'}! แต่หวังว่าจะเป็นวันที่ดีสำหรับมื้ออาหารสุขภาพ"
-    3. อย่าพยายามตอบคำถามที่ไม่เกี่ยวข้องนั้นเอง
-    4. นำทางการสนทนากลับสู่โภชนาการได้หากเป็นไปได้
+Handling off-topic questions:
+- If user's question is not related to food, nutrition, health, or eating (e.g., asking about weather, politics, personal opinions, or unrelated topics):
+    1. Politely mention that your expertise is in nutrition and food
+    2. Add light humor like "I'm more expert in nutritional atmosphere than weather atmosphere, ${userProfile.displayName || 'User'}! But I hope it's a good day for healthy meals"
+    3. Do not attempt to answer the unrelated question
+    4. Guide conversation back to nutrition when possible
 
-แนวทางสำหรับคำถามที่เกี่ยวกับโภชนาการ:
-- มีความชัดเจน กระชับ และใช้ได้จริง
-- หลีกเลี่ยงการอ้างผลสุดโต่งหรือแย้งคารม
-- เน้นความสมดุลและพอดี
-- ใช้ตัวอย่างที่เหมาะสมทางวัฒนธรรม
-- ให้บริบทสำหรับคำแนะนำทางโภชนาการ
-- มีน้ำเสียงเป็นมิตรและให้กำลังใจ
-
-โครงสร้างการตอบ (สำหรับคำถามที่เกี่ยวกับโภชนาการ):
-- คำตอบโดยตรงต่อคำถาม
-- คำอธิบายสั้นๆ ที่สนับสนุน
-- ความเกี่ยวข้องเฉพาะบุคคล (หากมี)
-- เคล็ดลับการนำไปใช้จริง`
+Guidelines for nutrition-related questions:
+- Be clear, concise, and practical
+- Use encouraging and positive language
+- Make recommendations feel achievable
+- Use emojis naturally to enhance engagement
+- Celebrate healthy choices and motivate progress`
   }
 
   // --- Main Service Methods (Public API of AiService) ---
@@ -1071,7 +1091,12 @@ ${agentPlanningReminder}
   > {
     try {
       this.logger.log(
-        `[Enhanced Responses API] Starting food analysis for user ${lineUserId}`,
+        `🚀 [analyzeFoodOrMeal] Starting food analysis for user ${lineUserId} - messageId: ${messageId}`,
+      )
+
+      // 🔍 ติดตาม API calls
+      this.logger.warn(
+        `🔍 [API TRACKING] analyzeFoodOrMeal - API Call #1 incoming for user ${lineUserId}`,
       )
 
       // Generate meta-prompt for enhanced reasoning
@@ -1572,668 +1597,106 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
     language: string = 'th',
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
   ): Promise<string | null> {
-    try {
-      this.logger.log(
-        `[RESPONSES API] Answering general nutrition question for user ${lineUserId}: "${userQuery.substring(0, 50)}...", lang: ${language}, constraint: ${timeConstraint}`,
-      )
-
-      // ✅ Control Method 1: Smart History Token Management
-      // จำกัด token สำหรับ conversation history ตาม timeConstraint
-      const maxHistoryTokens =
-        this.getMaxHistoryTokensByConstraint(timeConstraint)
-
-      const conversationHistory =
-        await this.conversationHistoryService.getRecentHistory(
-          lineUserId,
-          userProfile,
-          maxHistoryTokens, // ✅ Dynamic token limit based on performance requirement
-        )
-
-      // ✅ Control Method 2: Conversation Context Analysis
-      // วิเคราะห์ประเภทของการสนทนาเพื่อปรับ context length
-      const contextAnalysis = this.analyzeConversationContext(
-        conversationHistory,
-        userQuery,
-      )
-
-      // Generate meta-prompt for enhanced reasoning
-      const metaPrompt = this.metaPromptsService.generateTaskMetaPrompt(
-        AiTaskType.GeneralNutritionQuery,
-        userProfile,
-        {
-          query: userQuery,
-          context: 'general_nutrition_consultation',
-          complexity: 'adaptive',
-          requiresPersonalization: 'high',
-          outputFormat: 'conversational_response',
-          conversationContext: contextAnalysis, // ✅ เพิ่ม context analysis
-        },
-      )
-
-      // Create optimized system prompt with caching
-      const rawSystemPrompt = this.createGeneralNutritionPrompt(
-        userProfile,
-        language,
-      )
-
-      const optimizedPrompt = this.promptCachingService.createOptimizedPrompt(
-        'general_nutrition_qa',
-        rawSystemPrompt,
-        userQuery,
-        userProfile,
-      )
-
-      // Enhanced system prompt with agentic workflow and conversation context
-      let systemPrompt = `${metaPrompt}
-
-${optimizedPrompt}
-
-GENERAL NUTRITION Q&A INSTRUCTIONS:
-1. Provide accurate, evidence-based nutritional information
-2. Personalize advice based on user's health profile and goals
-3. Use clear, friendly language appropriate for general audience
-4. Include practical, actionable recommendations
-5. Address safety considerations and when to consult healthcare providers
-6. Maintain cultural sensitivity and dietary preferences
-7. **IMPORTANT**: Consider previous conversation context when answering
-
-USER QUERY: ${userQuery}`
-
-      // ✅ Control Method 3: Intelligent Context Inclusion
-      // เลือกข้อมูลจาก conversation history ที่เกี่ยวข้องที่สุด
-      const relevantContext = this.selectRelevantConversationContext(
-        conversationHistory,
-        userQuery,
-        contextAnalysis.isFollowUp,
-      )
-
-      if (relevantContext && relevantContext.length > 0) {
-        systemPrompt += `
-
-CONVERSATION CONTEXT:
-Recent relevant conversation:
-${relevantContext
-  .map(
-    (msg) =>
-      `${msg.role === 'user' ? 'ผู้ใช้' : 'AI'}: ${msg.content.substring(0, 200)}...`,
-  )
-  .join('\n')}
-
-Context Type: ${contextAnalysis.contextType}
-Is Follow-up: ${contextAnalysis.isFollowUp ? 'Yes' : 'No'}
-Previous Topic: ${contextAnalysis.previousTopic || 'None'}
-
-Based on this conversation history, provide a relevant and contextual response.`
-      } else {
-        systemPrompt += `
-
-CONVERSATION CONTEXT:
-- This is a ${contextAnalysis.isFollowUp ? 'follow-up' : 'new'} nutrition consultation
-- Context Type: ${contextAnalysis.contextType}
-- Provide helpful, accurate information while being engaging
-- Focus on practical advice the user can implement`
-      }
-
-      // ✅ บันทึกข้อความของผู้ใช้ใน conversation history
-      await this.conversationHistoryService.addMessageToHistory(
-        lineUserId,
-        'user',
-        userQuery,
-      )
-
-      // Select optimal model and parameters based on query complexity
-      const modelConfig = this.selectModelInternal(
-        userQuery,
-        userProfile,
-        timeConstraint,
-        AiTaskType.GeneralNutritionQuery,
-      )
-
-      const { deploymentName } = modelConfig
-
-      // ✅ Control Method 4: Optimized Input Messages Construction
-      // สร้าง input messages พร้อม token management
-      const inputMessages = this.constructOptimizedInputMessages(
-        relevantContext,
-        userQuery,
-        maxHistoryTokens,
-      )
-
-      // ✅ Control Method 5: Dynamic Response Token Limits
-      // คำนวณ max_output_tokens ตาม context และ timeConstraint
-      const maxOutputTokens = this.calculateOptimalOutputTokens(
-        timeConstraint,
-        contextAnalysis,
-        userQuery.length,
-      )
-
-      // Call Responses API with optimized parameters
-      const response = await this.openaiService.createOpenaiResponse(
-        deploymentName,
-        {
-          model: deploymentName,
-          instructions: systemPrompt,
-          input: inputMessages,
-          temperature: modelConfig.params.temperature,
-          max_output_tokens: maxOutputTokens, // ✅ Dynamic token limit
-          top_p: modelConfig.params.top_p,
-          // ✅ Control Method 6: Response ID Management for Long Conversations
-          // ใช้ previous_response_id เพื่อ maintain conversation state
-          previous_response_id: contextAnalysis.lastResponseId,
-        },
-      )
-
-      // **FIXED**: Check if error is not null instead of checking if error property exists
-      if (
-        response &&
-        typeof response === 'object' &&
-        'error' in response &&
-        response.error !== null
-      ) {
-        const errorMessage =
-          typeof response.error === 'string'
-            ? response.error
-            : JSON.stringify(response.error)
-        this.logger.error(
-          `OpenAI Responses API call failed for general Q&A: ${errorMessage}`,
-        )
-        return language === 'th'
-          ? `ขออภัยค่ะ เกิดข้อผิดพลาดในการสื่อสารกับ AI: ${errorMessage}`
-          : `Sorry, an error occurred while communicating with the AI: ${errorMessage}`
-      }
-
-      // Extract response text safely using type guards
-      let assistantResponse = ''
-      const apiResponse = response as unknown
-
-      // Try to extract from output_text first
-      if (hasOutputText(apiResponse)) {
-        assistantResponse = apiResponse.output_text
-      }
-
-      // If no output_text, try to extract from output array
-      if (!assistantResponse && hasOutputArray(apiResponse)) {
-        for (const outputItem of apiResponse.output) {
-          if (
-            isResponsesApiMessage(outputItem) &&
-            outputItem.role === 'assistant'
-          ) {
-            if (Array.isArray(outputItem.content)) {
-              const textContent = outputItem.content.find(
-                (content): content is ResponsesApiContentItem =>
-                  typeof content === 'object' &&
-                  content !== null &&
-                  'type' in content &&
-                  content.type === 'output_text' &&
-                  'text' in content &&
-                  typeof content.text === 'string',
-              )
-              if (textContent && textContent.text) {
-                assistantResponse = textContent.text
-                break
-              }
-            } else if (typeof outputItem.content === 'string') {
-              assistantResponse = outputItem.content
-              break
-            }
-          }
-        }
-      }
-
-      if (!assistantResponse) {
-        const errorMsg =
-          language === 'th'
-            ? 'ขออภัยค่ะ ไม่ได้รับการตอบกลับจาก AI'
-            : 'Sorry, no response received from AI'
-        this.logger.warn(
-          `No assistant response extracted from API response for user ${lineUserId}`,
-        )
-        return errorMsg
-      }
-
-      // ✅ Control Method 7: Response Processing with Token Tracking
-      // บันทึก response และ track token usage
-      let responseId: string | undefined
-
-      // Extract response ID for future reference (if available in response)
-      if (
-        hasUsage(apiResponse) &&
-        typeof apiResponse === 'object' &&
-        apiResponse !== null &&
-        'response_id' in apiResponse
-      ) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-        const respId = (apiResponse as any).response_id
-        responseId = typeof respId === 'string' ? respId : undefined
-      }
-
-      // Log token usage for monitoring
-      if (hasUsage(apiResponse)) {
-        this.logger.log(
-          `[TOKEN USAGE] User: ${lineUserId}, Input: ${apiResponse.usage.input_tokens || 0}, Output: ${apiResponse.usage.output_tokens || 0}, Total: ${apiResponse.usage.total_tokens || 0}`,
-        )
-      }
-
-      // ✅ บันทึก AI response ใน conversation history โดยไม่ส่ง response ID เป็น analysisResult
-      await this.conversationHistoryService.addMessageToHistory(
-        lineUserId,
-        'assistant',
-        assistantResponse,
-        undefined, // analysisResult - ไม่มี analysis result สำหรับ general nutrition Q&A
-        responseId, // responseId - ส่งเป็น parameter สุดท้าย
-      )
-
-      return assistantResponse
-    } catch (error) {
-      this.logger.error(
-        `Error in answerGeneralNutritionQuestion for user ${lineUserId}:`,
-        error instanceof Error ? error.stack : error,
-      )
-      return language === 'th'
-        ? 'ขออภัยค่ะ เกิดข้อผิดพลาดในการตอบคำถาม โปรดลองใหม่อีกครั้ง'
-        : 'Sorry, an error occurred while answering your question. Please try again.'
-    }
-  }
-
-  // --- Generic Tool Calling Logic ---
-  private async callOpenAIWithToolHandling<ArgsDto, ResultDto extends object>(
-    lineUserId: string,
-    initialMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-    tools: OpenAI.Chat.ChatCompletionTool[],
-    expectedToolName: string,
-    toolHandler: ToolHandler<ArgsDto, ResultDto>,
-    userProfile: UserProfileDto,
-    language: string,
-    queryForModelSelection: string,
-    taskType: AiTaskType, // Moved taskType to be before optional parameters
-    timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
-    skipHistoryForToolInteraction: boolean = false,
-    foodLogsForHandler?: FoodLogEntryDto[],
-    nutritionGoalForHandler?: NutritionGoalDtoForAI | null,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _messageId?: string, // Prefixed with underscore to indicate unused
-  ): Promise<ResultDto | NonFoodDescriptionResult | { error: string } | null> {
-    this.logger.debug(
-      `callOpenAIWithToolHandling initiated for user: ${lineUserId}, expectedTool: ${expectedToolName}`,
+    this.logger.log(
+      `answerGeneralNutritionQuestion called for user: ${lineUserId}, query: ${userQuery}`,
     )
 
-    // Note: _messageId parameter is kept for API compatibility
-    // but caching logic is handled in processResponsesAPIOutput method instead
+    // สำหรับคำถามทั่วไป ใช้ Completions API แทน Responses API เพื่อหลีกเลี่ยง tool calls
+    const taskType = AiTaskType.GeneralNutritionQuery
+    const modelConfig = this.selectModelInternal(
+      userQuery,
+      userProfile,
+      timeConstraint,
+      taskType,
+    )
+    const deploymentName = modelConfig.deploymentName
+    const systemPrompt = this.createGeneralNutritionPrompt(
+      userProfile,
+      language,
+    )
 
-    let messagesForOpenAI: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      [...initialMessages]
+    const rawHistory = await this.conversationHistoryService.getRecentHistory(
+      lineUserId,
+      userProfile,
+      this.getMaxHistoryTokensByConstraint(timeConstraint),
+    )
 
-    try {
-      const history = await this.conversationHistoryService.getRecentHistory(
-        lineUserId,
-        userProfile,
-      )
-      if (history && history.length > 0) {
-        this.logger.log(
-          `Prepending ${history.length} messages from history for user ${lineUserId}.`,
-        )
-        messagesForOpenAI = [...history, ...messagesForOpenAI]
-      }
+    // สร้าง messages array สำหรับ Completions API
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: systemPrompt,
+      },
+    ]
 
-      const userMessageContent = initialMessages
-        .filter((msg) => msg.role === 'user')
-        .map((msg) => {
-          if (typeof msg.content === 'string') {
-            return msg.content
-          } else if (Array.isArray(msg.content)) {
-            return msg.content
-              .map((part) => {
-                if (part.type === 'text') return part.text
-                if (part.type === 'image_url')
-                  return `[Image: ${part.image_url.url.substring(0, 50)}...]`
-                return '[Unsupported content part]'
-              })
-              .join(' ')
-          }
-          return '[Unsupported message format]'
+    // เพิ่ม conversation history
+    if (rawHistory && rawHistory.length > 0) {
+      for (const historyItem of rawHistory.slice(-10)) {
+        // จำกัดแค่ 10 ข้อความล่าสุด
+        messages.push({
+          role: historyItem.role as 'user' | 'assistant',
+          content: historyItem.content,
         })
-        .join('\n')
-
-      if (userMessageContent && !skipHistoryForToolInteraction) {
-        // Modified condition
-        await this.conversationHistoryService.addMessageToHistory(
-          lineUserId,
-          'user',
-          userMessageContent,
-        )
-      } else if (userMessageContent && skipHistoryForToolInteraction) {
-        this.logger.log(
-          `Skipping user message for history due to skipHistoryForToolInteraction for user ${lineUserId}.`,
-        )
-      }
-      // Removed the warning for empty user message content as it might be intentional when skipping.
-
-      const {
-        deploymentName,
-        // complexityLevel, // Not used beyond this point in this function
-        // score, // Not used beyond this point in this function
-        params: resolvedParams,
-      } = this.selectModelInternal(
-        queryForModelSelection,
-        userProfile,
-        timeConstraint,
-        taskType,
-      )
-
-      this.logger.debug(
-        `Calling OpenAI service for chat completion with deployment: ${deploymentName}, language: ${language}, params: ${JSON.stringify(resolvedParams)}`,
-      )
-
-      const toolChoice = tools.find((t) => t.function.name === expectedToolName)
-        ? ({ type: 'function', function: { name: expectedToolName } } as const)
-        : tools.length > 0
-          ? ('auto' as const)
-          : undefined
-
-      const response = (await this.openaiService.getChatCompletion(
-        deploymentName,
-        messagesForOpenAI,
-        {
-          tools: tools,
-          tool_choice: toolChoice,
-          temperature: resolvedParams.temperature,
-          max_tokens: resolvedParams.max_tokens,
-          top_p: resolvedParams.top_p,
-          presence_penalty: resolvedParams.presence_penalty,
-          frequency_penalty: resolvedParams.frequency_penalty,
-        },
-        lineUserId, // Add userId for prompt caching optimization
-      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string } // Assertion here
-
-      if ('error' in response) {
-        this.logger.error(
-          `OpenAI call failed in callOpenAIWithToolHandling: ${response.error}`,
-        )
-        return {
-          error:
-            language === 'th'
-              ? `เกิดข้อผิดพลาดในการสื่อสารกับ AI: ${response.error}`
-              : `Error communicating with AI: ${response.error}`,
-        }
-      }
-
-      // At this point, response is OpenAI.Chat.Completions.ChatCompletion
-      const responseMessage = response.choices[0]?.message
-
-      // Log token usage
-      if (response.usage) {
-        this.logger.log(
-          `Token usage for tool call (user: ${lineUserId}, model: ${deploymentName}, tool: ${expectedToolName}): ` +
-            `Prompt: ${response.usage.prompt_tokens}, ` +
-            `Completion (may be for tool args): ${response.usage.completion_tokens || 'N/A'}, ` +
-            `Total: ${response.usage.total_tokens}`,
-        )
-      } else {
-        this.logger.warn(
-          `No usage data in OpenAI response for tool call (user: ${lineUserId}, model: ${deploymentName}, tool: ${expectedToolName})`,
-        )
-      }
-
-      if (
-        responseMessage?.tool_calls &&
-        responseMessage.tool_calls.length > 0
-      ) {
-        const toolCall = responseMessage.tool_calls[0]
-        if (!toolCall.function) {
-          this.logger.error('Tool call object missing function details.')
-          return {
-            error:
-              language === 'th'
-                ? 'AI ตอบกลับมาในรูปแบบที่ไม่ถูกต้อง (tool call function missing)'
-                : 'AI returned invalid tool call (missing function).',
-          }
-        }
-        this.logger.log(
-          `AI called tool: ${toolCall.function.name} for user ${lineUserId}`,
-        )
-
-        if (!skipHistoryForToolInteraction) {
-          // Modified condition
-          const toolCallSummary = `Called tool ${toolCall.function.name} with args: ${toolCall.function.arguments}`
-          await this.conversationHistoryService.addMessageToHistory(
-            lineUserId,
-            'assistant',
-            `[Tool Call: ${toolCallSummary}]`,
-          )
-        } else {
-          this.logger.log(
-            `Skipping AI tool call summary for history due to skipHistoryForToolInteraction for user ${lineUserId}. Tool: ${toolCall.function.name}`,
-          )
-        }
-
-        let result:
-          | ResultDto
-          | NonFoodDescriptionResult
-          | { error: string }
-          | null = null
-
-        if (toolCall.function.name === expectedToolName) {
-          try {
-            if (typeof toolCall.function.arguments === 'string') {
-              let argsString = toolCall.function.arguments
-              this.logger.debug(
-                `Original tool arguments for ${expectedToolName}: ${argsString}`,
-              )
-
-              // Attempt to clean up common JSON errors from AI
-              // 1. Remove trailing commas before a closing brace or bracket (e.g. [1,2,])
-              argsString = argsString.replace(/,\s*([}\]])/g, '$1')
-              // 2. Remove duplicate commas (e.g. 1,,2)
-              argsString = argsString.replace(/,(\s*,)+/g, ',')
-              // 3. Remove leading commas after an opening brace or bracket (e.g. {,1,2 or [,1,2)
-              argsString = argsString.replace(/([{[])\s*,/g, '$1')
-              // 4. Attempt to fix comma between property and value if it looks like "prop": , "value" (very specific)
-              // This is heuristic and might need refinement based on actual AI outputs.
-              // Example: "food_name":"ข้าวผัดกุ้ง", ,"portion": --> "food_name":"ข้าวผัดกุ้ง","portion":
-              // This regex looks for a quote, colon, then spaces/comma(s), then a quote for the next property's value.
-              argsString = argsString.replace(/(":\s*),+(?=\s*"\w+":)/g, '$1')
-              // Simpler one for "key": ,, "nextKey"
-              argsString = argsString.replace(
-                /("):\s*,\s*,(?=\s*"\w+":)/g,
-                '$1',
-              )
-              // Specifically for the case: "food_name":"ข้าวผัดกุ้ง", ,"portion"
-              argsString = argsString.replace(
-                /("[^"]+":"[^"]*"),\s*,(?="[^"]+":)/g,
-                '$1,$2',
-              )
-
-              this.logger.debug(
-                `Attempting to parse cleaned tool arguments for ${expectedToolName}: ${argsString}`,
-              )
-
-              try {
-                const toolArgs = JSON.parse(argsString) as ArgsDto
-                result = await toolHandler(
-                  toolArgs,
-                  userProfile,
-                  language,
-                  foodLogsForHandler,
-                  nutritionGoalForHandler,
-                )
-
-                // NOTE: Caching logic is handled in processResponsesAPIOutput method
-                // to avoid variable scope issues in this generic method
-              } catch (parseError) {
-                this.logger.error(
-                  `Failed to parse cleaned JSON arguments for ${expectedToolName}. Original string: ${toolCall.function.arguments}. Cleaned string: ${argsString}`,
-                  parseError instanceof Error
-                    ? parseError.stack
-                    : String(parseError),
-                )
-                result = {
-                  error:
-                    language === 'th'
-                      ? `เกิดข้อผิดพลาดในการประมวลผลอาร์กิวเมนต์สำหรับ ${expectedToolName} (JSON Parse Error)`
-                      : `Error processing arguments for tool ${expectedToolName} (JSON Parse Error)`,
-                }
-              }
-
-              if (
-                result &&
-                !(typeof result === 'object' && 'error' in result) &&
-                !skipHistoryForToolInteraction // Modified condition
-              ) {
-                await this.conversationHistoryService.addMessageToHistory(
-                  lineUserId,
-                  'assistant',
-                  `[Tool Result for ${toolCall.function.name}: ${JSON.stringify(result).substring(0, 200)}...]`,
-                )
-              } else if (
-                skipHistoryForToolInteraction &&
-                result &&
-                !(typeof result === 'object' && 'error' in result) &&
-                !(typeof result === 'object' && 'status' in result)
-              ) {
-                this.logger.log(
-                  `Skipping AI tool result for history due to skipHistoryForToolInteraction for user ${lineUserId}. Tool: ${toolCall.function.name}`,
-                )
-              }
-            } else {
-              this.logger.error(
-                `Tool call arguments are not a string for ${expectedToolName}. Arguments: ${JSON.stringify(toolCall.function.arguments)}`,
-              )
-              result = {
-                error:
-                  language === 'th'
-                    ? `อาร์กิวเมนต์สำหรับเครื่องมือ '${expectedToolName}' ไม่ถูกต้อง`
-                    : `Invalid tool arguments for '${expectedToolName}'`,
-              }
-            }
-          } catch (e) {
-            this.logger.error(
-              `Error executing tool handler for ${expectedToolName} (outside JSON parsing of args): ${e instanceof Error ? e.message : String(e)}`,
-              e instanceof Error ? e.stack : undefined,
-            )
-            const potentialError = e as {
-              status?: unknown
-              message?: unknown
-              error?: { message?: unknown; [key: string]: any }
-              [key: string]: any
-            }
-
-            const statusStr =
-              typeof potentialError.status === 'string' ||
-              typeof potentialError.status === 'number'
-                ? String(potentialError.status)
-                : 'Unknown Status'
-            const messageStr =
-              typeof potentialError.message === 'string'
-                ? String(potentialError.message)
-                : 'No message available'
-
-            if (potentialError.status && potentialError.message) {
-              result = {
-                error: `Error ${statusStr}: ${messageStr}`,
-              }
-            } else if (
-              potentialError.error &&
-              typeof potentialError.error === 'object' &&
-              potentialError.error !== null
-            ) {
-              const nestedError = potentialError.error
-              const nestedMessageStr =
-                typeof nestedError.message === 'string'
-                  ? String(nestedError.message)
-                  : 'No nested message available'
-              if (nestedError.message) {
-                result = {
-                  error: `Error: ${nestedMessageStr}`,
-                }
-              } else {
-                result = {
-                  error: `Error: ${JSON.stringify(nestedError)}`,
-                }
-              }
-            } else {
-              result = {
-                error:
-                  language === 'th'
-                    ? `เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุขณะประมวลผล '${expectedToolName}'`
-                    : `Unknown error processing '${expectedToolName}'. Details: ${String(e)}`,
-              }
-            }
-          }
-        } else {
-          this.logger.warn(
-            `AI called an unexpected tool: ${toolCall.function.name}. Expected: ${expectedToolName}`,
-          )
-          result = {
-            error:
-              language === 'th'
-                ? `AI เรียกใช้เครื่องมือที่ไม่คาดคิด: ${toolCall.function.name}`
-                : `AI called an unexpected tool: ${toolCall.function.name}`,
-          }
-        }
-        return result
-      } else if (responseMessage?.content) {
-        this.logger.log(
-          `Received direct text response from AI for user ${lineUserId}. Content length: ${responseMessage.content.length}`,
-        )
-        if (
-          typeof responseMessage.content === 'string' &&
-          responseMessage.content.trim() !== ''
-        ) {
-          await this.conversationHistoryService.addMessageToHistory(
-            lineUserId,
-            'assistant',
-            responseMessage.content,
-          )
-        } else {
-          this.logger.warn(
-            `AI response content was null, empty, or not a string for user ${lineUserId}. Not saving to history.`,
-          )
-        }
-
-        if (
-          responseMessage.content && // No need to check typeof string again, already done.
-          typeof responseMessage.content === 'string' // Keep for clarity with linter
-        ) {
-          this.logger.log(
-            `AI responded directly for user ${lineUserId} (no tool call): "${responseMessage.content.substring(0, 100)}"`,
-          )
-          return { error: `AI_DIRECT_RESPONSE: ${responseMessage.content}` }
-        } else {
-          this.logger.warn(
-            `AI response content was null or not a string when expecting direct response for user ${lineUserId}.`,
-          )
-          return {
-            error:
-              language === 'th'
-                ? 'AI ตอบกลับแต่เนื้อหาไม่ถูกต้อง'
-                : 'AI responded but content was invalid',
-          }
-        }
-      } else {
-        this.logger.warn(
-          `AI did not call any tool nor provided content for user ${lineUserId}. Query: ${queryForModelSelection}. Response: ${JSON.stringify(response)}`,
-        )
-        return {
-          error:
-            language === 'th'
-              ? 'ขออภัย ฉันไม่สามารถดำเนินการตามคำขอได้ในขณะนี้ (AI ไม่ได้เรียกเครื่องมือและไม่มีการตอบกลับโดยตรง)'
-              : 'Sorry, I could not process the request at this time (AI did not call a tool and provided no direct response).',
-        }
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.logger.error(
-        `Error in callOpenAIWithToolHandling for user ${lineUserId}, tool ${expectedToolName}: ${message}`,
-        error instanceof Error ? error.stack : undefined,
-      )
-      return {
-        error:
-          language === 'th'
-            ? `เกิดข้อผิดพลาดภายใน aoService ขณะเรียก OpenAI: ${message}`
-            : `Internal aoService error during OpenAI call: ${message}`,
       }
     }
-    return null // Should be handled by specific error returns or results above
+
+    // เพิ่ม user query ปัจจุบัน
+    messages.push({
+      role: 'user',
+      content: userQuery,
+    })
+
+    try {
+      // ใช้ Completions API โดยไม่มี tools
+      const response = await this.openaiService.getChatCompletion(
+        deploymentName,
+        messages,
+        {
+          temperature: modelConfig.params.temperature || 0.5,
+          max_tokens: 1600,
+          top_p: modelConfig.params.top_p || 1.0,
+        },
+      )
+
+      if (
+        response &&
+        response.choices &&
+        response.choices[0]?.message?.content
+      ) {
+        const assistantResponse = response.choices[0].message.content
+
+        // บันทึกในประวัติการสนทนา
+        await this.conversationHistoryService.addMessageToHistory(
+          lineUserId,
+          'assistant',
+          assistantResponse,
+          undefined,
+          response.id || undefined,
+        )
+
+        // Log token usage
+        if (response.usage) {
+          this.logger.log(
+            `[TOKEN USAGE] User: ${lineUserId}, Input: ${response.usage.prompt_tokens || 0}, Output: ${response.usage.completion_tokens || 0}, Total: ${response.usage.total_tokens || 0}`,
+          )
+        }
+
+        return assistantResponse
+      } else {
+        this.logger.error('No content in chat completion response')
+        return language === 'th'
+          ? 'ขออภัยค่ะ ไม่สามารถดึงคำตอบจาก AI ได้ในขณะนี้'
+          : 'Sorry, could not retrieve an answer from the AI at this time.'
+      }
+    } catch (error) {
+      this.logger.error(
+        `Chat completion API call failed for general question: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+      )
+      return language === 'th'
+        ? 'ขออภัยค่ะ มีข้อผิดพลาดในการสื่อสารกับ AI กรุณาลองใหม่อีกครั้ง'
+        : 'Sorry, there was an error communicating with the AI. Please try again.'
+    }
   }
 
   // --- Tool Handler Implementations ---
@@ -2295,18 +1758,52 @@ CONVERSATION CONTEXT:
     language: string,
   ): NutritionGoalToolResult {
     this.logger.debug(
-      `Handling calculate_nutrition_goals for user ${userProfile.lineUserId || 'unknown'} with lang '${language}'. Args (should be empty): ${JSON.stringify(args)}`,
+      `Handling calculate_nutrition_goals for user ${userProfile.lineUserId || 'unknown'} with lang '${language}'. Args: ${JSON.stringify(args)}`,
     )
-    // TODO: Replace with actual BMR/TDEE calculation based on userProfile
-    // These are placeholders and should be calculated using NutritionService or similar
+
+    // AI จะส่งข้อมูลมาใน args ในรูปแบบที่ถูกต้องแล้ว
+    // เราจึงควรใช้ข้อมูลจาก AI โดยตรง แทนการสร้าง fallback data
+
+    // ตรวจสอบว่า AI ส่งข้อมูลมาครบถ้วนหรือไม่
+    const aiData = args as any // Cast เพื่อให้เข้าถึง properties ที่ AI ส่งมา
+
+    if (aiData.bmr && aiData.tdee && aiData.daily_goals) {
+      // ใช้ข้อมูลจาก AI โดยตรง
+      return {
+        bmr: aiData.bmr || 0,
+        tdee: aiData.tdee || 0,
+        daily_goals: aiData.daily_goals || {
+          calories: 0,
+          protein: 0,
+          carbs: 0,
+          fat: 0,
+        },
+        macro_distribution: aiData.macro_distribution || {
+          protein_percent: 0,
+          carbs_percent: 0,
+          fat_percent: 0,
+        },
+        meal_recommendations: aiData.meal_recommendations || {},
+        health_advice: aiData.health_advice || '',
+        food_recommendations: aiData.food_recommendations || [],
+        foods_to_avoid: aiData.foods_to_avoid || [],
+      }
+    }
+
+    // Fallback เฉพาะกรณีที่ AI ไม่ส่งข้อมูลมา (ไม่ควรเกิดขึ้น)
+    this.logger.warn(
+      `AI did not provide proper nutrition goals data, using fallback for user ${userProfile.lineUserId}`,
+    )
+
+    // สำหรับ fallback ใช้การคำนวณเบื้องต้น
     const baseBMR = 1500
     const baseTDEE = 2000
 
-    const calculatedBMR = baseBMR // Changed to const
-    let calculatedTDEE = baseTDEE // Base TDEE
-    let proteinModifier = 0 // g
-    let calorieModifier = 0 // kcal
-    const additionalHealthAdvice: string[] = [] // Changed to const, will push to it
+    const calculatedBMR = baseBMR
+    let calculatedTDEE = baseTDEE
+    let proteinModifier = 0
+    let calorieModifier = 0
+    const additionalHealthAdvice: string[] = []
 
     if (userProfile.pregnancyLactationStatus === 'pregnant') {
       calorieModifier += 300
@@ -2327,27 +1824,8 @@ CONVERSATION CONTEXT:
     }
 
     calculatedTDEE += calorieModifier
-
     const initialProteinGoal =
       Math.round((calculatedTDEE * 0.2) / 4) + proteinModifier
-
-    const isVegetarian =
-      userProfile.ethicalFoodConsiderations?.includes('vegetarian')
-    const isVegan = userProfile.ethicalFoodConsiderations?.includes('vegan')
-
-    if (isVegan) {
-      additionalHealthAdvice.push(
-        language === 'th'
-          ? 'สำหรับผู้ทานวีแกน ควรให้ความสำคัญกับแหล่งโปรตีนจากพืช เช่น ถั่ว เต้าหู้ และธัญพืช รวมถึงวิตามิน B12 และธาตุเหล็ก'
-          : 'For vegans, prioritize plant-based protein sources like legumes, tofu, and grains, and pay attention to Vitamin B12 and Iron intake.',
-      )
-    } else if (isVegetarian) {
-      additionalHealthAdvice.push(
-        language === 'th'
-          ? 'สำหรับผู้ทานมังสวิรัติ ควรให้ความสำคัญกับแหล่งโปรTีนจากพืชและไข่หรือนม (หากบริโภค)'
-          : 'For vegetarians, prioritize plant-based protein sources, eggs, or dairy (if consumed).',
-      )
-    }
 
     const baseHealthAdvice =
       language === 'th'
@@ -2360,39 +1838,35 @@ CONVERSATION CONTEXT:
     ].join(' \n')
 
     return {
-      bmr: calculatedBMR, // This should ideally be recalculated if TDEE changes significantly due to modifiers.
+      bmr: calculatedBMR,
       tdee: calculatedTDEE,
       daily_goals: {
         calories: calculatedTDEE,
         protein: initialProteinGoal,
-        carbs: Math.round((calculatedTDEE * 0.5) / 4), // Keep carbs/fat ratio for simplicity, adjust if needed
+        carbs: Math.round((calculatedTDEE * 0.5) / 4),
         fat: Math.round((calculatedTDEE * 0.3) / 9),
-        fiber: 25, // Placeholder
-        sugar_max: 25, // Placeholder
-        water: 2500, // Placeholder
+        fiber: 25,
+        sugar_max: 25,
+        water: 2500,
       },
       macro_distribution: {
-        // This should be recalculated based on new daily_goals.grams
         protein_percent: Math.round(
           (initialProteinGoal * 4 * 100) / calculatedTDEE,
         ),
-        carbs_percent: 50, // Placeholder, needs recalculation
-        fat_percent: 30, // Placeholder, needs recalculation
+        carbs_percent: 50,
+        fat_percent: 30,
       },
       meal_recommendations: {
-        // Placeholder
         breakfast: Math.round(calculatedTDEE * 0.25),
         lunch: Math.round(calculatedTDEE * 0.35),
         dinner: Math.round(calculatedTDEE * 0.3),
         snacks: Math.round(calculatedTDEE * 0.1),
       },
       health_advice: finalHealthAdvice,
-      // Placeholder, could be tailored based on ethical considerations
       food_recommendations:
         language === 'th'
           ? ['ผักใบเขียว', 'โปรตีนไม่ติดมัน']
           : ['Leafy greens', 'Lean protein'],
-      // Placeholder
       foods_to_avoid:
         language === 'th'
           ? ['น้ำตาลแปรรูป', 'ไขมันทรานส์']
@@ -2829,6 +2303,13 @@ CONVERSATION CONTEXT:
     let finalIdentifiedPatterns = identifiedPatterns
     let finalImprovementSuggestions = improvementSuggestions
 
+    // 🚀 ปิดการเรียก Full Autonomous AI Analysis เพื่อลด API calls
+    // เนื่องจากการวิเคราะห์ eating pattern ไม่ควรเรียก AI หลายครั้ง
+    // ใช้ manual analysis ที่มีคุณภาพแล้ว
+    this.logger.debug(
+      `🚀 Skipping Full Autonomous AI Analysis to reduce API calls. Using manual analysis for ${daysAnalyzed} days, ${foodLogs.length} logs`,
+    )
+
     try {
       // 🤖 FULL AUTONOMOUS AI - ให้ AI สร้างทุกอย่างเอง
       if (daysAnalyzed >= 1 && foodLogs.length >= 1) {
@@ -2940,21 +2421,37 @@ CONVERSATION CONTEXT:
       `Handling recommend_meals for user ${userProfile.lineUserId || 'unknown'}, lang '${language}', context '${mealContext}'. Args: ${JSON.stringify(args)}`,
     )
 
+    // AI จะส่งข้อมูลมาใน args ในรูปแบบที่ถูกต้องแล้ว
+    // เราจึงควรใช้ข้อมูลจาก AI โดยตรง แทนการสร้าง fallback data
+
+    // ตรวจสอบว่า AI ส่งข้อมูลมาครบถ้วนหรือไม่
+    const aiData = args as any // Cast เพื่อให้เข้าถึง properties ที่ AI ส่งมา
+
+    if (
+      aiData.foods &&
+      Array.isArray(aiData.foods) &&
+      aiData.foods.length > 0
+    ) {
+      // ใช้ข้อมูลจาก AI โดยตรง
+      return {
+        meal_type: aiData.meal_type || 'general',
+        foods: aiData.foods,
+        total_calories: aiData.total_calories || 0,
+        total_protein: aiData.total_protein || 0,
+        total_carbs: aiData.total_carbs || 0,
+        total_fat: aiData.total_fat || 0,
+        recommendations: aiData.recommendations || '',
+        alternatives: aiData.alternatives || [],
+      }
+    }
+
+    // Fallback เฉพาะกรณีที่ AI ไม่ส่งข้อมูลมา (ไม่ควรเกิดขึ้น)
+    this.logger.warn(
+      `AI did not provide proper meal data, using fallback for user ${userProfile.lineUserId}`,
+    )
+
     const recommendations: string[] = []
     const alternatives: string[] = []
-    // Changed let to const for mealTypeForResponse
-    const mealTypeForResponse =
-      args.meal_type_preference && args.meal_type_preference !== 'any'
-        ? args.meal_type_preference
-        : mealContext.toLowerCase().includes('breakfast')
-          ? 'breakfast'
-          : mealContext.toLowerCase().includes('lunch')
-            ? 'lunch'
-            : mealContext.toLowerCase().includes('dinner')
-              ? 'dinner'
-              : mealContext.toLowerCase().includes('snack')
-                ? 'snack'
-                : 'general'
 
     if (userProfile.preferredCuisine) {
       recommendations.push(
@@ -2975,67 +2472,7 @@ CONVERSATION CONTEXT:
       )
     }
 
-    if (
-      userProfile.ethicalFoodConsiderations &&
-      userProfile.ethicalFoodConsiderations.length > 0
-    ) {
-      const considerations = userProfile.ethicalFoodConsiderations.join(', ')
-      recommendations.push(
-        language === 'th'
-          ? `เราจะคำนึงถึงข้อจำกัดด้านจริยธรรมของคุณ: ${considerations}`
-          : `We will consider your ethical food considerations: ${considerations}`,
-      )
-      // Corrected: push individual string messages to alternatives array
-      if (userProfile.ethicalFoodConsiderations.includes('vegan')) {
-        if (language === 'th') {
-          alternatives.push('ลองดูเมนูเต้าหู้ผัดผัก')
-          alternatives.push('แกงเขียวหวานเจก็น่าสนใจ')
-        } else {
-          alternatives.push('Consider tofu stir-fry.')
-          alternatives.push('Vegan green curry is another option.')
-        }
-      } else if (userProfile.ethicalFoodConsiderations.includes('vegetarian')) {
-        if (language === 'th') {
-          alternatives.push('ไข่เจียวทรงเครื่องก็ดีนะ')
-          alternatives.push('หรือจะลองยำสลัดผัก')
-        } else {
-          alternatives.push('Mushroom omelette could be a good choice.')
-          alternatives.push('A hearty vegetable salad is also an option.')
-        }
-      }
-    }
-
-    if (userProfile.pregnancyLactationStatus === 'pregnant') {
-      recommendations.push(
-        language === 'th'
-          ? 'สำหรับหญิงตั้งครรภ์ ควรเน้นอาหารที่มีโฟเลตและธาตุเหล็กสูง'
-          : 'For pregnant individuals, focusing on folate and iron-rich foods is beneficial.',
-      )
-      if (language === 'th') {
-        alternatives.push('เช่น ต้มเลือดหมู')
-        alternatives.push('หรือผัดผักบุ้งไฟแดง')
-      } else {
-        alternatives.push('For example, spinach soup.')
-        alternatives.push('Stir-fried water spinach is also good.')
-      }
-    } else if (userProfile.pregnancyLactationStatus === 'lactating') {
-      recommendations.push(
-        language === 'th'
-          ? 'สำหรับหญิงให้นมบุตร ควรเน้นอาหารที่ช่วยเพิ่มน้ำนมและมีประโยชน์'
-          : 'For lactating individuals, nutrient-dense foods that support milk production are recommended.',
-      )
-      if (language === 'th') {
-        alternatives.push('เช่น แกงเลียง')
-        alternatives.push('หรือไก่ผัดขิง')
-      } else {
-        alternatives.push(
-          'For example, Gaeng Liang (Thai spicy mixed vegetable soup).',
-        )
-        alternatives.push('Chicken stir-fried with ginger is also recommended.')
-      }
-    }
-
-    // Placeholder for actual meal recommendations based on args and full profile
+    const mealTypeForResponse = 'general'
     const exampleFoods: MealRecommendationToolResult['foods'] = [
       {
         name:
@@ -3073,9 +2510,6 @@ CONVERSATION CONTEXT:
         (language === 'th'
           ? 'เลือกอาหารที่เหมาะสมกับคุณ'
           : 'Choose meals suitable for you.'),
-      // Corrected: 'alternatives' field should be a string[]
-      // If the alternatives array is empty, it should remain an empty array.
-      // The AI or a subsequent step can decide how to present an empty list of alternatives.
       alternatives: alternatives,
     }
   }
@@ -3233,7 +2667,7 @@ CONVERSATION CONTEXT:
     lineUserId: string,
     instructions: string,
     userInput: string | OpenaiResponseInputMessage[],
-    tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+    tools: OpenAI.Chat.Completions.ChatCompletionTool[], // This is for ChatCompletions. Tools for Responses API are different.
     expectedToolName: string,
     toolHandler: ToolHandler<ArgsDto, ResultDto>,
     userProfile: UserProfileDto,
@@ -3242,95 +2676,111 @@ CONVERSATION CONTEXT:
     timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
     foodLogsForHandler?: FoodLogEntryDto[],
     nutritionGoalForHandler?: NutritionGoalDtoForAI | null,
-    _messageId?: string, // Prefixed with underscore to indicate unused
+    _messageId?: string,
   ): Promise<ResultDto | NonFoodDescriptionResult | { error: string } | null> {
-    this.logger.debug(
-      `executeAgenticTaskWithResponsesAPI initiated for user: ${lineUserId}, taskType: ${taskType}, expectedTool: ${expectedToolName}`,
-    )
-
-    // Select appropriate model
-    const userInputString =
-      typeof userInput === 'string' ? userInput : JSON.stringify(userInput)
-    const selectedModel = this.selectModelInternal(
-      userInputString,
-      userProfile,
-      timeConstraint,
-      taskType,
-    )
-    const deploymentName = selectedModel.deploymentName
-
-    // ✅ ใช้ Responses API built-in conversation state management
-    let previousResponseId: string | undefined
     try {
-      // ดึง response ID ล่าสุดจาก conversation history
-      const conversationHistory =
-        await this.conversationHistoryService.getRecentHistory(
-          lineUserId,
-          userProfile,
-          1000,
-        )
+      // 🔍 ติดตาม API calls
+      this.logger.warn(
+        `🔍 [API TRACKING] executeAgenticTaskWithResponsesAPI - About to call OpenAI API for ${taskType} - user: ${lineUserId}`,
+      )
 
-      // Type-safe response ID extraction
+      this.logger.debug(
+        `executeAgenticTaskWithResponsesAPI initiated for user: ${lineUserId}, taskType: ${taskType}, expectedTool: ${expectedToolName}`,
+      )
+
+      // Check for conversation history only for non-food analysis tasks
+      // 🚀 ปรับปรุง: ลดการเรียก conversation history สำหรับ food analysis
+      const conversationHistory =
+        taskType !== AiTaskType.FoodAnalysis
+          ? await this.conversationHistoryService.getRecentHistory(
+              lineUserId,
+              userProfile,
+              this.getMaxHistoryTokensByConstraint(timeConstraint),
+            )
+          : null
+
+      if (taskType === AiTaskType.FoodAnalysis) {
+        this.logger.debug(
+          `Skipping conversation history for food analysis task to reduce API calls`,
+        )
+      }
+
+      // 🔍 เพิ่ม detailed tracking ก่อนเรียก OpenAI
+      this.logger.warn(
+        `🔍 [API TRACKING] About to call openaiService.createOpenaiResponse - TaskType: ${taskType} - User: ${lineUserId}`,
+      )
+
+      // 🚀 ปรับปรุง: เรียก selectModelInternal ครั้งเดียวแล้วใช้ซ้ำ
+      const modelSelection = this.selectModelInternal(
+        instructions,
+        userProfile,
+        timeConstraint,
+        taskType,
+      )
+
+      this.logger.debug(
+        `🚀 [OPTIMIZATION] Model selected once: ${modelSelection.deploymentName} for ${taskType} - avoiding multiple selectModelInternal calls`,
+      )
+
+      // 🔧 ปรับปรุง: ตรวจสอบและแก้ไข previous_response_id ให้เข้ากับ Responses API
+      let validPreviousResponseId: string | undefined = undefined
       if (conversationHistory && conversationHistory.length > 0) {
-        const lastMessage = conversationHistory[conversationHistory.length - 1]
-        if (lastMessage.content && typeof lastMessage.content === 'string') {
-          const responseIdMatch = lastMessage.content.match(/response_id:(\w+)/)
-          previousResponseId = responseIdMatch?.[1]
+        const lastResponseId =
+          conversationHistory[conversationHistory.length - 1]?.responseId
+        if (lastResponseId) {
+          // Responses API คาดหวัง ID ที่ขึ้นต้นด้วย 'resp-'
+          // Chat Completions API ใช้ ID ที่ขึ้นต้นด้วย 'chatcmpl-'
+          if (lastResponseId.startsWith('resp-')) {
+            validPreviousResponseId = lastResponseId
+            this.logger.debug(
+              `✅ Valid Responses API previous_response_id found: ${lastResponseId.substring(0, 12)}...`,
+            )
+          } else if (lastResponseId.startsWith('chatcmpl-')) {
+            this.logger.debug(
+              `⚠️ Skipping Chat Completions API ID for Responses API: ${lastResponseId.substring(0, 12)}... (incompatible format)`,
+            )
+          } else {
+            this.logger.warn(
+              `❓ Unknown response ID format: ${lastResponseId.substring(0, 12)}... - skipping previous_response_id`,
+            )
+          }
         }
       }
-    } catch (historyError) {
-      this.logger.warn(
-        `Failed to retrieve conversation history for ${lineUserId}: ${historyError instanceof Error ? historyError.message : String(historyError)}`,
-      )
-    }
 
-    // Create Responses API request with proper tool format
-    const responseParams: OpenaiResponseCreateParams = {
-      model: deploymentName,
-      instructions,
-      input: userInput,
-      tools: tools.map((tool) => ({
-        type: 'function',
-        name: tool.function.name,
-        description: tool.function.description || '',
-        parameters: tool.function.parameters || {},
-        strict: tool.function.strict !== false,
-      })),
-      tool_choice: 'auto',
-      temperature: selectedModel.params.temperature,
-      previous_response_id: previousResponseId,
-      max_output_tokens: selectedModel.params.max_tokens,
-      metadata: {
-        lineUserId,
-        messageId: _messageId || '',
-        taskType,
-        language,
-      },
-    }
-
-    this.logger.debug(
-      `Calling Responses API for ${lineUserId} with deployment: ${deploymentName}`,
-    )
-
-    try {
       const openAIResponse = await this.openaiService.createOpenaiResponse(
-        deploymentName,
-        responseParams,
+        modelSelection.deploymentName,
+        {
+          instructions,
+          input: userInput,
+          tools: tools?.map(
+            (
+              tool: OpenAI.Chat.Completions.ChatCompletionTool,
+            ): OpenAI.Responses.FunctionTool => ({
+              type: 'function',
+              // Linter insists 'function' property does not exist. Flattening the structure.
+              name: tool.function.name, // Flattened: name directly on FunctionTool
+              description: tool.function.description, // Flattened: description directly on FunctionTool
+              parameters: tool.function.parameters as Record<string, unknown>, // Changed to Record<string, unknown>
+              strict: tool.function.strict ?? null, // Changed to ?? null
+            }),
+          ),
+          tool_choice: 'auto', // Responses API might have different or more specific tool_choice options
+          temperature: modelSelection.params.temperature,
+          previous_response_id: validPreviousResponseId, // ✅ ใช้ validated response ID
+          max_output_tokens: modelSelection.params.max_tokens,
+          metadata: {
+            lineUserId,
+            messageId: _messageId || '',
+            taskType,
+            language,
+          },
+        },
       )
 
-      // Debug log to see response structure
       this.logger.log(
         `🔍 Raw OpenAI Response for ${lineUserId}: ${JSON.stringify(openAIResponse, null, 2).substring(0, 1000)}...`,
       )
-      this.logger.log(
-        `🧪 Response has 'error' property: ${'error' in openAIResponse}`,
-      )
-      this.logger.log(
-        `🧪 Response error value: ${openAIResponse && typeof openAIResponse === 'object' && 'error' in openAIResponse ? JSON.stringify(openAIResponse.error) : 'no error property'}`,
-      )
 
-      // **FIXED**: Check if error is not null instead of checking if error property exists
-      // Azure OpenAI Responses API always includes 'error' property but it's null when no error
       if (
         openAIResponse &&
         typeof openAIResponse === 'object' &&
@@ -3345,16 +2795,48 @@ CONVERSATION CONTEXT:
         return { error: errorMessage }
       }
 
-      // Save the current response for conversation state
-      await this.conversationHistoryService.addMessageToHistory(
-        lineUserId,
-        'assistant',
-        JSON.stringify(openAIResponse),
-      )
+      // Cast to OpenAI.Responses.Response after error check
+      const successfulResponse = openAIResponse as OpenAI.Responses.Response
 
-      // **Enhanced Implementation**: Process Responses API output
+      // Save the current response for conversation state (using its ID)
+      if (successfulResponse.id) {
+        // 🔍 เพิ่ม logging เพื่อตรวจสอบประเภทของ response ID
+        const responseIdType = successfulResponse.id.startsWith('resp-')
+          ? 'Responses API'
+          : successfulResponse.id.startsWith('chatcmpl-')
+            ? 'Chat Completions API'
+            : 'Unknown'
+
+        this.logger.debug(
+          `📝 Response ID from ${responseIdType}: ${successfulResponse.id.substring(0, 15)}... (will be saved to conversation history)`,
+        )
+
+        // 🚀 ปรับปรุง: ลดการบันทึก conversation history สำหรับ food analysis
+        // เนื่องจากไม่จำเป็นต้องเก็บ intermediate tool calls
+        if (taskType !== AiTaskType.FoodAnalysis) {
+          await this.conversationHistoryService.addMessageToHistory(
+            lineUserId,
+            'assistant',
+            JSON.stringify(successfulResponse),
+            undefined,
+            successfulResponse.id, // บันทึก ID ไว้ใน conversation history
+          )
+          this.logger.debug(
+            `✅ Saved ${responseIdType} response to conversation history for user ${lineUserId}`,
+          )
+        } else {
+          this.logger.debug(
+            `Skipping intermediate conversation history for food analysis to reduce database writes`,
+          )
+        }
+      } else {
+        this.logger.warn(
+          `⚠️ OpenAI Response does not contain ID - cannot save to conversation history for user ${lineUserId}`,
+        )
+      }
+
       return await this.processResponsesAPIOutput(
-        openAIResponse,
+        successfulResponse, // Pass the successful response
         expectedToolName,
         toolHandler,
         userProfile,
@@ -3378,7 +2860,7 @@ CONVERSATION CONTEXT:
    * Now supports autonomous multi-tool workflows
    */
   private async processResponsesAPIOutput<ArgsDto, ResultDto extends object>(
-    openAIResponse: unknown,
+    openAIResponse: OpenAI.Responses.Response | { error: string },
     expectedToolName: string,
     toolHandler: ToolHandler<ArgsDto, ResultDto>,
     userProfile: UserProfileDto,
@@ -3392,244 +2874,261 @@ CONVERSATION CONTEXT:
       `🔍 processResponsesAPIOutput called for user ${lineUserId}, expectedTool: ${expectedToolName}`,
     )
 
-    // Store food history data from get_food_history tool calls
-    let retrievedFoodLogs: FoodLogEntryDto[] | undefined = foodLogsForHandler
+    if (
+      typeof openAIResponse === 'object' &&
+      'error' in openAIResponse &&
+      openAIResponse.error
+    ) {
+      this.logger.error(
+        `Error received directly in processResponsesAPIOutput: ${openAIResponse.error}`,
+      )
+      return { error: String(openAIResponse.error) }
+    }
 
-    // Handle different response structures from Responses API using type guards
-    if (hasOutputArray(openAIResponse)) {
+    const response = openAIResponse as OpenAI.Responses.Response
+    let retrievedFoodLogs: FoodLogEntryDto[] | undefined = foodLogsForHandler
+    let finalResult:
+      | ResultDto
+      | NonFoodDescriptionResult
+      | { error: string }
+      | null = null
+
+    if (response.output && Array.isArray(response.output)) {
       this.logger.log(
-        `📊 Response has output array with ${openAIResponse.output.length} items`,
+        `📊 Response has output array with ${response.output.length} items`,
       )
 
-      let finalResult:
-        | ResultDto
-        | NonFoodDescriptionResult
-        | { error: string }
-        | null = null
+      for (const outputItem of response.output) {
+        // Check for function_call type in the output array
+        const typedOutputItem =
+          outputItem as OpenAI.Responses.ResponseOutputItem
+        if (typedOutputItem.type === 'function_call') {
+          const functionCallItem = typedOutputItem as any
 
-      for (const outputItem of openAIResponse.output) {
-        this.logger.log(
-          `🔍 Processing output item type: ${typeof outputItem === 'object' && outputItem !== null && 'type' in outputItem ? (outputItem as { type: string }).type : 'unknown'}`,
-        )
+          const toolName = functionCallItem.name as string
+          const toolArgs = functionCallItem.arguments as string
 
-        // Handle function calls in Responses API format
-        if (
-          typeof outputItem === 'object' &&
-          outputItem !== null &&
-          'type' in outputItem
-        ) {
-          const typedItem = outputItem as {
-            type: string
-            name?: string
-            arguments?: string
-          }
-
-          if (
-            typedItem.type === 'function_call' &&
-            typedItem.name &&
-            typedItem.arguments
-          ) {
+          if (typeof toolName === 'string' && typeof toolArgs === 'string') {
             this.logger.log(
-              `🛠️ AI called tool: ${typedItem.name} via Responses API for user ${lineUserId}`,
+              `🛠️ AI called tool: ${toolName} via Responses API for user ${lineUserId}`,
             )
-
-            // Add tool call to conversation history
-            await this.conversationHistoryService.addMessageToHistory(
-              lineUserId,
-              'assistant',
-              `[Tool Call: ${typedItem.name} with args: ${typeof typedItem.arguments === 'string' ? typedItem.arguments.substring(0, 100) : JSON.stringify(typedItem.arguments).substring(0, 100)}...]`,
-            )
+            // 🚀 ปรับปรุง: ลดการบันทึก tool calls สำหรับ food analysis
+            if (expectedToolName !== foodAnalysisTool.function.name) {
+              await this.conversationHistoryService.addMessageToHistory(
+                lineUserId,
+                'assistant',
+                `[Tool Call: ${toolName} with args: ${toolArgs.substring(0, 100)}...]`,
+                undefined,
+                response.id,
+              )
+            } else {
+              this.logger.debug(
+                `Skipping tool call history for food analysis to reduce database writes`,
+              )
+            }
 
             try {
-              const parsedArgs = JSON.parse(typedItem.arguments) as unknown
+              const parsedArgs = JSON.parse(toolArgs) as unknown
 
-              // Handle get_food_history tool (intermediate step)
-              if (typedItem.name === foodHistoryTool.function.name) {
+              if (toolName === foodHistoryTool.function.name) {
                 this.logger.log(
                   `🗂️ Processing food history retrieval for autonomous workflow`,
                 )
-
-                const foodHistoryResult = await this.handleGetFoodHistory(
-                  parsedArgs as FoodHistoryArgs,
+                const foodHistoryResult = (await this.handleGetFoodHistory(
+                  parsedArgs as any,
                   userProfile,
                   language,
+                )) as FoodHistoryToolResult
+
+                if ('error' in foodHistoryResult) {
+                  this.logger.error(
+                    `Error retrieving food history: ${foodHistoryResult.error}`,
+                  )
+                  finalResult = { error: String(foodHistoryResult.error) }
+                  break
+                }
+                retrievedFoodLogs = foodHistoryResult.food_logs.map(
+                  (log) =>
+                    ({
+                      ...log,
+                      timestamp: new Date(log.timestamp),
+                    }) as FoodLogEntryDto,
                 )
-
-                // Convert food history to format expected by eating pattern handler
-                retrievedFoodLogs = foodHistoryResult.food_logs.map((log) => ({
-                  timestamp: new Date(log.timestamp),
-                  mealType: log.mealType,
-                  foodName: log.foodName,
-                  calories: log.calories,
-                  protein: log.protein,
-                  carbs: log.carbs,
-                  fat: log.fat,
-                  fiber: log.fiber,
-                }))
-
                 this.logger.log(
-                  `📋 Retrieved ${retrievedFoodLogs.length} food logs for autonomous analysis`,
+                  `Retrieved ${retrievedFoodLogs.length} food logs.`,
+                )
+                continue
+              }
+
+              if (toolName === expectedToolName) {
+                this.logger.log(
+                  `✅ Expected tool ${expectedToolName} called by AI. Handling...`,
+                )
+                finalResult = await toolHandler(
+                  parsedArgs as ArgsDto,
+                  userProfile,
+                  language,
+                  expectedToolName === eatingPatternTool.function.name ||
+                    expectedToolName ===
+                      conversationalFoodHistoryTool.function.name
+                    ? retrievedFoodLogs
+                    : foodLogsForHandler,
+                  nutritionGoalForHandler,
                 )
 
-                // Add food history result to conversation history
+                // 🚀 ปรับปรุง: ลดการบันทึก tool results สำหรับ food analysis
+                if (expectedToolName !== foodAnalysisTool.function.name) {
+                  await this.conversationHistoryService.addMessageToHistory(
+                    lineUserId,
+                    'assistant',
+                    `[Tool Result for ${toolName}]: ${JSON.stringify(finalResult).substring(0, 200)}...`,
+                    undefined,
+                    response.id,
+                  )
+                } else {
+                  this.logger.debug(
+                    `Skipping tool result history for food analysis to reduce database writes`,
+                  )
+                }
+                break
+              } else {
+                this.logger.warn(
+                  `AI called tool "${toolName}" but expected "${expectedToolName}".`,
+                )
+              }
+            } catch (e) {
+              const errorContent = e instanceof Error ? e.message : String(e)
+              this.logger.error(
+                `Error processing tool ${toolName}: ${errorContent}`,
+              )
+              // 🚀 ปรับปรุง: ลดการบันทึก error messages สำหรับ food analysis
+              if (expectedToolName !== foodAnalysisTool.function.name) {
                 await this.conversationHistoryService.addMessageToHistory(
                   lineUserId,
                   'assistant',
-                  `[Food History Retrieved: ${foodHistoryResult.message}]`,
+                  `[Tool Error for ${toolName}]: ${errorContent.substring(0, 200)}...`,
+                  undefined,
+                  response.id,
                 )
-
-                // Continue processing - don't return here as we expect more tool calls
-                continue
+              } else {
+                this.logger.debug(
+                  `Skipping tool error history for food analysis to reduce database writes`,
+                )
               }
-
-              // Handle conversational food history tool (direct processing)
-              if (
-                typedItem.name === conversationalFoodHistoryTool.function.name
-              ) {
-                this.logger.log(
-                  `💬 Processing conversational food history tool`,
-                )
-
-                const result = await toolHandler(
-                  parsedArgs as ArgsDto,
-                  userProfile,
-                  language,
-                  foodLogsForHandler,
-                  nutritionGoalForHandler,
-                )
-
-                finalResult = result
-                this.logger.log(
-                  `✅ Conversational food history result processed`,
-                )
-                continue
+              finalResult = {
+                error: `Error processing tool ${toolName}: ${errorContent}`,
               }
-
-              // Handle expected final tool (with retrieved food data if available)
-              if (typedItem.name === expectedToolName) {
-                this.logger.log(
-                  `🎯 Processing expected tool: ${expectedToolName} with ${retrievedFoodLogs ? retrievedFoodLogs.length : 0} food logs`,
-                )
-
-                const result = await toolHandler(
-                  parsedArgs as ArgsDto,
-                  userProfile,
-                  language,
-                  retrievedFoodLogs, // Use retrieved food logs if available
-                  nutritionGoalForHandler,
-                )
-
-                // Cache successful results
-                await this.cacheSuccessfulResults(
-                  result,
-                  expectedToolName,
-                  lineUserId,
-                  openAIResponse,
-                  _messageId,
-                )
-
-                finalResult = result
-                this.logger.log(
-                  `✅ Final tool result processed: ${JSON.stringify(result).substring(0, 100)}...`,
-                )
-                continue
-              }
-
-              // Handle unexpected tool
-              this.logger.warn(
-                `⚠️ AI called unexpected tool: ${typedItem.name}. Expected: ${expectedToolName}`,
-              )
-              // Don't return error immediately - continue processing in case there are more tool calls
-            } catch (parseError) {
-              this.logger.error(
-                `❌ Error parsing tool arguments for ${typedItem.name}: ${parseError}`,
-              )
-              return { error: 'Invalid tool arguments format.' }
+              break
             }
-          }
-        }
-
-        // Handle direct text messages from assistant
-        if (
-          isResponsesApiMessage(outputItem) &&
-          outputItem.role === 'assistant' &&
-          outputItem.content
-        ) {
-          let assistantText = ''
-
-          if (Array.isArray(outputItem.content)) {
-            const textPart = outputItem.content.find(
-              (part): part is ResponsesApiContentItem =>
-                typeof part === 'object' &&
-                part !== null &&
-                'type' in part &&
-                part.type === 'output_text' &&
-                'text' in part &&
-                typeof part.text === 'string',
+          } else {
+            this.logger.warn(
+              `AI event type 'function_call' but function name or arguments are missing/invalid. Item: ${JSON.stringify(functionCallItem)}`,
             )
-            if (textPart && textPart.text) {
-              assistantText = textPart.text
-            }
-          } else if (typeof outputItem.content === 'string') {
-            assistantText = outputItem.content
+            finalResult = { error: 'Malformed function_call data from AI.' }
+            break
           }
-
-          if (assistantText) {
+        } else if (typedOutputItem.type === 'message') {
+          // Added check for 'message' type for direct text
+          const messageItem =
+            typedOutputItem as OpenAI.Responses.ResponseOutputMessage
+          if (
+            messageItem.role === 'assistant' &&
+            typeof messageItem.content === 'string'
+          ) {
             this.logger.log(
-              `💬 AI direct response: ${assistantText.substring(0, 100)}...`,
+              `💬 Received direct message content in output array: ${(messageItem.content as string).substring(0, 100)}...`, // Explicit cast to string
             )
-            await this.conversationHistoryService.addMessageToHistory(
-              lineUserId,
-              'assistant',
-              assistantText,
-            )
-
-            // Handle friendly non-food responses for food analysis tasks
-            if (expectedToolName === foodAnalysisTool.function.name) {
-              return {
-                type: 'non_food_description',
-                description: assistantText,
-              } as unknown as NonFoodDescriptionResult
-            }
-
-            // If we don't have a final result yet, this might be the AI's final response
-            if (!finalResult) {
-              return {
-                error: `AI_DIRECT_RESPONSE: ${assistantText}`,
+            if (!finalResult && !expectedToolName) {
+              // Only use if no tool was expected
+              finalResult = {
+                message: messageItem.content,
+              } as unknown as ResultDto
+              break
+            } else if (!finalResult && expectedToolName) {
+              this.logger.warn(
+                `Received direct message content when tool '${expectedToolName}' was expected. AI might have answered directly.`,
+              )
+              finalResult = {
+                error: `AI answered directly with a message when tool ${expectedToolName} was expected. Content: ${messageItem.content}`,
               }
+              break
             }
+          }
+        }
+        // Ensure no other 'else if (typedOutputItem.type === 'text')' exists in this loop
+      }
+
+      if (finalResult) {
+        if (
+          !(
+            typeof finalResult === 'object' &&
+            'error' in finalResult &&
+            finalResult.error
+          )
+        ) {
+          await this.cacheSuccessfulResults(
+            finalResult,
+            expectedToolName,
+            lineUserId,
+            response,
+            _messageId,
+          )
+        }
+        return finalResult
+      } else if (response.output_text && !finalResult) {
+        this.logger.log(
+          `💬 Fallback/Primary: Received direct output_text from AI: ${response.output_text.substring(0, 100)}...`,
+        )
+        if (!expectedToolName && typeof response.output_text === 'string') {
+          return { message: response.output_text } as unknown as ResultDto // For general queries
+        } else if (expectedToolName === 'extract_food_analysis') {
+          this.logger.log(
+            `🎭 Non-food description detected when food analysis expected: ${response.output_text.substring(0, 100)}...`,
+          )
+          // ✨ Handle non-food images as valid responses, not errors
+          return {
+            type: 'non_food_description',
+            description: response.output_text,
+          } as NonFoodDescriptionResult as unknown as ResultDto
+        } else if (expectedToolName) {
+          return {
+            error: `AI provided direct output_text when tool ${expectedToolName} was expected. Content: ${response.output_text}`,
           }
         }
       }
 
-      // Return the final result if we found one
-      if (finalResult) {
-        return finalResult
-      }
-    }
-
-    // Handle simple text response (fallback)
-    if (hasOutputText(openAIResponse)) {
-      this.logger.log(
-        `📄 Response has output_text: ${openAIResponse.output_text.substring(0, 100)}...`,
-      )
-      await this.conversationHistoryService.addMessageToHistory(
-        lineUserId,
-        'assistant',
-        openAIResponse.output_text,
+      this.logger.warn(
+        `No actionable tool call or direct text output processed for expected tool: ${expectedToolName} in Responses API output.`,
       )
       return {
-        error: `AI_DIRECT_RESPONSE_VIA_OUTPUT_TEXT: ${openAIResponse.output_text}`,
+        error: `AI response did not result in an expected action for tool: ${expectedToolName}`,
+      }
+    } else if (response.output_text) {
+      this.logger.log(
+        `💬 Received direct output_text from AI (no output array): ${response.output_text.substring(0, 100)}...`,
+      )
+      if (!expectedToolName && typeof response.output_text === 'string') {
+        return { message: response.output_text } as unknown as ResultDto // For general queries
+      } else if (expectedToolName === 'extract_food_analysis') {
+        this.logger.log(
+          `🎭 Non-food description detected: ${response.output_text.substring(0, 100)}...`,
+        )
+        // ✨ Handle non-food images as valid responses, not errors
+        return {
+          type: 'non_food_description',
+          description: response.output_text,
+        } as NonFoodDescriptionResult as unknown as ResultDto
+      } else if (expectedToolName) {
+        return {
+          error: `AI provided direct output_text instead of using the expected tool: ${expectedToolName}. Content: ${response.output_text}`,
+        }
       }
     }
 
-    this.logger.warn(
-      `❌ No recognized response structure found for user ${lineUserId}`,
+    this.logger.error(
+      `Failed to process OpenAI Responses API output. No recognizable tool calls or text output found for ${expectedToolName}. Response: ${JSON.stringify(response).substring(0, 500)}`,
     )
-    return {
-      error:
-        'AI did not produce a valid tool call or text output via Responses API.',
-    }
+    return { error: 'Failed to process OpenAI Responses API output structure.' }
   }
 
   /**
@@ -3872,6 +3371,7 @@ CONVERSATION CONTEXT:
     conversationHistory: Array<{
       role: 'user' | 'assistant'
       content: string
+      responseId?: string // Assuming responseId might be stored here
     }> | null,
     currentQuery: string,
   ): {
@@ -3893,10 +3393,14 @@ CONVERSATION CONTEXT:
       }
     }
 
-    const lastAssistantMessage = conversationHistory
-      .filter((msg) => msg.role === 'assistant')
-      .slice(-1)[0]
-      ?.content?.toLowerCase()
+    const assistantMessages = conversationHistory.filter(
+      (msg) => msg.role === 'assistant',
+    )
+    const lastAssistantMessage = assistantMessages[assistantMessages.length - 1]
+
+    const lastAssistantMessageContent =
+      lastAssistantMessage?.content?.toLowerCase()
+    const lastResponseId = lastAssistantMessage?.responseId // Extract responseId here
 
     const currentQueryLower = currentQuery.toLowerCase()
 
@@ -3914,9 +3418,9 @@ CONVERSATION CONTEXT:
 
     // Extract previous topic from last assistant message
     let previousTopic: string | null = null
-    if (lastAssistantMessage) {
+    if (lastAssistantMessageContent) {
       // Simple topic extraction (can be enhanced)
-      const foodMentions = lastAssistantMessage.match(
+      const foodMentions = lastAssistantMessageContent.match(
         /(อาหาร|ผัก|ผลไม้|เนื้อ|ไก่|หมู|ปลา|ข้าว|แกง)/g,
       )
       if (foodMentions && foodMentions.length > 0) {
@@ -3943,7 +3447,7 @@ CONVERSATION CONTEXT:
       contextType,
       isFollowUp: isFollowUp || isClarification,
       previousTopic,
-      lastResponseId: undefined, // Will be enhanced when we track response IDs
+      lastResponseId, // Use the extracted lastResponseId
     }
   }
 
@@ -3951,6 +3455,7 @@ CONVERSATION CONTEXT:
     conversationHistory: Array<{
       role: 'user' | 'assistant'
       content: string
+      responseId?: string // Assuming responseId might be stored here
     }> | null,
     currentQuery: string,
     isFollowUp: boolean,
@@ -4761,7 +4266,7 @@ ${JSON.stringify(foodDataSummary, null, 2)}`
         ],
         {
           temperature: 0.7,
-          max_tokens: 1000,
+          max_tokens: 6000,
         },
       )) as OpenAI.Chat.Completions.ChatCompletion | { error: string }
 
@@ -5010,5 +4515,440 @@ ${JSON.stringify(contextData, null, 2)}`
         improvementSuggestions: baseImprovementSuggestions,
       }
     }
+  }
+
+  async generateMealPlanningPresentation(
+    lineUserId: string,
+    mealRecommendationResult: MealRecommendationToolResult,
+    userProfile: UserProfileDto,
+    language: string = 'th',
+    timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
+  ): Promise<string | null> {
+    try {
+      this.logger.log(
+        `[Enhanced Responses API] Generating meal planning presentation for user ${lineUserId}`,
+      )
+
+      // สร้าง system prompt สำหรับการเจนเนอเรทข้อความแสดงผล
+      const systemPrompt = this.createMealPlanningPresentationSystemPrompt(
+        userProfile,
+        language,
+      )
+
+      // เตรียม user input สำหรับ Responses API
+      const userInput = `กรุณาสร้างข้อความการแสดงผลแผนมื้ออาหารที่สวยงามและเป็นมิตรจากข้อมูลต่อไปนี้:
+
+${JSON.stringify(mealRecommendationResult, null, 2)}
+
+ข้อกำหนด:
+1. ใช้ข้อความต้อนรับที่เป็นมิตรและเรียกชื่อผู้ใช้ "${userProfile.displayName || 'คุณ'}"
+2. แสดงเมนูอาหารในรูปแบบที่จัดหมวดหมู่ตามมื้อ (เช้า กลางวัน เย็น)
+3. ใส่รายละเอียดโภชนาการและประโยชน์ของแต่ละเมนู
+4. ให้คำแนะนำเพิ่มเติมด้านโภชนาการ
+5. ใช้รูปแบบที่อ่านง่ายและสวยงาม
+6. ตอบเป็นภาษาไทยทั้งหมด
+7. ใช้โทนเสียงที่เป็นมิตรและให้กำลังใจ`
+
+      // ใช้ Completions API แทน Responses API เพื่อหลีกเลี่ยง tool calls
+      const taskType = AiTaskType.GeneralNutritionQuery
+      const modelConfig = this.selectModelInternal(
+        userInput,
+        userProfile,
+        timeConstraint,
+        taskType,
+      )
+      const deploymentName = modelConfig.deploymentName
+
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: userInput,
+        },
+      ]
+
+      // เรียกใช้ OpenAI Completions API
+      const response = (await this.openaiService.getChatCompletion(
+        deploymentName,
+        messages,
+        {
+          temperature: 0.7,
+          max_tokens: 6000,
+        },
+      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string }
+
+      if ('error' in response) {
+        this.logger.error(
+          `generateMealPlanningPresentation error for user ${lineUserId}: ${response.error}`,
+        )
+        return null
+      }
+
+      const generatedText =
+        response.choices?.[0]?.message?.content?.trim() || null
+
+      if (!generatedText) {
+        this.logger.warn(
+          `No presentation text generated for user ${lineUserId}`,
+        )
+        return null
+      }
+
+      this.logger.debug(
+        `Generated meal planning presentation for user ${lineUserId}: ${generatedText.substring(0, 200)}...`,
+      )
+
+      return generatedText
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `generateMealPlanningPresentation error for user ${lineUserId}: ${message}`,
+      )
+      return null
+    }
+  }
+
+  private createMealPlanningPresentationSystemPrompt(
+    userProfile: UserProfileDto,
+    language: string = 'th',
+  ): string {
+    const {
+      goal,
+      dietType,
+      foodAllergies,
+      healthConditions,
+      preferredCuisine,
+      preferredFlavorProfiles,
+    } = userProfile
+
+    return `You are a friendly AI nutritionist chatbot operating on LINE messaging platform. You specialize in creating beautiful and engaging meal planning presentations. You communicate in a warm, supportive manner and use emojis generously to make conversations more lively and encouraging.
+
+User Profile:
+- Name: ${userProfile.displayName || 'User'}
+- Goal: ${goal || 'Not specified'}
+- Diet Type: ${dietType || 'Normal'}
+- Food Allergies: ${foodAllergies?.join(', ') || 'None'}
+- Health Conditions: ${healthConditions?.join(', ') || 'None'}
+- Preferred Cuisine: ${preferredCuisine?.join(', ') || 'Not specified'}
+- Preferred Flavors: ${preferredFlavorProfiles?.join(', ') || 'Not specified'}
+
+Your responsibilities as a LINE chatbot:
+1. Create beautiful and engaging meal planning presentations
+2. Use warm, friendly greetings and address users by name
+3. Organize content in easy-to-read format with clear sections
+4. Include detailed nutritional information in an accessible way
+5. Provide practical health recommendations suitable for users
+6. Use generous emojis and formatting for visual appeal (✨, 🍽️, 📋, 💡, 🥗, 🍎, 💪, 🌟, 👍, 💚, 🎯)
+7. Maintain an encouraging, friendly tone throughout
+8. Make meal planning feel achievable and enjoyable
+
+Presentation format desired:
+- Warm greeting with emojis
+- Meal categorization (breakfast, lunch, dinner)
+- Detailed menu descriptions with nutritional benefits
+- Additional health tips and recommendations
+- Encouraging closing message
+
+Communication style as LINE chatbot:
+- Friendly and conversational
+- Use emojis naturally and generously
+- Be encouraging and positive
+- Avoid overly formal language
+- Make recommendations feel practical and doable
+- Celebrate healthy choices and motivate continued progress
+
+Guidelines to avoid:
+- Overly formal or medical tone
+- Repetitive unnecessary information
+- Recommendations not suitable for the user`
+  }
+
+  async generateNutritionGoalPresentation(
+    lineUserId: string,
+    nutritionGoalResult: NutritionGoalToolResult,
+    userProfile: UserProfileDto,
+    language: string = 'th',
+    timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
+  ): Promise<string | null> {
+    try {
+      this.logger.log(
+        `[Enhanced Responses API] Generating nutrition goal presentation for user ${lineUserId}`,
+      )
+
+      // สร้าง system prompt สำหรับการเจนเนอเรทข้อความแสดงผล
+      const systemPrompt = this.createNutritionGoalPresentationSystemPrompt(
+        userProfile,
+        language,
+      )
+
+      // เตรียม user input สำหรับ Responses API
+      const userInput = `กรุณาสร้างข้อความการแสดงผลเป้าหมายโภชนาการที่สวยงามและเป็นมิตรจากข้อมูลต่อไปนี้:
+
+${JSON.stringify(nutritionGoalResult, null, 2)}
+
+ข้อกำหนด:
+1. ใช้ข้อความต้อนรับที่เป็นมิตรและเรียกชื่อผู้ใช้ "${userProfile.displayName || 'คุณ'}"
+2. แสดงเป้าหมายโภชนาการในรูปแบบที่เข้าใจง่าย
+3. อธิบาย BMR และ TDEE ให้เข้าใจง่าย
+4. แสดงการกระจายของ macronutrients ในรูปแบบที่ชัดเจน
+5. ให้คำแนะนำด้านการกินและออกกำลังกาย
+6. ตอบเป็นภาษาไทยทั้งหมด
+7. ใช้โทนเสียงที่เป็นมิตรและให้กำลังใจ`
+
+      // ใช้ Completions API
+      const taskType = AiTaskType.GeneralNutritionQuery
+      const modelConfig = this.selectModelInternal(
+        userInput,
+        userProfile,
+        timeConstraint,
+        taskType,
+      )
+      const deploymentName = modelConfig.deploymentName
+
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: userInput,
+        },
+      ]
+
+      // เรียกใช้ OpenAI Completions API
+      const response = (await this.openaiService.getChatCompletion(
+        deploymentName,
+        messages,
+        {
+          temperature: 0.7,
+          max_tokens: 5200,
+        },
+      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string }
+
+      if ('error' in response) {
+        this.logger.error(
+          `generateNutritionGoalPresentation error for user ${lineUserId}: ${response.error}`,
+        )
+        return null
+      }
+
+      const generatedText =
+        response.choices?.[0]?.message?.content?.trim() || null
+
+      if (!generatedText) {
+        this.logger.warn(
+          `No nutrition goal presentation text generated for user ${lineUserId}`,
+        )
+        return null
+      }
+
+      this.logger.debug(
+        `Generated nutrition goal presentation for user ${lineUserId}: ${generatedText.substring(0, 200)}...`,
+      )
+
+      return generatedText
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `generateNutritionGoalPresentation error for user ${lineUserId}: ${message}`,
+      )
+      return null
+    }
+  }
+
+  private createNutritionGoalPresentationSystemPrompt(
+    userProfile: UserProfileDto,
+    language: string = 'th',
+  ): string {
+    const { goal, dietType, activityLevel, age, gender, weightKg, heightCm } =
+      userProfile
+
+    return `You are a friendly AI nutritionist chatbot operating on LINE messaging platform. You specialize in explaining nutrition goals in simple, easy-to-understand, and encouraging ways. You communicate warmly and use emojis generously to make conversations more engaging and supportive.
+
+User Profile:
+- Name: ${userProfile.displayName || 'User'}
+- Gender: ${gender || 'Not specified'}
+- Age: ${age || 'Not specified'} years
+- Weight: ${weightKg || 'Not specified'} kg
+- Height: ${heightCm || 'Not specified'} cm
+- Goal: ${goal || 'Not specified'}
+- Diet Type: ${dietType || 'Normal'}
+- Activity Level: ${activityLevel || 'Not specified'}
+
+Your responsibilities as a LINE chatbot:
+1. Create friendly and easy-to-understand nutrition goal presentations
+2. Explain BMR (Basal Metabolic Rate) and TDEE (Total Daily Energy Expenditure) in simple terms
+3. Present calorie and nutrient goals clearly and encouragingly
+4. Explain macronutrient distribution (protein, carbs, fat) in accessible language
+5. Provide practical recommendations that users can actually follow
+6. Use generous emojis and formatting for visual appeal (🎯, 💪, 📊, ✨, 🌟, 💡, 👍, 💚, 🍎, 🥗)
+7. Maintain an encouraging, motivational tone throughout
+8. Make nutrition goals feel achievable and exciting
+
+Presentation format desired:
+- Warm, personalized greeting with emojis
+- Simple explanations of BMR and TDEE
+- Clear calorie and nutrient goals
+- Macronutrient distribution breakdown
+- Practical actionable recommendations
+- Encouraging motivational message
+
+Communication style as LINE chatbot:
+- Friendly and conversational
+- Use emojis naturally throughout
+- Be encouraging and positive
+- Avoid complex medical terminology
+- Make goals feel achievable and exciting
+- Celebrate progress and motivate continued success
+
+Guidelines to avoid:
+- Complex medical terminology
+- Information overload that causes confusion
+- Hard-to-remember numbers presented without context`
+  }
+
+  async generateEatingPatternPresentation(
+    lineUserId: string,
+    eatingPatternResult: EatingPatternToolResult,
+    userProfile: UserProfileDto,
+    language: string = 'th',
+    timeConstraint: 'fast' | 'normal' | 'accurate' = 'normal',
+  ): Promise<string | null> {
+    try {
+      this.logger.log(
+        `[Enhanced Responses API] Generating eating pattern presentation for user ${lineUserId}`,
+      )
+
+      // สร้าง system prompt สำหรับการเจนเนอเรทข้อความแสดงผล
+      const systemPrompt = this.createEatingPatternPresentationSystemPrompt(
+        userProfile,
+        language,
+      )
+
+      // เตรียม user input สำหรับ Responses API
+      const userInput = `Please create a beautiful and friendly eating pattern analysis presentation from the following data:
+
+${JSON.stringify(eatingPatternResult, null, 2)}
+
+Requirements:
+1. Use friendly greeting and address user as "${userProfile.displayName || 'คุณ'}"
+2. Present eating pattern analysis in an easy-to-understand format
+3. Explain trends and patterns in a supportive way
+4. Provide actionable recommendations
+5. Use encouraging tone throughout
+6. Respond in ${language.toUpperCase()} language only
+7. Use emojis and formatting for better readability
+8. Be supportive and motivational`
+
+      // ใช้ Completions API
+      const taskType = AiTaskType.GeneralNutritionQuery
+      const modelConfig = this.selectModelInternal(
+        userInput,
+        userProfile,
+        timeConstraint,
+        taskType,
+      )
+      const deploymentName = modelConfig.deploymentName
+
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: userInput,
+        },
+      ]
+
+      // เรียกใช้ OpenAI Completions API
+      const response = (await this.openaiService.getChatCompletion(
+        deploymentName,
+        messages,
+        {
+          temperature: 0.7,
+          max_tokens: 5500,
+        },
+      )) as OpenAI.Chat.Completions.ChatCompletion | { error: string }
+
+      if ('error' in response) {
+        this.logger.error(
+          `generateEatingPatternPresentation error for user ${lineUserId}: ${response.error}`,
+        )
+        return null
+      }
+
+      const generatedText =
+        response.choices?.[0]?.message?.content?.trim() || null
+
+      if (!generatedText) {
+        this.logger.warn(
+          `No eating pattern presentation text generated for user ${lineUserId}`,
+        )
+        return null
+      }
+
+      this.logger.debug(
+        `Generated eating pattern presentation for user ${lineUserId}: ${generatedText.substring(0, 200)}...`,
+      )
+
+      return generatedText
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.error(
+        `generateEatingPatternPresentation error for user ${lineUserId}: ${message}`,
+      )
+      return null
+    }
+  }
+
+  private createEatingPatternPresentationSystemPrompt(
+    userProfile: UserProfileDto,
+    language: string = 'th',
+  ): string {
+    const { goal, dietType, activityLevel, age, gender, weightKg, heightCm } =
+      userProfile
+
+    return `You are a friendly AI nutritionist chatbot operating on LINE messaging platform. You specialize in creating beautiful and encouraging eating pattern analysis presentations. You communicate in a warm, supportive manner and use emojis generously to make conversations more engaging and friendly.
+
+User Profile:
+- Name: ${userProfile.displayName || 'User'}
+- Gender: ${gender || 'Not specified'}
+- Age: ${age || 'Not specified'} years
+- Weight: ${weightKg || 'Not specified'} kg
+- Height: ${heightCm || 'Not specified'} cm
+- Goal: ${goal || 'Not specified'}
+- Diet Type: ${dietType || 'Normal'}
+- Activity Level: ${activityLevel || 'Not specified'}
+
+Your responsibilities as a LINE chatbot:
+1. Create beautiful and encouraging eating pattern analysis presentations
+2. Use warm, friendly greetings and address users by name
+3. Present complex nutritional data in simple, understandable formats
+4. Provide supportive analysis of eating trends and patterns
+5. Offer practical, actionable recommendations
+6. Use generous emojis and formatting to enhance readability (💪, 📊, ⭐, 🎯, 💡, 🍽️, ⏰, 📈, 📉, ✨, 🌟, 👍, 💚)
+7. Maintain an encouraging, motivational tone throughout
+8. Be supportive even when discussing areas for improvement
+
+Presentation format desired:
+- Warm, personalized greeting with emojis
+- Clear sections for different analysis aspects
+- Visual representation using emojis and symbols
+- Trend explanations in supportive language
+- Practical recommendations with action steps
+- Encouraging closing message
+
+Communication style as LINE chatbot:
+- Friendly and conversational
+- Use emojis naturally throughout the text
+- Be encouraging and positive
+- Avoid overly technical medical terminology
+- Make recommendations feel achievable
+- Celebrate positive patterns and gently guide improvements`
   }
 }

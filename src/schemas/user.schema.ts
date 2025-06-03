@@ -47,6 +47,9 @@ export class User {
   age?: number
 
   @Prop()
+  birthDate?: string
+
+  @Prop()
   weightKg?: number
 
   @Prop()
@@ -73,6 +76,10 @@ export class User {
       'if_5_2',
       'paleo',
       'mediterranean',
+      'gluten_free',
+      'dairy_free',
+      'halal',
+      'kosher',
     ],
     default: 'normal',
   })
@@ -90,6 +97,10 @@ export class User {
   @Prop({ default: Date.now })
   lastActiveAt: Date
 
+  // Timezone ของผู้ใช้ (เริ่มต้นเป็น Asia/Bangkok สำหรับผู้ใช้ไทย)
+  @Prop({ default: 'Asia/Bangkok' })
+  timezone: string
+
   // New fields for Step 4
   @Prop({ type: [String], default: [] })
   ethicalFoodConsiderations?: string[]
@@ -105,6 +116,51 @@ export class User {
 
   @Prop({ type: [String], default: [] })
   preferredFlavorProfiles?: string[]
+
+  // Nutrition calculation fields - BMR, TDEE, Target Weight
+  @Prop()
+  targetWeightKg?: number
+
+  @Prop()
+  calculatedBmr?: number
+
+  @Prop()
+  calculatedTdee?: number
+
+  // Daily nutrition goals - main macronutrients
+  @Prop()
+  dailyCaloriesGoal?: number
+
+  @Prop()
+  dailyProteinGoal?: number
+
+  @Prop()
+  dailyCarbsGoal?: number
+
+  @Prop()
+  dailyFatGoal?: number
+
+  // Daily nutrition goals - micronutrients and others
+  @Prop()
+  dailyFiberGoal?: number
+
+  @Prop()
+  dailySugarGoal?: number
+
+  @Prop()
+  dailySodiumGoal?: number
+
+  @Prop()
+  dailyWaterGoal?: number
+
+  @Prop()
+  dailyCholesterolGoal?: number
+
+  @Prop()
+  dailySaturatedFatGoal?: number
+
+  @Prop()
+  dailyOmega3Goal?: number
 
   // Timestamps - Mongoose will add these, but we define them for type safety
   createdAt?: Date

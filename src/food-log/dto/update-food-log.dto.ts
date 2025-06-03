@@ -7,6 +7,8 @@ import {
   ValidateNested,
   Min,
   IsObject,
+  IsDateString,
+  IsNotEmpty,
 } from 'class-validator'
 
 // DTO for VitaminMineralDetail if it can be updated
@@ -115,4 +117,39 @@ export class UpdateFoodLogDto {
   @IsString()
   @IsOptional()
   imageAlt?: string
+
+  @IsOptional()
+  @IsDateString()
+  clientTimestamp?: string
+}
+
+// DTO สำหรับการสร้าง Food Log ใหม่
+export class CreateFoodLogDto {
+  @IsString()
+  @IsNotEmpty()
+  lineUserId: string
+
+  @IsString()
+  @IsEnum(['breakfast', 'lunch', 'dinner', 'snack', 'other'])
+  mealType: string
+
+  @ValidateNested()
+  @Type(() => UpdateFoodDetailDto)
+  food: UpdateFoodDetailDto
+
+  @IsString()
+  @IsOptional()
+  imageUrl?: string
+
+  @IsString()
+  @IsOptional()
+  imageAlt?: string
+
+  @IsOptional()
+  @IsDateString()
+  clientTimestamp?: string
+
+  @IsString()
+  @IsOptional()
+  timezone?: string
 }

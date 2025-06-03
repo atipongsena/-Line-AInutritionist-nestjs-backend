@@ -104,15 +104,15 @@ export const AI_CONFIG: AiGlobalConfig = {
     },
     [AiTaskType.NutritionGoalCalculation]: {
       temperature: 0.3, // ให้ AI ตัดสินใจความเหมาะสมเอง
-      //max_tokens: 1200,
+      //max_tokens: 5200, // เปิดเพื่อป้องกันการตัดข้อความ
     },
     [AiTaskType.EatingPatternAnalysis]: {
       temperature: 0.4, // ให้ AI ตัดสินใจความเหมาะสมเอง
-      //max_tokens: 1500,
+      //max_tokens: 5500, // เปิดเพื่อป้องกันการตัดข้อความ
     },
     [AiTaskType.MealRecommendation]: {
       temperature: 0.7, // ให้ AI ตัดสินใจความเหมาะสมเอง
-      //max_tokens: 1500,
+      //max_tokens: 5500, // เพิ่มจาก 1500 เป็น 2500 เพื่อให้พอกับหลายรายการอาหาร
     },
     [AiTaskType.GeneralNutritionQuery]: {
       temperature: 0.5, // ให้ AI ตัดสินใจความเหมาะสมเอง

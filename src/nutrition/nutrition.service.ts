@@ -24,6 +24,8 @@ import {
 } from '../schemas/nutrition-goal.schema'
 import { Food, FoodDocument } from '../schemas/food.schema'
 import { FoodItem as SharedFoodItemOriginal } from '@ai-nutritionist/shared-types'
+import { UserService } from '../user/user.service'
+import { TimezoneService } from '../common/timezone.service'
 
 // Define DTOs/Interfaces as needed, e.g.:
 // interface MacroDistribution {
@@ -75,6 +77,8 @@ export class NutritionService {
     @InjectModel(NutritionGoal.name)
     private nutritionGoalModel: Model<NutritionGoalDocument>,
     @InjectModel(Food.name) private foodModel: Model<FoodDocument>,
+    private readonly userService: UserService,
+    private readonly timezoneService: TimezoneService,
   ) {
     this.logger.log('NutritionService initialized')
   }
@@ -637,9 +641,17 @@ export class NutritionService {
       `[getDailyReportData] Fetching for lineUserId: ${lineUserId}, date: ${dateString}`,
     )
 
-    const today = new Date(dateString)
-    const startOfDay = new Date(new Date(today).setHours(0, 0, 0, 0))
-    const endOfDay = new Date(new Date(today).setHours(23, 59, 59, 999))
+    // ใช้ timezone ของ user เพื่อคำนวณ day bounds
+    const userTimezone = await this.userService.getUserTimezone(lineUserId)
+    const targetDate = new Date(dateString + 'T00:00:00')
+    const { startOfDay, endOfDay } = this.timezoneService.getDayBounds(
+      targetDate,
+      userTimezone,
+    )
+
+    this.logger.log(
+      `[getDailyReportData] Using timezone: ${userTimezone}, startOfDay: ${startOfDay.toISOString()}, endOfDay: ${endOfDay.toISOString()}`,
+    )
 
     const user = await this.userModel.findOne({ lineUserId }).exec()
     if (!user) {
@@ -668,19 +680,55 @@ export class NutritionService {
       sodium: number
       cholesterol: number
       saturated_fat: number
+      trans_fat: number
+      polyunsaturated_fat: number
+      monounsaturated_fat: number
       omega3: number
       water: number
+      potassium_nutrient: number
       micronutrients: Map<string, { goal?: number; unit?: string; dv?: number }>
     }
 
-    // ✅ Dynamic calculation if no nutrition goal found
-    if (
-      !nutritionGoal &&
-      user.weightKg &&
-      user.heightCm &&
-      user.age &&
-      user.gender
-    ) {
+    // ✅ Updated priority system for nutrition goals
+    // Priority 1: User profile stored nutrition goals (from database) - NEW PRIORITY
+    if (user.dailyCaloriesGoal && user.dailyProteinGoal) {
+      this.logger.log(
+        `[getDailyReportData] Using stored nutrition goals from user profile`,
+      )
+
+      goals = {
+        calories: user.dailyCaloriesGoal || 2000,
+        protein: user.dailyProteinGoal || 75,
+        carbs: user.dailyCarbsGoal || 250,
+        fat: user.dailyFatGoal || 65,
+        fiber: user.dailyFiberGoal || 25,
+        sugar: user.dailySugarGoal || 50,
+        sodium: user.dailySodiumGoal || 2300,
+        cholesterol: user.dailyCholesterolGoal || 300,
+        saturated_fat: user.dailySaturatedFatGoal || 20,
+        trans_fat: 0, // Goal is to minimize trans fat
+        polyunsaturated_fat: Math.round(
+          ((user.dailyCaloriesGoal || 2000) * 0.1) / 9,
+        ), // ~10% of calories
+        monounsaturated_fat: Math.round(
+          ((user.dailyCaloriesGoal || 2000) * 0.15) / 9,
+        ), // ~15% of calories
+        omega3: user.dailyOmega3Goal || (user.gender === 'male' ? 1.6 : 1.1),
+        water: user.dailyWaterGoal || 2000,
+        potassium_nutrient: 0, // Assuming no potassium nutrient information
+        micronutrients: new Map<
+          string,
+          { goal?: number; unit?: string; dv?: number }
+        >(),
+      }
+
+      this.logger.log(
+        `[getDailyReportData] Using stored goals - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    }
+    // Priority 2: Calculate from user profile if stored goals are not available
+    else if (user.weightKg && user.heightCm && user.age && user.gender) {
       this.logger.log(
         `[getDailyReportData] No nutrition goal found, calculating from user profile`,
       )
@@ -718,8 +766,12 @@ export class NutritionService {
         sodium: 2300, // mg, standard recommendation
         cholesterol: 300, // mg, max recommended
         saturated_fat: Math.round(((targetCalories || 2000) * 0.1) / 9), // <10% from saturated fat
+        trans_fat: 0, // Goal is to minimize trans fat
+        polyunsaturated_fat: Math.round(((targetCalories || 2000) * 0.1) / 9), // ~10% of calories
+        monounsaturated_fat: Math.round(((targetCalories || 2000) * 0.15) / 9), // ~15% of calories
         omega3: user.gender === 'male' ? 1.6 : 1.1, // g/day ALA recommendation
         water: waterNeeds || 2000, // ml
+        potassium_nutrient: 0, // Assuming no potassium nutrient information
         micronutrients: new Map<
           string,
           { goal?: number; unit?: string; dv?: number }
@@ -731,7 +783,7 @@ export class NutritionService {
           `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
       )
     } else {
-      // Use existing nutrition goal or defaults
+      // Priority 3: Use existing nutrition goal or defaults
       const defaultGoalValues = {
         calories: 2000,
         protein: 75,
@@ -755,8 +807,12 @@ export class NutritionService {
         sodium: dailyGoalsFromDb?.sodium || 2300,
         cholesterol: dailyGoalsFromDb?.cholesterol || 300,
         saturated_fat: dailyGoalsFromDb?.saturated_fat || 20,
+        trans_fat: dailyGoalsFromDb?.trans_fat || 0,
+        polyunsaturated_fat: dailyGoalsFromDb?.polyunsaturated_fat || 22,
+        monounsaturated_fat: dailyGoalsFromDb?.monounsaturated_fat || 33,
         omega3: dailyGoalsFromDb?.omega3 || 1.6,
         water: dailyGoalsFromDb?.water || 2000,
+        potassium_nutrient: dailyGoalsFromDb?.potassium_nutrient || 0,
         micronutrients:
           dailyGoalsFromDb?.micronutrients instanceof Map
             ? dailyGoalsFromDb.micronutrients
@@ -803,6 +859,12 @@ export class NutritionService {
     let consumedSaturatedFat = 0
     let consumedOmega3 = 0
     let consumedWater = 0
+    let consumedTransFat = 0
+    let consumedPolyunsaturatedFat = 0
+    let consumedMonounsaturatedFat = 0
+    let consumedPotassiumNutrient = 0
+    let consumedCaffeine = 0
+    let consumedAlcohol = 0
 
     const mealsMap: Map<
       string,
@@ -842,6 +904,15 @@ export class NutritionService {
         consumedSaturatedFat += foodDetail.nutrition.saturated_fat || 0
         consumedOmega3 += foodDetail.nutrition.omega3 || 0
         consumedWater += foodDetail.nutrition.water || 0
+        consumedTransFat += foodDetail.nutrition.trans_fat || 0
+        consumedPolyunsaturatedFat +=
+          foodDetail.nutrition.polyunsaturated_fat || 0
+        consumedMonounsaturatedFat +=
+          foodDetail.nutrition.monounsaturated_fat || 0
+        consumedPotassiumNutrient +=
+          foodDetail.nutrition.potassium_nutrient || 0
+        consumedCaffeine += foodDetail.nutrition.caffeine || 0
+        consumedAlcohol += foodDetail.nutrition.alcohol || 0
 
         const sourceMicros =
           foodDetail.micronutrients ||
@@ -1050,6 +1121,34 @@ export class NutritionService {
           goal: goals.water,
           unit: 'ml',
         },
+        trans_fat: {
+          consumed: parseFloat(consumedTransFat.toFixed(1)),
+          goal: goals.trans_fat,
+          unit: 'g',
+        },
+        polyunsaturated_fat: {
+          consumed: parseFloat(consumedPolyunsaturatedFat.toFixed(1)),
+          goal: goals.polyunsaturated_fat,
+          unit: 'g',
+        },
+        monounsaturated_fat: {
+          consumed: parseFloat(consumedMonounsaturatedFat.toFixed(1)),
+          goal: goals.monounsaturated_fat,
+          unit: 'g',
+        },
+        potassium_nutrient: {
+          consumed: Math.round(consumedPotassiumNutrient),
+          goal: goals.potassium_nutrient,
+          unit: 'mg',
+        },
+        caffeine: {
+          consumed: Math.round(consumedCaffeine),
+          unit: 'mg',
+        },
+        alcohol: {
+          consumed: parseFloat(consumedAlcohol.toFixed(1)),
+          unit: 'g',
+        },
       },
       micronutrients: consumedMicronutrients,
       meals,
@@ -1103,29 +1202,51 @@ export class NutritionService {
       .sort({ createdAt: -1 })
       .exec()
 
-    const defaultGoalValues = {
-      calories: 2000,
-      protein: 75,
-      carbs: 250,
-      fat: 65,
-    }
-
     // ✅ Add dynamic calculation like in getDailyReportData
     let goals: {
       calories: number
       protein: number
       carbs: number
       fat: number
+      fiber?: number
+      sugar?: number
+      sodium?: number
+      water?: number
+    } = {
+      calories: 2000,
+      protein: 75,
+      carbs: 250,
+      fat: 65,
+      fiber: 25,
+      sugar: 50,
+      sodium: 2300,
+      water: 2000,
     }
 
-    // Dynamic calculation if no nutrition goal found
-    if (
-      !nutritionGoal &&
-      user.weightKg &&
-      user.heightCm &&
-      user.age &&
-      user.gender
-    ) {
+    // Priority 1: User profile stored nutrition goals (from database) - NEW PRIORITY
+    if (user.dailyCaloriesGoal && user.dailyProteinGoal) {
+      this.logger.log(
+        `[getWeeklyReportData] Using stored nutrition goals from user profile`,
+      )
+
+      goals = {
+        calories: user.dailyCaloriesGoal || 2000,
+        protein: user.dailyProteinGoal || 75,
+        carbs: user.dailyCarbsGoal || 250,
+        fat: user.dailyFatGoal || 65,
+        fiber: user.dailyFiberGoal || 25,
+        sugar: user.dailySugarGoal || 50,
+        sodium: user.dailySodiumGoal || 2300,
+        water: user.dailyWaterGoal || 2000,
+      }
+
+      this.logger.log(
+        `[getWeeklyReportData] Using stored goals - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    }
+    // Priority 2: Calculate from user profile if stored goals are not available
+    else if (user.weightKg && user.heightCm && user.age && user.gender) {
       this.logger.log(
         `[getWeeklyReportData] No nutrition goal found, calculating from user profile`,
       )
@@ -1137,30 +1258,19 @@ export class NutritionService {
         user.heightCm,
         user.age,
       )
-      this.logger.log(
-        `Calculating BMR for gender: ${user.gender}, weight: ${user.weightKg}, height: ${user.heightCm}, age: ${user.age}`,
-      )
-
       const tdee = this.calculateTDEE(bmr, user.activityLevel || 'moderate')
-      this.logger.log(
-        `Calculating TDEE for BMR: ${bmr}, activity level: ${user.activityLevel || 'moderate'}`,
-      )
-
       const targetCalories = this.calculateTargetCalories(
         tdee,
         user.goal || 'maintain_weight',
       )
-      this.logger.log(
-        `Calculating target calories for TDEE: ${tdee}, goal: ${user.goal || 'maintain_weight'}`,
-      )
-
       const macroDistribution = this.calculateMacroDistribution(
         targetCalories,
         user.goal || 'maintain_weight',
         user.dietType || 'normal',
       )
-      this.logger.log(
-        `Calculating macro distribution for target calories: ${targetCalories}, goal: ${user.goal || 'maintain_weight'}, diet type: ${user.dietType || 'normal'}`,
+      const waterNeeds = this.calculateWaterNeeds(
+        user.weightKg,
+        user.activityLevel,
       )
 
       // Create dynamic goals object
@@ -1169,22 +1279,16 @@ export class NutritionService {
         protein: macroDistribution?.grams.protein || 75,
         carbs: macroDistribution?.grams.carbs || 250,
         fat: macroDistribution?.grams.fat || 65,
+        fiber: Math.round(((targetCalories || 2000) / 1000) * 14), // 14g per 1000 kcal
+        sugar: Math.round(((targetCalories || 2000) * 0.1) / 4), // <10% of calories from sugar
+        sodium: 2300, // mg, standard recommendation
+        water: waterNeeds || 2000, // ml
       }
 
       this.logger.log(
         `[getWeeklyReportData] Calculated dynamic goals - Calories: ${goals.calories}, ` +
           `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
       )
-    } else {
-      // Use daily_goals from the fetched nutritionGoal or defaults
-      goals = {
-        calories:
-          nutritionGoal?.daily_goals?.calories || defaultGoalValues.calories,
-        protein:
-          nutritionGoal?.daily_goals?.protein || defaultGoalValues.protein,
-        carbs: nutritionGoal?.daily_goals?.carbs || defaultGoalValues.carbs,
-        fat: nutritionGoal?.daily_goals?.fat || defaultGoalValues.fat,
-      }
     }
 
     const foodLogs = await this.foodLogModel
@@ -1341,16 +1445,45 @@ export class NutritionService {
       protein: number
       carbs: number
       fat: number
+      fiber?: number
+      sugar?: number
+      sodium?: number
+      water?: number
+    } = {
+      calories: 2000,
+      protein: 75,
+      carbs: 250,
+      fat: 65,
+      fiber: 25,
+      sugar: 50,
+      sodium: 2300,
+      water: 2000,
     }
 
-    // Dynamic calculation if no nutrition goal found
-    if (
-      !nutritionGoal &&
-      user.weightKg &&
-      user.heightCm &&
-      user.age &&
-      user.gender
-    ) {
+    // Priority 1: User profile stored nutrition goals (from database) - NEW PRIORITY
+    if (user.dailyCaloriesGoal && user.dailyProteinGoal) {
+      this.logger.log(
+        `[getMonthlyReportData] Using stored nutrition goals from user profile`,
+      )
+
+      goals = {
+        calories: user.dailyCaloriesGoal || 2000,
+        protein: user.dailyProteinGoal || 75,
+        carbs: user.dailyCarbsGoal || 250,
+        fat: user.dailyFatGoal || 65,
+        fiber: user.dailyFiberGoal || 25,
+        sugar: user.dailySugarGoal || 50,
+        sodium: user.dailySodiumGoal || 2300,
+        water: user.dailyWaterGoal || 2000,
+      }
+
+      this.logger.log(
+        `[getMonthlyReportData] Using stored goals - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    }
+    // Priority 2: Calculate from user profile if stored goals are not available
+    else if (user.weightKg && user.heightCm && user.age && user.gender) {
       this.logger.log(
         `[getMonthlyReportData] No nutrition goal found, calculating from user profile`,
       )
@@ -1362,30 +1495,19 @@ export class NutritionService {
         user.heightCm,
         user.age,
       )
-      this.logger.log(
-        `Calculating BMR for gender: ${user.gender}, weight: ${user.weightKg}, height: ${user.heightCm}, age: ${user.age}`,
-      )
-
       const tdee = this.calculateTDEE(bmr, user.activityLevel || 'moderate')
-      this.logger.log(
-        `Calculating TDEE for BMR: ${bmr}, activity level: ${user.activityLevel || 'moderate'}`,
-      )
-
       const targetCalories = this.calculateTargetCalories(
         tdee,
         user.goal || 'maintain_weight',
       )
-      this.logger.log(
-        `Calculating target calories for TDEE: ${tdee}, goal: ${user.goal || 'maintain_weight'}`,
-      )
-
       const macroDistribution = this.calculateMacroDistribution(
         targetCalories,
         user.goal || 'maintain_weight',
         user.dietType || 'normal',
       )
-      this.logger.log(
-        `Calculating macro distribution for target calories: ${targetCalories}, goal: ${user.goal || 'maintain_weight'}, diet type: ${user.dietType || 'normal'}`,
+      const waterNeeds = this.calculateWaterNeeds(
+        user.weightKg,
+        user.activityLevel,
       )
 
       // Create dynamic goals object
@@ -1394,22 +1516,16 @@ export class NutritionService {
         protein: macroDistribution?.grams.protein || 75,
         carbs: macroDistribution?.grams.carbs || 250,
         fat: macroDistribution?.grams.fat || 65,
+        fiber: Math.round(((targetCalories || 2000) / 1000) * 14), // 14g per 1000 kcal
+        sugar: Math.round(((targetCalories || 2000) * 0.1) / 4), // <10% of calories from sugar
+        sodium: 2300, // mg, standard recommendation
+        water: waterNeeds || 2000, // ml
       }
 
       this.logger.log(
         `[getMonthlyReportData] Calculated dynamic goals - Calories: ${goals.calories}, ` +
           `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
       )
-    } else {
-      // Use daily_goals from the fetched nutritionGoal or defaults
-      goals = {
-        calories:
-          nutritionGoal?.daily_goals?.calories || defaultGoalValues.calories,
-        protein:
-          nutritionGoal?.daily_goals?.protein || defaultGoalValues.protein,
-        carbs: nutritionGoal?.daily_goals?.carbs || defaultGoalValues.carbs,
-        fat: nutritionGoal?.daily_goals?.fat || defaultGoalValues.fat,
-      }
     }
 
     const foodLogs = await this.foodLogModel

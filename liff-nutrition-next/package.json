@@ -1,0 +1,82 @@
+{
+  "name": "liff-nutrition-next",
+  "version": "1.0.0",
+  "description": "AI Nutritionist LIFF App - Next.js Frontend for Nutrition Reports and Food Log Management",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit",
+    "clean": "powershell -Command \"Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force out -ErrorAction SilentlyContinue\"",
+    "export": "next build && next export",
+    "analyze": "ANALYZE=true next build",
+    "analyze:server": "BUNDLE_ANALYZE=server next build",
+    "analyze:browser": "BUNDLE_ANALYZE=browser next build",
+    "build:prod": "NODE_ENV=production next build",
+    "build:staging": "NODE_ENV=staging next build",
+    "lighthouse": "lhci autorun",
+    "perf": "next build && next start",
+    "size": "size-limit"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "@mui/icons-material": "^7.1.0",
+    "@mui/material": "^7.1.0",
+    "@mui/material-nextjs": "^7.1.0",
+    "@mui/x-date-pickers": "^8.4.0",
+    "date-fns": "^4.1.0",
+    "next": "15.3.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "recharts": "^2.15.3",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@liff/liff-types": "^2.26.1",
+    "@next/eslint-plugin-next": "^15.3.3",
+    "@size-limit/preset-big-lib": "^11.2.0",
+    "@tailwindcss/postcss": "^4.1.8",
+    "@types/node": "^22.15.24",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "eslint": "^9.27.0",
+    "eslint-config-next": "15.3.2",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "size-limit": "^11.2.0",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.33.0",
+    "webpack-bundle-analyzer": "^4.10.2"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "keywords": [
+    "nextjs",
+    "react",
+    "typescript",
+    "liff",
+    "line",
+    "nutrition",
+    "food-tracking",
+    "health",
+    "material-ui",
+    "mobile-first"
+  ],
+  "author": "AI Nutritionist Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/ai-nutritionist-nestjs-backend.git",
+    "directory": "liff-nutrition-next"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/ai-nutritionist-nestjs-backend/issues"
+  },
+  "homepage": "https://github.com/your-org/ai-nutritionist-nestjs-backend#readme"
+}

@@ -17,6 +17,7 @@ import { LineModule } from './line/line.module'
 import { NutritionModule } from './nutrition/nutrition.module'
 import { ConversationHistoryModule } from './conversation-history/conversation-history.module'
 import { AnalysisCacheModule } from './analysis-cache/analysis-cache.module'
+import { CommonModule } from './common/common.module'
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { AnalysisCacheModule } from './analysis-cache/analysis-cache.module'
     NutritionModule,
     ConversationHistoryModule,
     AnalysisCacheModule,
+    CommonModule,
   ],
   controllers: [AppController],
   providers: [AppService],

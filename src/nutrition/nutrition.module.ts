@@ -4,9 +4,10 @@ import { NutritionService } from './nutrition.service'
 import { AiModule } from '../ai/ai.module'
 // Import Mongoose schema modules if they will be directly used by NutritionService or if NutritionService needs to inject their models.
 // For now, we assume UserModule, FoodLogModule, and NutritionGoalModule are needed as they contain the models NutritionService will likely interact with.
-import { UserModule } from '../schemas/user.module'
+import { UserModule } from '../user/user.module'
 import { FoodLogModule } from '../schemas/food-log.module'
 import { NutritionGoalModule } from '../schemas/nutrition-goal.module'
+import { CommonModule } from '../common/common.module'
 import { NutritionController } from './nutrition.controller'
 import { MongooseModule } from '@nestjs/mongoose'
 import { FoodLog, FoodLogSchema } from '../schemas/food-log.schema'
@@ -22,9 +23,10 @@ import { HttpModule } from '@nestjs/axios'
   imports: [
     ConfigModule,
     AiModule,
-    UserModule, // To inject UserModel
+    UserModule, // To inject UserService from the correct user module
     FoodLogModule, // To inject FoodLogModel
     NutritionGoalModule, // To inject NutritionGoalModel
+    CommonModule, // To provide TimezoneService
     HttpModule,
     MongooseModule.forFeature([
       { name: FoodLog.name, schema: FoodLogSchema },

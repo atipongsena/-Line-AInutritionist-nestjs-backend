@@ -56,17 +56,22 @@ export const FOOD_ANALYSIS_SCHEMA = {
       type: 'number',
       description: 'ปริมาณไขมันในหน่วยกรัม',
     },
-    fiber: {
-      type: 'number',
-      description: 'ปริมาณใยอาหารในหน่วยกรัม',
-    },
-    sugar: {
-      type: 'number',
-      description: 'ปริมาณน้ำตาลในหน่วยกรัม',
-    },
+    // Fat breakdown
     saturated_fat: {
       type: 'number',
       description: 'ปริมาณไขมันอิ่มตัวในหน่วยกรัม',
+    },
+    trans_fat: {
+      type: 'number',
+      description: 'ปริมาณไขมันทรานส์ในหน่วยกรัม',
+    },
+    polyunsaturated_fat: {
+      type: 'number',
+      description: 'ปริมาณไขมันไม่อิ่มตัวหลายพันธะในหน่วยกรัม',
+    },
+    monounsaturated_fat: {
+      type: 'number',
+      description: 'ปริมาณไขมันไม่อิ่มตัวเดี่ยวในหน่วยกรัม',
     },
     omega3: {
       type: 'number',
@@ -76,13 +81,35 @@ export const FOOD_ANALYSIS_SCHEMA = {
       type: 'number',
       description: 'ปริมาณคอเลสเตอรอลในหน่วยมิลลิกรัม',
     },
+    // Carbohydrate breakdown
+    fiber: {
+      type: 'number',
+      description: 'ปริมาณใยอาหารในหน่วยกรัม',
+    },
+    sugar: {
+      type: 'number',
+      description: 'ปริมาณน้ำตาลในหน่วยกรัม',
+    },
+    // Other nutrients
+    water: {
+      type: 'number',
+      description: 'ปริมาณน้ำในหน่วยมิลลิลิตร',
+    },
     sodium: {
       type: 'number',
       description: 'ปริมาณโซเดียมในหน่วยมิลลิกรัม',
     },
-    water: {
+    potassium_nutrient: {
       type: 'number',
-      description: 'ปริมาณน้ำในหน่วยมิลลิลิตร',
+      description: 'ปริมาณโพแทสเซียมในส่วนสารอาหารเพิ่มเติมในหน่วยมิลลิกรัม',
+    },
+    caffeine: {
+      type: 'number',
+      description: 'ปริมาณคาเฟอีนในหน่วยมิลลิกรัม (ถ้ามี)',
+    },
+    alcohol: {
+      type: 'number',
+      description: 'ปริมาณแอลกอฮอล์ในหน่วยกรัม (ถ้ามี)',
     },
     // Vitamins - Using the original flat structure for compatibility
     vitamin_a: { $ref: '#/definitions/VitaminMineralDetail' },
@@ -105,6 +132,9 @@ export const FOOD_ANALYSIS_SCHEMA = {
     zinc: { $ref: '#/definitions/VitaminMineralDetail' },
     phosphorus: { $ref: '#/definitions/VitaminMineralDetail' },
     selenium: { $ref: '#/definitions/VitaminMineralDetail' },
+    copper: { $ref: '#/definitions/VitaminMineralDetail' },
+    manganese: { $ref: '#/definitions/VitaminMineralDetail' },
+    iodine: { $ref: '#/definitions/VitaminMineralDetail' },
     // Health information
     health_benefits: {
       type: 'string',
@@ -118,6 +148,10 @@ export const FOOD_ANALYSIS_SCHEMA = {
       type: 'string',
       description: 'คำแนะนำในการปรับมื้ออาหารนี้เพื่อสุขภาพของผู้ใช้',
     },
+    confidence_score: {
+      type: 'number',
+      description: 'ระดับความมั่นใจของการวิเคราะห์ (0.0 - 1.0)',
+    },
   },
   required: [
     'food_name',
@@ -127,13 +161,18 @@ export const FOOD_ANALYSIS_SCHEMA = {
     'protein',
     'carbs',
     'fat',
-    'fiber',
-    'sugar',
     'saturated_fat',
+    'trans_fat',
+    'polyunsaturated_fat',
+    'monounsaturated_fat',
     'omega3',
     'cholesterol',
-    'sodium',
+    'fiber',
+    'sugar',
+    'added_sugar',
     'water',
+    'sodium',
+    'potassium_nutrient',
     'vitamin_a',
     'vitamin_c',
     'vitamin_d',
@@ -153,9 +192,13 @@ export const FOOD_ANALYSIS_SCHEMA = {
     'zinc',
     'phosphorus',
     'selenium',
+    'copper',
+    'manganese',
+    'iodine',
     'health_benefits',
     'health_cautions',
     'recommendation',
+    'confidence_score',
   ],
   additionalProperties: false,
   definitions: {

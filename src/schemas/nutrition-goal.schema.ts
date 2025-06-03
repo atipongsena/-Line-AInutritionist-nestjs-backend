@@ -41,7 +41,11 @@ export class DailyNutrientGoals implements ConsumedNutrientValues {
   @Prop({ default: 2000 }) water?: number // in ml, will be refined
   @Prop() cholesterol?: number // Max limit, in mg
   @Prop() saturated_fat?: number // Max limit, in g
+  @Prop() trans_fat?: number // Max limit, in g (should be minimal)
+  @Prop() polyunsaturated_fat?: number // Recommended intake, in g
+  @Prop() monounsaturated_fat?: number // Recommended intake, in g
   @Prop() omega3?: number // Recommended intake, in g (e.g., ALA)
+  @Prop() potassium_nutrient?: number // Recommended intake, in mg
 
   @Prop({
     type: MongooseSchema.Types.Map,

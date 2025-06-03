@@ -10,7 +10,7 @@ import { UserProfileDto } from '../user/user.interface' // Changed from ../ai/ai
 import { AI_CONFIG } from '../ai/ai.config' // Added import
 
 // Configuration for conversation history
-const MAX_HISTORY_LENGTH = 30 // Max number of messages to keep
+const MAX_HISTORY_LENGTH = 60 // Max number of messages to keep
 const MAX_TOKEN_COUNT = 3000 // Approximate max tokens for context window (sum of user + assistant messages)
 // Average tokens per character (very rough estimate, can be refined)
 // English: ~0.25 tokens/char (1 token ~ 4 chars)
@@ -18,9 +18,26 @@ const MAX_TOKEN_COUNT = 3000 // Approximate max tokens for context window (sum o
 // Let's use a general estimate, can be language-specific later
 const AVG_TOKENS_PER_CHAR = 0.4
 
+/**
+ * ⚡ Optimized ConversationHistoryService with batch processing and deduplication
+ */
 @Injectable()
 export class ConversationHistoryService {
   private readonly logger = new Logger(ConversationHistoryService.name)
+
+  // 🚀 Batch processing system
+  private messageBatch = new Map<string, ConversationMessage[]>()
+  private batchTimers = new Map<string, NodeJS.Timeout>()
+  private readonly BATCH_DELAY = 1000 // 1 second delay before writing batch
+  private readonly MAX_BATCH_SIZE = 10 // Maximum messages per batch
+
+  // 📊 Performance tracking
+  private batchWrites = 0
+  private individualWrites = 0
+
+  // 🔒 Prevent duplicate analysis storage
+  private recentAnalysisIds = new Set<string>()
+  private readonly ANALYSIS_DEDUP_TTL = 5 * 60 * 1000 // 5 minutes
 
   constructor(
     @InjectModel(ConversationHistory.name)
@@ -33,107 +50,167 @@ export class ConversationHistoryService {
   }
 
   /**
-   * ตรวจสอบว่าควรเก็บข้อความใน history หรือไม่
+   * ⚡ Enhanced message addition with intelligent batching
    */
-  private shouldExcludeFromHistory(content: string): boolean {
-    const { exclusionRules } = AI_CONFIG.conversationControl
-
-    // ตรวจสอบว่าเป็นคำสั่งที่ขึ้นต้นด้วยสัญลักษณ์เฉพาะหรือไม่
-    const trimmedContent = content.trim()
-    const isCommand = exclusionRules.commandPrefixes.some((prefix) =>
-      trimmedContent.startsWith(prefix),
-    )
-
-    if (isCommand) {
-      this.logger.debug(
-        `Excluding message from history: starts with command prefix (${trimmedContent.substring(0, 20)}...)`,
-      )
-      return true
-    }
-
-    // ตรวจสอบความยาวข้อความ
-    if (content.length > exclusionRules.maxMessageLengthForHistory) {
-      this.logger.debug(
-        `Excluding message from history: too long (${content.length} > ${exclusionRules.maxMessageLengthForHistory})`,
-      )
-      return true
-    }
-
-    // ตรวจสอบ patterns ที่ไม่ควรเก็บ
-    const lowerContent = content.toLowerCase()
-    const hasExcludedPattern = exclusionRules.excludePatterns.some((pattern) =>
-      lowerContent.includes(pattern.toLowerCase()),
-    )
-
-    if (hasExcludedPattern) {
-      this.logger.debug(
-        `Excluding message from history: matches excluded pattern`,
-      )
-      return true
-    }
-
-    return false
-  }
-
   async addMessageToHistory(
     lineUserId: string,
     role: 'user' | 'assistant',
-    content: string, // For images, this could be a placeholder like "[Image Received]" or a stringified URL object
+    content: string,
     analysisResult?: AnalysisResult,
     responseId?: string,
   ): Promise<void> {
     // ✅ ตรวจสอบว่าควรเก็บข้อความใน history หรือไม่
     if (this.shouldExcludeFromHistory(content)) {
-      this.logger.log(
-        `Skipping history storage for user ${lineUserId}. Reason: excluded by rules`,
+      this.logger.debug(
+        `Skipping history storage for user ${lineUserId}: excluded by rules`,
       )
       return
     }
 
-    this.logger.log(
-      `Adding message for user ${lineUserId}. Role: ${role}, Content: ${content.substring(0, 50)}...${analysisResult ? ', Analysis: ' + analysisResult.type : ''}${responseId ? ', ResponseID: ' + responseId : ''}`,
-    )
-    try {
-      const newMessage: ConversationMessage = {
-        role,
-        content,
-        timestamp: new Date(),
-        analysisResult,
-        responseId,
-      }
+    // 🔍 Check for duplicate analysis
+    if (analysisResult?.id && this.recentAnalysisIds.has(analysisResult.id)) {
+      this.logger.debug(`Skipping duplicate analysis: ${analysisResult.id}`)
+      return
+    }
 
-      // Find existing history or create a new one
+    const newMessage: ConversationMessage = {
+      role,
+      content,
+      timestamp: new Date(),
+      analysisResult,
+      responseId,
+    }
+
+    // 📝 Add to analysis deduplication set
+    if (analysisResult?.id) {
+      this.recentAnalysisIds.add(analysisResult.id)
+      setTimeout(() => {
+        this.recentAnalysisIds.delete(analysisResult.id!)
+      }, this.ANALYSIS_DEDUP_TTL)
+    }
+
+    // 🔄 Add to batch processing
+    this.addToBatch(lineUserId, newMessage)
+  }
+
+  /**
+   * 🔄 Smart batch processing system
+   */
+  private addToBatch(lineUserId: string, message: ConversationMessage): void {
+    // Initialize batch if not exists
+    if (!this.messageBatch.has(lineUserId)) {
+      this.messageBatch.set(lineUserId, [])
+    }
+
+    const batch = this.messageBatch.get(lineUserId)!
+    batch.push(message)
+
+    // Clear existing timer
+    const existingTimer = this.batchTimers.get(lineUserId)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+    }
+
+    // Force write if batch is full, otherwise schedule delayed write
+    if (batch.length >= this.MAX_BATCH_SIZE) {
+      this.processBatch(lineUserId)
+    } else {
+      const timer = setTimeout(() => {
+        this.processBatch(lineUserId)
+      }, this.BATCH_DELAY)
+
+      this.batchTimers.set(lineUserId, timer)
+    }
+  }
+
+  /**
+   * 💾 Process batch writes efficiently
+   */
+  private async processBatch(lineUserId: string): Promise<void> {
+    const batch = this.messageBatch.get(lineUserId)
+    if (!batch || batch.length === 0) return
+
+    // Clear batch and timer
+    this.messageBatch.delete(lineUserId)
+    const timer = this.batchTimers.get(lineUserId)
+    if (timer) {
+      clearTimeout(timer)
+      this.batchTimers.delete(lineUserId)
+    }
+
+    try {
+      const startTime = performance.now()
+
+      // Find existing history or create new
       let history = await this.conversationHistoryModel.findOne({ lineUserId })
 
       if (!history) {
         history = new this.conversationHistoryModel({
           lineUserId,
-          messages: [newMessage],
+          messages: batch,
         })
       } else {
-        history.messages.push(newMessage)
-        // Trim history if it exceeds max length
+        // Add all messages from batch
+        history.messages.push(...batch)
+
+        // Trim if exceeds max length
         if (history.messages.length > MAX_HISTORY_LENGTH) {
           history.messages = history.messages.slice(
             history.messages.length - MAX_HISTORY_LENGTH,
           )
         }
       }
+
       await history.save()
+      this.batchWrites++
+
+      const duration = (performance.now() - startTime).toFixed(2)
       this.logger.log(
-        `Message history updated for user ${lineUserId}. New length: ${history.messages.length}`,
+        `📦 Batch processed for ${lineUserId}: ${batch.length} messages (${duration}ms)`,
       )
     } catch (error) {
-      this.logger.error(
-        `Failed to add message to history for user ${lineUserId}: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
-      )
-      // Depending on policy, we might want to rethrow or handle silently
+      this.logger.error(`Failed to process batch for ${lineUserId}:`, error)
+
+      // Fallback: try individual writes
+      for (const message of batch) {
+        await this.fallbackIndividualWrite(lineUserId, message)
+      }
     }
   }
 
   /**
-   * บันทึกผลการวิเคราะห์เป็น structured format สำหรับสร้างปุ่ม
+   * 🔄 Fallback individual write for failed batches
+   */
+  private async fallbackIndividualWrite(
+    lineUserId: string,
+    message: ConversationMessage,
+  ): Promise<void> {
+    try {
+      let history = await this.conversationHistoryModel.findOne({ lineUserId })
+
+      if (!history) {
+        history = new this.conversationHistoryModel({
+          lineUserId,
+          messages: [message],
+        })
+      } else {
+        history.messages.push(message)
+        if (history.messages.length > MAX_HISTORY_LENGTH) {
+          history.messages = history.messages.slice(-MAX_HISTORY_LENGTH)
+        }
+      }
+
+      await history.save()
+      this.individualWrites++
+
+      this.logger.debug(`✅ Fallback write completed for ${lineUserId}`)
+    } catch (error) {
+      this.logger.error(`Fallback write failed for ${lineUserId}:`, error)
+    }
+  }
+
+  /**
+   * 🔍 Optimized analysis result storage with deduplication
    */
   async addAnalysisResult(
     lineUserId: string,
@@ -145,6 +222,12 @@ export class ConversationHistoryService {
     responseId?: string,
   ): Promise<string> {
     const analysisId = `${analysisType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+    // 🔍 Check for duplicate analysis
+    if (this.recentAnalysisIds.has(analysisId)) {
+      this.logger.warn(`Duplicate analysis ID detected: ${analysisId}`)
+      return analysisId
+    }
 
     const analysisResult: AnalysisResult = {
       type: analysisType,
@@ -158,6 +241,7 @@ export class ConversationHistoryService {
 
     const content = this.formatAnalysisForDisplay(analysisResult)
 
+    // Use regular addMessageToHistory which will use batching
     await this.addMessageToHistory(
       lineUserId,
       'assistant',
@@ -167,10 +251,46 @@ export class ConversationHistoryService {
     )
 
     this.logger.log(
-      `Analysis result saved for user ${lineUserId}: ${analysisType} - ${title}`,
+      `Analysis result queued for ${lineUserId}: ${analysisType} - ${title}`,
     )
-
     return analysisId
+  }
+
+  /**
+   * 📊 Force write all pending batches (useful for shutdown)
+   */
+  async flushAllBatches(): Promise<void> {
+    const userIds = Array.from(this.messageBatch.keys())
+
+    if (userIds.length > 0) {
+      this.logger.log(`🔄 Flushing ${userIds.length} pending batches...`)
+
+      const flushPromises = userIds.map((userId) => this.processBatch(userId))
+      await Promise.all(flushPromises)
+
+      this.logger.log(`✅ All batches flushed successfully`)
+    }
+  }
+
+  /**
+   * 📈 Get performance metrics
+   */
+  getBatchMetrics(): {
+    batchWrites: number
+    individualWrites: number
+    pendingBatches: number
+    efficiency: number
+  } {
+    const totalWrites = this.batchWrites + this.individualWrites
+    const efficiency =
+      totalWrites > 0 ? (this.batchWrites / totalWrites) * 100 : 0
+
+    return {
+      batchWrites: this.batchWrites,
+      individualWrites: this.individualWrites,
+      pendingBatches: this.messageBatch.size,
+      efficiency,
+    }
   }
 
   /**
@@ -345,5 +465,48 @@ export class ConversationHistoryService {
         error instanceof Error ? error.stack : undefined,
       )
     }
+  }
+
+  /**
+   * ตรวจสอบว่าควรเก็บข้อความใน history หรือไม่
+   */
+  private shouldExcludeFromHistory(content: string): boolean {
+    const { exclusionRules } = AI_CONFIG.conversationControl
+
+    // ตรวจสอบว่าเป็นคำสั่งที่ขึ้นต้นด้วยสัญลักษณ์เฉพาะหรือไม่
+    const trimmedContent = content.trim()
+    const isCommand = exclusionRules.commandPrefixes.some((prefix) =>
+      trimmedContent.startsWith(prefix),
+    )
+
+    if (isCommand) {
+      this.logger.debug(
+        `Excluding message from history: starts with command prefix (${trimmedContent.substring(0, 20)}...)`,
+      )
+      return true
+    }
+
+    // ตรวจสอบความยาวข้อความ
+    if (content.length > exclusionRules.maxMessageLengthForHistory) {
+      this.logger.debug(
+        `Excluding message from history: too long (${content.length} > ${exclusionRules.maxMessageLengthForHistory})`,
+      )
+      return true
+    }
+
+    // ตรวจสอบ patterns ที่ไม่ควรเก็บ
+    const lowerContent = content.toLowerCase()
+    const hasExcludedPattern = exclusionRules.excludePatterns.some((pattern) =>
+      lowerContent.includes(pattern.toLowerCase()),
+    )
+
+    if (hasExcludedPattern) {
+      this.logger.debug(
+        `Excluding message from history: matches excluded pattern`,
+      )
+      return true
+    }
+
+    return false
   }
 }
