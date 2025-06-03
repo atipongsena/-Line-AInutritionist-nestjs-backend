@@ -1,20 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // output: 'export', // ปิด static export ชั่วคราวเพื่อให้ dynamic routes ทำงานได้
-  // distDir: 'out', // ปิดเนื่องจากไม่ใช้ static export
+  // 🚀 SSR Configuration for Azure Static Web Apps
+  // output: 'export', // ❌ ปิดเพื่อให้ SSR ทำงานได้
+  // distDir: 'out', // ❌ ปิดเนื่องจากไม่ใช้ static export
+
+  // ✅ เปิดใช้ SSR features
   transpilePackages: ['@ai-nutritionist/shared-types'],
 
   // 🚀 Performance Optimizations (Stable Features Only)
   experimental: {
     scrollRestoration: true,
-    // turbo: {
-    //   rules: {
-    //     '*.svg': {
-    //       loaders: ['@svgr/webpack'],
-    //       as: '*.js',
-    //     },
-    //   },
-    // },
+    // appDir: true, // App Router (ใช้แล้วใน Next.js 13+)
   },
 
   // 🌐 Dev Origins (for LIFF and ngrok)
@@ -59,6 +55,9 @@ const nextConfig = {
   // 🗜️ Compression
   compress: true,
   poweredByHeader: false,
+
+  // ✅ Azure Static Web Apps compatibility
+  trailingSlash: true,
 
   // 📱 PWA และ caching
   headers: async () => {
