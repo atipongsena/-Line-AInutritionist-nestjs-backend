@@ -2,7 +2,7 @@
 const nextConfig = {
   // 🚀 Azure Static Web Apps Configuration
   output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
-  distDir: process.env.NODE_ENV === 'production' ? 'out' : '.next',
+  distDir: 'out',
 
   // ✅ เปิดใช้ SSR features สำหรับ development
   transpilePackages: ['@ai-nutritionist/shared-types'],

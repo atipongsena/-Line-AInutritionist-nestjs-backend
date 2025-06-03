@@ -26,6 +26,7 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -78,9 +79,13 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: 'upload'
           app_location: 'liff-nutrition-next'
-          output_location: '.next'
+          output_location: 'out'
           skip_app_build: true
+          skip_api_build: true
           config_file_location: 'liff-nutrition-next'
+          is_static_export: true
+          production_branch: 'main'
+          deployment_environment: 'Production'
 
       - name: Create deployment summary
         if: success()
@@ -92,6 +97,18 @@ jobs:
           echo "🌐 **URL**: ${{ steps.builddeploy.outputs.static_web_app_url }}" >> $GITHUB_STEP_SUMMARY
           echo "📝 **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "🔗 **Branch**: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Handle deployment failure
+        if: failure()
+        run: |
+          echo "## ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Deployment failed. This could be due to:" >> $GITHUB_STEP_SUMMARY
+          echo "- Azure infrastructure issues (temporary)" >> $GITHUB_STEP_SUMMARY
+          echo "- Resource limits exceeded" >> $GITHUB_STEP_SUMMARY
+          echo "- Network connectivity issues" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Recommendation**: Try re-running the deployment" >> $GITHUB_STEP_SUMMARY
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
