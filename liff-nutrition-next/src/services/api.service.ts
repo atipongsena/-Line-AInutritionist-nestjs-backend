@@ -31,7 +31,7 @@ class ApiService {
   }
 
   /**
-   * Generic request method - ปรับปรุงสำหรับ Azure Static Web Apps
+   * Generic request method - ปรับปรุงสำหรับ Production Environment
    */
   private async request<T>(
     endpoint: string,
@@ -40,20 +40,17 @@ class ApiService {
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`
 
-    // ✅ Headers สำหรับ Azure Static Web Apps และ CORS
+    // ✅ Headers สำหรับ Production Environment
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'ngrok-skip-browser-warning': 'true',
-      // ✅ CORS headers สำหรับ Azure deployment
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers':
-        'Content-Type, Authorization, X-LINE-ID-TOKEN, X-Line-User-ID',
       ...(options.headers as Record<string, string>),
     }
 
+    // ✅ เพิ่ม LINE ID Token สำหรับ authentication
     if (token) {
+      headers['Authorization'] = `Bearer ${token}`
       headers['X-LINE-ID-TOKEN'] = token
     }
 
@@ -61,29 +58,24 @@ class ApiService {
       `[ApiService] Making ${options.method || 'GET'} request to:`,
       url,
     )
-    console.log(`[ApiService] Request headers:`, headers)
-    console.log(`[ApiService] Request body:`, options.body)
 
     try {
       const response = await fetch(url, {
         ...options,
         headers,
-        // ✅ CORS mode สำหรับ cross-origin requests
         mode: 'cors',
-        credentials: 'omit', // ไม่ส่ง cookies เพื่อหลีกเลี่ยงปัญหา CORS
+        credentials: 'omit',
       })
 
-      console.log(`[ApiService] Response status:`, response.status)
-      console.log(`[ApiService] Response headers:`, response.headers)
-
-      // ✅ ตรวจสอบ Content-Type ก่อนที่จะ parse JSON
       const contentType = response.headers.get('content-type')
-      console.log(`[ApiService] Content-Type:`, contentType)
+      console.log(
+        `[ApiService] Response status: ${response.status}, Content-Type: ${contentType}`,
+      )
 
       if (!response.ok) {
-        // ✅ อ่าน response body เพื่อ debug ปัญหา
         let errorText = ''
         let errorData: any = null
+
         try {
           if (contentType?.includes('application/json')) {
             errorData = await response.json()
@@ -91,7 +83,7 @@ class ApiService {
           } else {
             errorText = await response.text()
           }
-          console.error(`[ApiService] Error response body:`, errorText)
+          console.error(`[ApiService] Error response:`, errorText)
         } catch (textError) {
           console.error(
             `[ApiService] Could not read error response:`,
@@ -99,51 +91,30 @@ class ApiService {
           )
         }
 
-        // ✅ จัดการ 403 Authentication Error
-        if (
-          response.status === 403 &&
-          errorData?.message === 'Invalid LIFF ID Token'
-        ) {
-          console.warn(
-            `[ApiService] Authentication failed - this is expected in development/testing. Using fallback data.`,
-          )
-          throw new Error(`AUTH_FAILED|${response.status}|${errorText}`)
+        // ✅ จัดการ Authentication Error
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`Authentication failed: ${errorText}`)
         }
 
-        // ✅ จัดการ CORS errors
-        if (response.status === 0 || response.status === 500) {
-          console.error(
-            `[ApiService] Possible CORS or network error. Check if backend is running and CORS is configured.`,
-          )
+        // ✅ จัดการ Server Error
+        if (response.status >= 500) {
+          throw new Error(`Server error (${response.status}): ${errorText}`)
         }
 
-        throw new Error(
-          `HTTP error! status: ${response.status}, body: ${errorText}`,
-        )
+        throw new Error(`HTTP error ${response.status}: ${errorText}`)
       }
 
-      // ✅ ตรวจสอบว่า response เป็น JSON หรือไม่
+      // ✅ ตรวจสอบ Content-Type
       if (!contentType?.includes('application/json')) {
         const textResponse = await response.text()
-        console.error(
-          `[ApiService] Expected JSON but got ${contentType}. Response:`,
-          textResponse.substring(0, 200) + '...',
-        )
+        console.error(`[ApiService] Expected JSON but got ${contentType}`)
 
-        // ✅ ถ้าได้ HTML อาจเป็น Azure Static Web Apps error หรือ backend error
         if (
           textResponse.includes('<!DOCTYPE') ||
           textResponse.includes('<html>')
         ) {
-          console.error(
-            `[ApiService] Server returned HTML instead of JSON. Possible causes:`,
-            '\n1. Backend server not running',
-            '\n2. Wrong API endpoint URL',
-            '\n3. Azure Static Web Apps routing issue',
-            '\n4. CORS preflight failure',
-          )
           throw new Error(
-            `Server returned HTML instead of JSON. Check backend server status and API URL configuration.`,
+            'Server returned HTML instead of JSON. Backend may be misconfigured.',
           )
         }
 
@@ -153,27 +124,15 @@ class ApiService {
       }
 
       const data = await response.json()
-      console.log(`[ApiService] Response data:`, data)
+      console.log(`[ApiService] Response data received successfully`)
       return data
     } catch (error) {
       console.error(`[ApiService] Request failed:`, error)
 
-      // ✅ เพิ่มคำแนะนำสำหรับปัญหาพบบ่อยใน Azure Static Web Apps
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch')) {
-          console.error(
-            `[ApiService] Network error - Possible causes:`,
-            '\n1. Backend server not running',
-            '\n2. CORS policy blocking request',
-            '\n3. Wrong API URL in NEXT_PUBLIC_API_BASE_URL',
-            '\n4. Azure Container App is down',
-            '\nCurrent API URL:',
-            this.baseURL,
-          )
-        } else if (error.message.includes('HTML instead of JSON')) {
-          console.error(
-            `[ApiService] HTML Response Error - This is likely a deployment issue.`,
-            '\nCheck if NEXT_PUBLIC_API_BASE_URL points to the correct backend URL.',
+          throw new Error(
+            'Network error: Unable to connect to backend server. Please check your internet connection.',
           )
         }
       }
@@ -264,7 +223,7 @@ class ApiService {
   }
 
   /**
-   * Daily Report API - ปรับปรุงสำหรับ fallback handling
+   * Daily Report API - ปรับปรุงสำหรับ production
    */
   async getDailyReport(
     date: string,
@@ -272,18 +231,38 @@ class ApiService {
     token: string,
   ): Promise<DailyReportResponse> {
     try {
+      console.log(
+        `[ApiService] Fetching daily report for ${date}, userId: ${userId}`,
+      )
+
       const response = await this.get<DailyReportResponse>(
         `/api/nutrition/daily-report?date=${date}&userId=${userId}`,
         token,
       )
-      return response
+
+      console.log(`[ApiService] Daily report API response:`, response)
+
+      // ✅ ตรวจสอบ response structure
+      if (response && typeof response === 'object') {
+        // Case 1: Response มี success และ data
+        if ('success' in response && response.success && 'data' in response) {
+          return response as DailyReportResponse
+        }
+        // Case 2: Response เป็น data โดยตรง
+        else if ('calories' in response || 'meals' in response) {
+          return {
+            success: true,
+            data: response as any,
+          }
+        }
+      }
+
+      throw new Error('Invalid response structure from daily report API')
     } catch (error) {
-      console.warn(
-        `[ApiService] Failed to fetch daily report, using fallback data:`,
-        error,
-      )
-      // ✅ ใช้ fallback data เมื่อ API ไม่ทำงาน
-      return this.getFallbackDailyReport()
+      console.error(`[ApiService] Failed to fetch daily report:`, error)
+
+      // ✅ ไม่ return fallback data ที่นี่ ให้ store จัดการ
+      throw error
     }
   }
 

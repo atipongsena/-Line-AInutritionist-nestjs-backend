@@ -6,6 +6,7 @@ import React, {
   useEffect,
   useState,
   useCallback,
+  ReactNode,
 } from 'react'
 import Script from 'next/script'
 import type { Liff } from '@liff/liff-types'
@@ -22,6 +23,8 @@ export interface LiffContextType {
   logout: () => void
   reload: () => void
   liff: any | null
+  isInLineApp: boolean
+  isFallbackMode: boolean
 }
 
 const LIFF_ID = process.env.NEXT_PUBLIC_LIFF_ID
@@ -37,9 +40,22 @@ const isValidLiffId = (liffId: string | undefined): boolean => {
 }
 
 // Create LIFF Context
-const LiffContext = createContext<LiffContextType | null>(null)
+const LiffContext = createContext<LiffContextType>({
+  isReady: false,
+  isLoggedIn: false,
+  userId: null,
+  profile: null,
+  idToken: null,
+  language: 'th',
+  error: null,
+  logout: () => {},
+  reload: () => {},
+  liff: null,
+  isInLineApp: false,
+  isFallbackMode: false,
+})
 
-export const useLiff = () => {
+export const useLiff = (): LiffContextType => {
   const context = useContext(LiffContext)
   if (!context) {
     throw new Error('useLiff must be used within a LiffProvider')
@@ -48,7 +64,7 @@ export const useLiff = () => {
 }
 
 interface LiffProviderProps {
-  children: React.ReactNode
+  children: ReactNode
 }
 
 export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
@@ -56,18 +72,17 @@ export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [idToken, setIdToken] = useState<string | null>(null)
-  const [profile, setProfile] = useState<any | null>(null) // Use any for now
-  const [error, setError] = useState<string | null>(null)
+  const [profile, setProfile] = useState<any>(null)
   const [language, setLanguage] = useState<'th' | 'en'>('th')
-  const [isScriptLoaded, setIsScriptLoaded] = useState(false)
-  const [liffInstance, setLiffInstance] = useState<Liff | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [isInLineApp, setIsInLineApp] = useState(false)
+  const [isFallbackMode, setIsFallbackMode] = useState(false)
 
   const checkLiffAvailability = useCallback(() => {
     if (typeof window === 'undefined') return
 
     const win = window as any
     if (win.liff && typeof win.liff.init === 'function') {
-      setLiffInstance(win.liff)
       setIsReady(true)
       console.log('[LIFF] SDK loaded and ready')
     } else {
@@ -76,63 +91,115 @@ export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
   }, [])
 
   const initializeLiff = useCallback(async () => {
-    if (!liffInstance) return
+    if (typeof window === 'undefined') return
 
-    // Validate LIFF_ID before initialization
-    if (!isValidLiffId(LIFF_ID)) {
-      const errorMsg = LIFF_ID
-        ? `Invalid LIFF ID format: ${LIFF_ID}`
-        : 'LIFF ID is not configured. Please set NEXT_PUBLIC_LIFF_ID environment variable.'
-      console.error('[LIFF] Error:', errorMsg)
-      setError(errorMsg)
+    const liffId = process.env.NEXT_PUBLIC_LIFF_ID
+
+    if (!liffId) {
+      console.error('[LIFF] LIFF ID is not configured')
+      setError('LIFF ID is not configured')
+
+      // ✅ เข้าสู่ fallback mode
+      setIsFallbackMode(true)
+      setIsReady(true)
+      setIsLoggedIn(false)
+      setUserId('demo-user-' + Date.now())
+      setProfile({
+        userId: 'demo-user-' + Date.now(),
+        displayName: 'Demo User',
+        pictureUrl: null,
+      })
+      setIdToken('demo-token-' + Date.now())
+      setLanguage('th')
+      setIsInLineApp(false)
       return
     }
 
     try {
-      console.log('[LIFF] Initializing with ID:', LIFF_ID)
-      await liffInstance.init({ liffId: LIFF_ID! })
+      console.log('[LIFF] Initializing with ID:', liffId)
+      const liff = (window as any).liff
 
-      const isLoggedIn = liffInstance.isLoggedIn()
-      setIsLoggedIn(isLoggedIn)
+      if (!liff) {
+        throw new Error('LIFF SDK is not loaded')
+      }
 
-      console.log('[LIFF] Login status:', isLoggedIn)
+      await liff.init({
+        liffId,
+        withLoginOnExternalBrowser: true,
+      })
 
-      if (isLoggedIn) {
-        try {
-          const token = liffInstance.getIDToken()
-          setIdToken(token)
-          console.log('[LIFF] ID Token obtained')
+      console.log('[LIFF] LIFF initialized successfully')
+      setIsReady(true)
+      setIsInLineApp(liff.isInClient())
 
-          const profile = await liffInstance.getProfile()
-          setProfile(profile)
-          setUserId(profile.userId)
-          console.log('[LIFF] Profile obtained:', profile.displayName)
-        } catch (profileError) {
-          console.warn('[LIFF] Could not get profile:', profileError)
-          // อาจเป็นเพราะไม่ได้อยู่ใน LINE environment
-        }
+      if (liff.isLoggedIn()) {
+        setIsLoggedIn(true)
 
-        const lang = liffInstance.getLanguage()
-        setLanguage(lang === 'th' ? 'th' : 'en')
+        // Get user profile
+        const userProfile = await liff.getProfile()
+        setProfile(userProfile)
+        setUserId(userProfile.userId)
+
+        // Get ID token
+        const token = liff.getIDToken()
+        setIdToken(token)
+
+        // Get language
+        const lang = liff.getLanguage()
+        setLanguage(lang === 'en' ? 'en' : 'th')
+
+        console.log('[LIFF] User logged in:', {
+          userId: userProfile.userId,
+          displayName: userProfile.displayName,
+          language: lang,
+        })
       } else {
         console.log('[LIFF] User not logged in')
+        setIsLoggedIn(false)
+
+        // ✅ เข้าสู่ fallback mode สำหรับการทดสอบ
+        setIsFallbackMode(true)
+        setUserId('demo-user-' + Date.now())
+        setProfile({
+          userId: 'demo-user-' + Date.now(),
+          displayName: 'Demo User (Not Logged In)',
+          pictureUrl: null,
+        })
+        setIdToken('demo-token-' + Date.now())
       }
     } catch (error: any) {
-      console.error('[LIFF] Initialization failed:', error)
-      setError(`LIFF initialization failed: ${error.message || error}`)
+      console.error('[LIFF] LIFF initialization failed:', error)
+      setError(error.message)
+
+      // ✅ เข้าสู่ fallback mode เมื่อ LIFF ล้มเหลว
+      setIsFallbackMode(true)
+      setIsReady(true)
+      setIsLoggedIn(false)
+      setUserId('demo-user-' + Date.now())
+      setProfile({
+        userId: 'demo-user-' + Date.now(),
+        displayName: 'Demo User (LIFF Failed)',
+        pictureUrl: null,
+      })
+      setIdToken('demo-token-' + Date.now())
+      setLanguage('th')
+      setIsInLineApp(false)
     }
-  }, [liffInstance])
+  }, [])
 
   const logout = useCallback(() => {
-    if (liffInstance && typeof liffInstance.logout === 'function') {
-      liffInstance.logout()
+    if (typeof window === 'undefined') return
+
+    const liff = (window as any).liff
+    if (liff && typeof liff.logout === 'function') {
+      liff.logout()
       setIsLoggedIn(false)
       setUserId(null)
       setIdToken(null)
       setProfile(null)
       console.log('[LIFF] User logged out')
     }
-  }, [liffInstance])
+  }, [])
 
   const reload = useCallback(() => {
     window.location.reload()
@@ -144,7 +211,6 @@ export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
       const checkScript = () => {
         const win = window as any
         if (win.liff) {
-          setIsScriptLoaded(true)
           checkLiffAvailability()
         } else {
           setTimeout(checkScript, 100)
@@ -170,7 +236,9 @@ export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
     language,
     logout,
     reload,
-    liff: liffInstance,
+    liff: typeof window === 'undefined' ? null : (window as any).liff,
+    isInLineApp,
+    isFallbackMode,
   }
 
   return (
