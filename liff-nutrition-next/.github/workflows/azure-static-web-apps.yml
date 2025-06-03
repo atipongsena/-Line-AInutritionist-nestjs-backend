@@ -1,0 +1,71 @@
+name: Azure Static Web Apps CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'liff-nutrition-next/**'
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+    paths:
+      - 'liff-nutrition-next/**'
+
+jobs:
+  build_and_deploy_job:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+    runs-on: ubuntu-latest
+    name: Build and Deploy Job
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          lfs: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'liff-nutrition-next/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd liff-nutrition-next
+          npm ci
+
+      - name: Build Application
+        run: |
+          cd liff-nutrition-next
+          npm run build:azure
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://ai-nutritionist-backend.wittyground-3784ecfe.southeastasia.azurecontainerapps.io
+          NEXT_PUBLIC_LIFF_ID: 2007349762-AJ9J432d
+          NEXT_PUBLIC_DEBUG: false
+          NODE_ENV: production
+
+      - name: Deploy to Azure Static Web Apps
+        id: builddeploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: 'upload'
+          app_location: '/liff-nutrition-next'
+          output_location: 'out'
+          api_location: ''
+
+  close_pull_request_job:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    name: Close Pull Request Job
+    steps:
+      - name: Close Pull Request
+        id: closepullrequest
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: 'close'
+          app_location: '/liff-nutrition-next'

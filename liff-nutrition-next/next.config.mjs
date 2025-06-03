@@ -1,21 +1,21 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 🚀 SSR Configuration for Azure Static Web Apps
-  // output: 'export', // ❌ ปิดเพื่อให้ SSR ทำงานได้
-  // distDir: 'out', // ❌ ปิดเนื่องจากไม่ใช้ static export
+  // 🚀 Azure Static Web Apps Configuration
+  output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
+  distDir: process.env.NODE_ENV === 'production' ? 'out' : '.next',
 
-  // ✅ เปิดใช้ SSR features
+  // ✅ เปิดใช้ SSR features สำหรับ development
   transpilePackages: ['@ai-nutritionist/shared-types'],
 
   // 🚀 Performance Optimizations (Stable Features Only)
   experimental: {
     scrollRestoration: true,
-    // appDir: true, // App Router (ใช้แล้วใน Next.js 13+)
   },
 
-  // 🌐 Dev Origins (for LIFF and ngrok)
+  // 🌐 Dev Origins (for LIFF and Azure)
   allowedDevOrigins: [
-    '3b67-2001-fb1-5d-f7ba-44b7-91b3-44d3-a0e.ngrok-free.app',
+    'ai-nutritionist-backend.wittyground-3784ecfe.southeastasia.azurecontainerapps.io',
+    'salmon-pond-09f432200.6.azurestaticapps.net',
     'liff.line.me',
     '*.ngrok-free.app',
   ],
@@ -77,6 +77,20 @@ const nextConfig = {
             key: 'X-XSS-Protection',
             value: '1; mode=block',
           },
+          // ✅ CORS headers สำหรับ Azure Static Web Apps
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: '*',
+          },
+          {
+            key: 'Access-Control-Allow-Methods',
+            value: 'GET, POST, PUT, DELETE, OPTIONS',
+          },
+          {
+            key: 'Access-Control-Allow-Headers',
+            value:
+              'Content-Type, Authorization, X-LINE-ID-TOKEN, X-Line-User-ID',
+          },
         ],
       },
       {
@@ -91,8 +105,9 @@ const nextConfig = {
     ]
   },
 
-  // 🖼️ Image optimization (แก้ไขจาก deprecated images.domains)
+  // 🖼️ Image optimization (แก้ไขสำหรับ Azure Static Web Apps)
   images: {
+    unoptimized: process.env.NODE_ENV === 'production', // ✅ ปิด image optimization สำหรับ static export
     remotePatterns: [
       {
         protocol: 'https',
@@ -119,30 +134,41 @@ const nextConfig = {
         hostname: '*.blob.core.windows.net',
         pathname: '/**',
       },
+      // ✅ เพิ่ม Azure Static Web Apps domains
+      {
+        protocol: 'https',
+        hostname: '*.azurestaticapps.net',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.azurecontainerapps.io',
+        pathname: '/**',
+      },
     ],
     formats: ['image/webp', 'image/avif'],
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
 
-  // ถ้าคุณมีการใช้ basePath ใน Vite และต้องการใช้ใน Next.js ด้วย ให้ uncomment บรรทัดด้านล่าง
-  // และตั้งค่า NEXT_PUBLIC_BASE_PATH ใน .env ไฟล์ของคุณ
+  // ✅ Azure Static Web Apps base path (ถ้าจำเป็น)
   // basePath: process.env.NEXT_PUBLIC_BASE_PATH,
 
   // เพิ่มการตั้งค่าสำหรับ Material UI (ถ้าใช้ App Router และต้องการ theme integration)
-  // ดูรายละเอียดเพิ่มเติมจากเอกสารของ MUI และ Next.js
   compiler: {
     emotion: true,
     removeConsole: process.env.NODE_ENV === 'production',
   },
 
-  // หากต้องการให้ strict mode ของ React ทำงานใน production ด้วย (ปกติ Next.js เปิดให้เฉพาะ development)
+  // หากต้องการให้ strict mode ของ React ทำงานใน production ด้วย
   reactStrictMode: true,
 
-  // การตั้งค่า images (ถ้ามีการใช้ next/image)
-  // images: {
-  //   unoptimized: true, // ถ้า output: 'export' อาจจะต้องตั้งเป็น true หรือ config provider อื่นๆ
-  // },
+  // ✅ Environment variables validation
+  env: {
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+    NEXT_PUBLIC_LIFF_ID: process.env.NEXT_PUBLIC_LIFF_ID,
+    NEXT_PUBLIC_DEBUG: process.env.NEXT_PUBLIC_DEBUG,
+  },
 }
 
 export default nextConfig

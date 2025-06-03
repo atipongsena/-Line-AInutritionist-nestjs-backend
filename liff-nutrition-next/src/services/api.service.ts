@@ -10,7 +10,7 @@ import {
 } from '../types/food'
 import { UpdateFoodLogPayload, LiffFoodLogData } from '../stores/nutritionStore'
 
-// Base API configuration
+// Base API configuration - ปรับปรุงสำหรับ Azure Static Web Apps
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
 
@@ -31,7 +31,7 @@ class ApiService {
   }
 
   /**
-   * Generic request method
+   * Generic request method - ปรับปรุงสำหรับ Azure Static Web Apps
    */
   private async request<T>(
     endpoint: string,
@@ -39,9 +39,17 @@ class ApiService {
     token?: string,
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`
+
+    // ✅ Headers สำหรับ Azure Static Web Apps และ CORS
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
       'ngrok-skip-browser-warning': 'true',
+      // ✅ CORS headers สำหรับ Azure deployment
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers':
+        'Content-Type, Authorization, X-LINE-ID-TOKEN, X-Line-User-ID',
       ...(options.headers as Record<string, string>),
     }
 
@@ -60,6 +68,9 @@ class ApiService {
       const response = await fetch(url, {
         ...options,
         headers,
+        // ✅ CORS mode สำหรับ cross-origin requests
+        mode: 'cors',
+        credentials: 'omit', // ไม่ส่ง cookies เพื่อหลีกเลี่ยงปัญหา CORS
       })
 
       console.log(`[ApiService] Response status:`, response.status)
@@ -99,6 +110,13 @@ class ApiService {
           throw new Error(`AUTH_FAILED|${response.status}|${errorText}`)
         }
 
+        // ✅ จัดการ CORS errors
+        if (response.status === 0 || response.status === 500) {
+          console.error(
+            `[ApiService] Possible CORS or network error. Check if backend is running and CORS is configured.`,
+          )
+        }
+
         throw new Error(
           `HTTP error! status: ${response.status}, body: ${errorText}`,
         )
@@ -112,13 +130,20 @@ class ApiService {
           textResponse.substring(0, 200) + '...',
         )
 
-        // ✅ ถ้าได้ HTML อาจเป็น ngrok warning page หรือ backend error
+        // ✅ ถ้าได้ HTML อาจเป็น Azure Static Web Apps error หรือ backend error
         if (
           textResponse.includes('<!DOCTYPE') ||
           textResponse.includes('<html>')
         ) {
+          console.error(
+            `[ApiService] Server returned HTML instead of JSON. Possible causes:`,
+            '\n1. Backend server not running',
+            '\n2. Wrong API endpoint URL',
+            '\n3. Azure Static Web Apps routing issue',
+            '\n4. CORS preflight failure',
+          )
           throw new Error(
-            `Server returned HTML instead of JSON. This might be a ngrok warning page or backend error. Check backend server status.`,
+            `Server returned HTML instead of JSON. Check backend server status and API URL configuration.`,
           )
         }
 
@@ -133,18 +158,22 @@ class ApiService {
     } catch (error) {
       console.error(`[ApiService] Request failed:`, error)
 
-      // ✅ เพิ่มคำแนะนำสำหรับปัญหาพบบ่อย
+      // ✅ เพิ่มคำแนะนำสำหรับปัญหาพบบ่อยใน Azure Static Web Apps
       if (error instanceof Error) {
         if (error.message.includes('Failed to fetch')) {
           console.error(
-            `[ApiService] Network error - Check if backend server is running and ngrok tunnel is active`,
+            `[ApiService] Network error - Possible causes:`,
+            '\n1. Backend server not running',
+            '\n2. CORS policy blocking request',
+            '\n3. Wrong API URL in NEXT_PUBLIC_API_BASE_URL',
+            '\n4. Azure Container App is down',
+            '\nCurrent API URL:',
+            this.baseURL,
           )
         } else if (error.message.includes('HTML instead of JSON')) {
           console.error(
-            `[ApiService] HTML Response Error - Possible causes:`,
-            '\n1. ngrok showing warning page',
-            '\n2. Backend server not running',
-            '\n3. Wrong API endpoint',
+            `[ApiService] HTML Response Error - This is likely a deployment issue.`,
+            '\nCheck if NEXT_PUBLIC_API_BASE_URL points to the correct backend URL.',
           )
         }
       }

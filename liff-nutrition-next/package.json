@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "next dev --port 3001",
     "build": "next build",
+    "build:azure": "NODE_ENV=production next build",
     "start": "next start",
     "lint": "next lint",
     "lint:fix": "next lint --fix",
     "type-check": "tsc --noEmit",
     "clean": "powershell -Command \"Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force out -ErrorAction SilentlyContinue\"",
     "export": "next build && next export",
+    "export:azure": "NODE_ENV=production next build",
     "analyze": "ANALYZE=true next build",
     "analyze:server": "BUNDLE_ANALYZE=server next build",
     "analyze:browser": "BUNDLE_ANALYZE=browser next build",
@@ -19,7 +21,8 @@
     "build:staging": "NODE_ENV=staging next build",
     "lighthouse": "lhci autorun",
     "perf": "next build && next start",
-    "size": "size-limit"
+    "size": "size-limit",
+    "deploy:check": "echo 'Checking environment...' && echo 'API URL:' $NEXT_PUBLIC_API_BASE_URL && echo 'LIFF ID:' $NEXT_PUBLIC_LIFF_ID"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
