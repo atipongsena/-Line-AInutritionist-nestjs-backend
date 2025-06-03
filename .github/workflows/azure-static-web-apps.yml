@@ -84,8 +84,6 @@ jobs:
           skip_api_build: true
           config_file_location: 'liff-nutrition-next'
           is_static_export: true
-          production_branch: 'main'
-          deployment_environment: 'Production'
 
       - name: Create deployment summary
         if: success()

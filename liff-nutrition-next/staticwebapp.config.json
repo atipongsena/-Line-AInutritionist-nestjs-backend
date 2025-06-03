@@ -5,12 +5,13 @@
   "navigationFallback": {
     "rewrite": "/",
     "exclude": [
-      "/api/*",
       "/_next/*",
       "/static/*",
       "/*.png",
       "/*.ico",
-      "/*.json"
+      "/*.json",
+      "/*.txt",
+      "/*.svg"
     ]
   },
   "routes": [
@@ -27,13 +28,16 @@
       "allowedRoles": ["anonymous"]
     },
     {
-      "route": "/api/*",
-      "allowedRoles": ["anonymous"],
-      "headers": {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-LINE-ID-TOKEN, X-Line-User-ID"
-      }
+      "route": "/*.svg",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/*.txt",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/_next/*",
+      "allowedRoles": ["anonymous"]
     },
     {
       "route": "/*",
@@ -46,8 +50,8 @@
       "statusCode": 200
     },
     "401": {
-      "redirect": "/",
-      "statusCode": 302
+      "rewrite": "/",
+      "statusCode": 200
     },
     "403": {
       "rewrite": "/",
@@ -71,6 +75,8 @@
   "mimeTypes": {
     ".json": "application/json",
     ".png": "image/png",
-    ".ico": "image/x-icon"
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain"
   }
 }
