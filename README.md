@@ -36,6 +36,7 @@ git push origin main
 
 - [📖 DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) - คู่มือการ deploy แบบละเอียด
 - [⚡ QUICK_DEPLOY_REFERENCE.md](./QUICK_DEPLOY_REFERENCE.md) - คำสั่งสำหรับ deploy ด่วน
+- [🔧 DEPLOYMENT_TROUBLESHOOTING.md](./DEPLOYMENT_TROUBLESHOOTING.md) - แก้ไขปัญหาการ deploy
 
 ### Production URLs
 
