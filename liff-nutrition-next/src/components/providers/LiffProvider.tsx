@@ -24,7 +24,17 @@ export interface LiffContextType {
   liff: any | null
 }
 
-const LIFF_ID = process.env.NEXT_PUBLIC_LIFF_ID || 'default-liff-id'
+const LIFF_ID = process.env.NEXT_PUBLIC_LIFF_ID
+
+// Validate LIFF_ID
+const isValidLiffId = (liffId: string | undefined): boolean => {
+  if (!liffId || liffId === 'default-liff-id') {
+    return false
+  }
+  // LIFF ID format: xxxxxxxxx-xxxxxxxx
+  const liffIdPattern = /^\d{10}-\w{8}$/
+  return liffIdPattern.test(liffId)
+}
 
 // Create LIFF Context
 const LiffContext = createContext<LiffContextType | null>(null)
@@ -66,29 +76,50 @@ export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
   }, [])
 
   const initializeLiff = useCallback(async () => {
-    if (!liffInstance || !LIFF_ID) return
+    if (!liffInstance) return
+
+    // Validate LIFF_ID before initialization
+    if (!isValidLiffId(LIFF_ID)) {
+      const errorMsg = LIFF_ID
+        ? `Invalid LIFF ID format: ${LIFF_ID}`
+        : 'LIFF ID is not configured. Please set NEXT_PUBLIC_LIFF_ID environment variable.'
+      console.error('[LIFF] Error:', errorMsg)
+      setError(errorMsg)
+      return
+    }
 
     try {
-      await liffInstance.init({ liffId: LIFF_ID })
-      setIsLoggedIn(liffInstance.isLoggedIn())
+      console.log('[LIFF] Initializing with ID:', LIFF_ID)
+      await liffInstance.init({ liffId: LIFF_ID! })
 
-      if (liffInstance.isLoggedIn()) {
-        const token = liffInstance.getIDToken()
-        setIdToken(token)
+      const isLoggedIn = liffInstance.isLoggedIn()
+      setIsLoggedIn(isLoggedIn)
 
+      console.log('[LIFF] Login status:', isLoggedIn)
+
+      if (isLoggedIn) {
         try {
+          const token = liffInstance.getIDToken()
+          setIdToken(token)
+          console.log('[LIFF] ID Token obtained')
+
           const profile = await liffInstance.getProfile()
           setProfile(profile)
           setUserId(profile.userId)
+          console.log('[LIFF] Profile obtained:', profile.displayName)
         } catch (profileError) {
-          console.warn('Could not get profile:', profileError)
+          console.warn('[LIFF] Could not get profile:', profileError)
+          // อาจเป็นเพราะไม่ได้อยู่ใน LINE environment
         }
 
-        setLanguage(liffInstance.getLanguage() === 'th' ? 'th' : 'en')
+        const lang = liffInstance.getLanguage()
+        setLanguage(lang === 'th' ? 'th' : 'en')
+      } else {
+        console.log('[LIFF] User not logged in')
       }
-    } catch (error) {
-      console.error('LIFF initialization failed:', error)
-      setError('Failed to initialize LIFF')
+    } catch (error: any) {
+      console.error('[LIFF] Initialization failed:', error)
+      setError(`LIFF initialization failed: ${error.message || error}`)
     }
   }, [liffInstance])
 

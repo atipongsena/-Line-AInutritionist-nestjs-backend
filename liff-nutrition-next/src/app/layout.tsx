@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { ReactNode, Suspense } from 'react'
 import { Providers } from './providers'
+import ErrorBoundary from '../components/ErrorBoundary'
 import './globals.css'
 import Script from 'next/script'
 import { WebVitals } from '../components/WebVitals'
@@ -74,7 +75,9 @@ export default function RootLayout({ children }: RootLayoutProps) {
             </div>
           }
         >
-          <Providers>{children}</Providers>
+          <ErrorBoundary>
+            <Providers>{children}</Providers>
+          </ErrorBoundary>
         </Suspense>
 
         {/* LIFF SDK with optimized loading */}

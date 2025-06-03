@@ -243,6 +243,94 @@ Defaulting to version: 18.
     config_file_location: 'liff-nutrition-next'
 ```
 
+### 9. PWA Manifest Icon Errors
+
+**อาการ:**
+
+```
+Error while trying to use the following icon from the Manifest:
+/icon-192x192.png (Download error or resource isn't a valid image)
+```
+
+**สาเหตุ:** ไฟล์ icon ที่ระบุใน manifest.json ไม่พบหรือชื่อไฟล์ไม่ตรงกัน
+
+**วิธีแก้:**
+
+1. **ตรวจสอบไฟล์ icon ใน public folder:**
+
+```bash
+ls liff-nutrition-next/public/*.png
+# ผลลัพธ์ควรแสดง: logo192.png, logo512.png
+```
+
+2. **อัพเดท manifest.json ให้ตรงกับชื่อไฟล์:**
+
+```json
+{
+  "icons": [
+    {
+      "src": "/logo192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
+```
+
+### 10. LINE Authentication Errors
+
+**อาการ:**
+
+```
+api.line.me/oauth2/v2.1/token:1 Failed to load resource:
+the server responded with a status of 400
+```
+
+**สาเหตุ:**
+
+- LIFF ID ไม่ถูกต้อง
+- Environment variables ไม่ถูกตั้งค่าใน production
+- LIFF App configuration ผิดพลาด
+
+**วิธีแก้:**
+
+1. **ตรวจสอบ LIFF ID format:**
+
+```javascript
+// LIFF ID ต้องมีรูปแบบ: xxxxxxxxx-xxxxxxxx
+const liffIdPattern = /^\d{10}-\w{8}$/
+console.log(liffIdPattern.test('2007487958-0W2jaran')) // true
+```
+
+2. **ตั้งค่า environment variables ใน Azure Static Web Apps:**
+
+```bash
+# ใน Azure Portal > Static Web Apps > Configuration
+NEXT_PUBLIC_LIFF_ID=your-actual-liff-id
+NEXT_PUBLIC_API_BASE_URL=https://your-backend.azurecontainerapps.io
+```
+
+3. **ตรวจสอบ LIFF App settings ใน LINE Developers Console:**
+
+- Endpoint URL ต้องตรงกับ Azure Static Web Apps URL
+- LIFF App Type: Full
+- Auto login: Enable (ถ้าต้องการ)
+
+4. **Debug LIFF ใน browser console:**
+
+```javascript
+// เปิด Developer Tools > Console
+console.log('LIFF ID:', process.env.NEXT_PUBLIC_LIFF_ID)
+console.log('API URL:', process.env.NEXT_PUBLIC_API_BASE_URL)
+```
+
 ## 🔧 Quick Fix Commands
 
 ### Reset Deployment
