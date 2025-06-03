@@ -1634,7 +1634,7 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
       for (const historyItem of rawHistory.slice(-10)) {
         // จำกัดแค่ 10 ข้อความล่าสุด
         messages.push({
-          role: historyItem.role as 'user' | 'assistant',
+          role: historyItem.role,
           content: historyItem.content,
         })
       }
@@ -2900,8 +2900,7 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
 
       for (const outputItem of response.output) {
         // Check for function_call type in the output array
-        const typedOutputItem =
-          outputItem as OpenAI.Responses.ResponseOutputItem
+        const typedOutputItem = outputItem
         if (typedOutputItem.type === 'function_call') {
           const functionCallItem = typedOutputItem as any
 
@@ -2934,11 +2933,11 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
                 this.logger.log(
                   `🗂️ Processing food history retrieval for autonomous workflow`,
                 )
-                const foodHistoryResult = (await this.handleGetFoodHistory(
+                const foodHistoryResult = await this.handleGetFoodHistory(
                   parsedArgs as any,
                   userProfile,
                   language,
-                )) as FoodHistoryToolResult
+                )
 
                 if ('error' in foodHistoryResult) {
                   this.logger.error(
@@ -3029,8 +3028,7 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
           }
         } else if (typedOutputItem.type === 'message') {
           // Added check for 'message' type for direct text
-          const messageItem =
-            typedOutputItem as OpenAI.Responses.ResponseOutputMessage
+          const messageItem = typedOutputItem
           if (
             messageItem.role === 'assistant' &&
             typeof messageItem.content === 'string'

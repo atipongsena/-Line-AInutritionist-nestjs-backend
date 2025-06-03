@@ -85,7 +85,7 @@ export class ConversationHistoryService {
     if (analysisResult?.id) {
       this.recentAnalysisIds.add(analysisResult.id)
       setTimeout(() => {
-        this.recentAnalysisIds.delete(analysisResult.id!)
+        this.recentAnalysisIds.delete(analysisResult.id)
       }, this.ANALYSIS_DEDUP_TTL)
     }
 

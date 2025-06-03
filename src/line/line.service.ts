@@ -492,7 +492,7 @@ export class LineService {
           'food_name' in analysisResult &&
           analysisResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
         ) {
-          const foodAnalysisResult = analysisResult as FoodAnalysisToolResult
+          const foodAnalysisResult = analysisResult
           this.logger.log(
             `Reanalysis successful for user ${userId}: ${foodAnalysisResult.food_name}`,
           )
@@ -665,8 +665,7 @@ export class LineService {
             'food_name' in analysisAiResult &&
             analysisAiResult.food_name !== 'NON_FOOD_IMAGE_DETECTED'
           ) {
-            const foodAnalysisDataFromAI =
-              analysisAiResult as FoodAnalysisToolResult
+            const foodAnalysisDataFromAI = analysisAiResult
             this.logger.log(
               `Food analysis successful for user ${userId}: ${foodAnalysisDataFromAI.food_name}`,
             )
@@ -706,7 +705,7 @@ export class LineService {
             })
           } else if (analysisAiResult && 'description' in analysisAiResult) {
             // NonFoodDescriptionResult
-            const nonFoodData = analysisAiResult as NonFoodDescriptionResult
+            const nonFoodData = analysisAiResult
             this.logger.log(
               `Non-food description for user ${userId}: ${nonFoodData.description}`,
             )

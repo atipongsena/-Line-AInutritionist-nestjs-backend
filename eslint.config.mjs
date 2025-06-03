@@ -53,7 +53,6 @@ export default tseslint.config(
       '@typescript-eslint/no-misused-promises': 'warn',
       '@typescript-eslint/unbound-method': 'warn',
       '@typescript-eslint/no-redundant-type-constituents': 'warn',
-      '@typescript-eslint/prefer-const': 'warn',
 
       // Allow unused vars with underscore prefix
       '@typescript-eslint/no-unused-vars': [

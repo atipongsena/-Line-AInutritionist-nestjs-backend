@@ -11,7 +11,8 @@ import {
 import { UpdateFoodLogPayload, LiffFoodLogData } from '../stores/nutritionStore'
 
 // Base API configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
 
 // Types for API responses specific to this service
 export interface FoodLogResponseDto {
