@@ -14,8 +14,9 @@ export const metadata: Metadata = {
   authors: [{ name: 'AI Nutritionist Team' }],
   robots: 'noindex, nofollow', // LIFF apps shouldn't be indexed
   icons: {
-    icon: '/favicon.ico',
-    apple: '/favicon.ico',
+    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>',
+    apple:
+      'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>',
   },
   manifest: '/manifest.json',
   openGraph: {
