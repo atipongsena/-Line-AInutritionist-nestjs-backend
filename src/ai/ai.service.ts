@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common'
 import { OpenAI } from 'openai'
 import {
   OpenaiService,
-  OpenaiResponseCreateParams,
   OpenaiResponseInputMessage,
   // Removed old custom type guards as AiService will now work with official SDK types
   // ResponsesApiContentItem, // No longer needed
@@ -129,7 +128,28 @@ export interface VitaminMineralDetail {
 
 // Args for calculate_nutrition_goals tool
 // AI doesn't typically send arguments for this; the handler uses userProfile.
-export type NutritionGoalArgs = Record<string, never> // Explicitly an empty object type
+export interface NutritionGoalArgs {
+  bmr?: number
+  tdee?: number
+  daily_goals?: {
+    calories?: number
+    protein?: number // grams
+    carbs?: number // grams
+    fat?: number // grams
+    fiber?: number // grams
+    sugar_max?: number // grams
+    water?: number // ml
+  }
+  macro_distribution?: {
+    protein_percent?: number
+    carbs_percent?: number
+    fat_percent?: number
+  }
+  meal_recommendations?: Record<string, number> // e.g., { breakfast: 400, lunch: 600, dinner: 600, snacks: 200 }
+  health_advice?: string
+  food_recommendations?: string[]
+  foods_to_avoid?: string[]
+}
 
 export interface NutritionGoalToolResult {
   // Based on NUTRITION_GOAL_SCHEMA
@@ -309,6 +329,16 @@ export interface MealRecommendationArgs {
   ingredients_to_include?: string[]
   ingredients_to_exclude?: string[]
   number_of_options?: number // e.g., 1 to 3
+
+  // Optional fields from ToolResult that AI might send as args
+  meal_type?: string // Corresponds to MealRecommendationToolResult['meal_type']
+  foods?: MealRecommendationToolResult['foods'] // Directly use the 'foods' type from MealRecommendationToolResult
+  total_calories?: number
+  total_protein?: number
+  total_carbs?: number
+  total_fat?: number
+  recommendations?: string // Already optional in MealRecommendationToolResult
+  alternatives?: string[] // Already optional in MealRecommendationToolResult
 }
 
 // Result from handleRecommendMeals, matching MEAL_RECOMMENDATION_SCHEMA
@@ -1765,28 +1795,32 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
     // เราจึงควรใช้ข้อมูลจาก AI โดยตรง แทนการสร้าง fallback data
 
     // ตรวจสอบว่า AI ส่งข้อมูลมาครบถ้วนหรือไม่
-    const aiData = args as any // Cast เพื่อให้เข้าถึง properties ที่ AI ส่งมา
+    // const aiData = args as any // Cast เพื่อให้เข้าถึง properties ที่ AI ส่งมา - REMOVED
 
-    if (aiData.bmr && aiData.tdee && aiData.daily_goals) {
+    if (args.bmr && args.tdee && args.daily_goals) {
+      // USING args directly
       // ใช้ข้อมูลจาก AI โดยตรง
       return {
-        bmr: aiData.bmr || 0,
-        tdee: aiData.tdee || 0,
-        daily_goals: aiData.daily_goals || {
-          calories: 0,
-          protein: 0,
-          carbs: 0,
-          fat: 0,
+        bmr: args.bmr || 0,
+        tdee: args.tdee || 0,
+        daily_goals: {
+          calories: args.daily_goals.calories || 0,
+          protein: args.daily_goals.protein || 0,
+          carbs: args.daily_goals.carbs || 0,
+          fat: args.daily_goals.fat || 0,
+          fiber: args.daily_goals.fiber, // Optional in result, so direct assignment is fine
+          sugar_max: args.daily_goals.sugar_max, // Optional in result
+          water: args.daily_goals.water, // Optional in result
         },
-        macro_distribution: aiData.macro_distribution || {
-          protein_percent: 0,
-          carbs_percent: 0,
-          fat_percent: 0,
+        macro_distribution: {
+          protein_percent: args.macro_distribution?.protein_percent || 0,
+          carbs_percent: args.macro_distribution?.carbs_percent || 0,
+          fat_percent: args.macro_distribution?.fat_percent || 0,
         },
-        meal_recommendations: aiData.meal_recommendations || {},
-        health_advice: aiData.health_advice || '',
-        food_recommendations: aiData.food_recommendations || [],
-        foods_to_avoid: aiData.foods_to_avoid || [],
+        meal_recommendations: args.meal_recommendations || {},
+        health_advice: args.health_advice || '',
+        food_recommendations: args.food_recommendations || [],
+        foods_to_avoid: args.foods_to_avoid || [],
       }
     }
 
@@ -2425,23 +2459,23 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
     // เราจึงควรใช้ข้อมูลจาก AI โดยตรง แทนการสร้าง fallback data
 
     // ตรวจสอบว่า AI ส่งข้อมูลมาครบถ้วนหรือไม่
-    const aiData = args as any // Cast เพื่อให้เข้าถึง properties ที่ AI ส่งมา
+    // const aiData = args as any // Cast เพื่อให้เข้าถึง properties ที่ AI ส่งมา - REMOVED
 
     if (
-      aiData.foods &&
-      Array.isArray(aiData.foods) &&
-      aiData.foods.length > 0
+      args.foods && // USING args directly
+      Array.isArray(args.foods) &&
+      args.foods.length > 0
     ) {
       // ใช้ข้อมูลจาก AI โดยตรง
       return {
-        meal_type: aiData.meal_type || 'general',
-        foods: aiData.foods,
-        total_calories: aiData.total_calories || 0,
-        total_protein: aiData.total_protein || 0,
-        total_carbs: aiData.total_carbs || 0,
-        total_fat: aiData.total_fat || 0,
-        recommendations: aiData.recommendations || '',
-        alternatives: aiData.alternatives || [],
+        meal_type: args.meal_type || 'general', // USING args directly
+        foods: args.foods, // USING args directly
+        total_calories: args.total_calories || 0, // USING args directly
+        total_protein: args.total_protein || 0, // USING args directly
+        total_carbs: args.total_carbs || 0, // USING args directly
+        total_fat: args.total_fat || 0, // USING args directly
+        recommendations: args.recommendations || '', // USING args directly
+        alternatives: args.alternatives || [], // USING args directly
       }
     }
 
@@ -2619,8 +2653,8 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
         const potentialError = error as {
           status?: unknown
           message?: unknown
-          error?: { message?: unknown; [key: string]: any }
-          [key: string]: any
+          error?: { message?: unknown; [key: string]: unknown }
+          [key: string]: unknown
         }
 
         const statusStr =
@@ -2757,14 +2791,13 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
               tool: OpenAI.Chat.Completions.ChatCompletionTool,
             ): OpenAI.Responses.FunctionTool => ({
               type: 'function',
-              // Linter insists 'function' property does not exist. Flattening the structure.
-              name: tool.function.name, // Flattened: name directly on FunctionTool
-              description: tool.function.description, // Flattened: description directly on FunctionTool
-              parameters: tool.function.parameters as Record<string, unknown>, // Changed to Record<string, unknown>
-              strict: tool.function.strict ?? null, // Changed to ?? null
+              name: tool.function.name,
+              description: tool.function.description,
+              parameters: tool.function.parameters as Record<string, unknown>,
+              strict: (tool.function.strict as boolean | undefined) ?? null,
             }),
           ),
-          tool_choice: 'auto', // Responses API might have different or more specific tool_choice options
+          tool_choice: 'auto',
           temperature: modelSelection.params.temperature,
           previous_response_id: validPreviousResponseId, // ✅ ใช้ validated response ID
           max_output_tokens: modelSelection.params.max_tokens,
@@ -2860,7 +2893,9 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
    * Now supports autonomous multi-tool workflows
    */
   private async processResponsesAPIOutput<ArgsDto, ResultDto extends object>(
-    openAIResponse: OpenAI.Responses.Response | { error: string },
+    openAIResponse:
+      | OpenAI.Responses.Response
+      | { error: string | { message?: string } }, // Adjusted type for error
     expectedToolName: string,
     toolHandler: ToolHandler<ArgsDto, ResultDto>,
     userProfile: UserProfileDto,
@@ -2875,14 +2910,24 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
     )
 
     if (
+      openAIResponse &&
       typeof openAIResponse === 'object' &&
       'error' in openAIResponse &&
       openAIResponse.error
     ) {
+      const errorVal = openAIResponse.error
+      let errorMessage: string
+      if (typeof errorVal === 'string') {
+        errorMessage = errorVal
+      } else if (errorVal && typeof errorVal.message === 'string') {
+        errorMessage = errorVal.message
+      } else {
+        errorMessage = JSON.stringify(errorVal)
+      }
       this.logger.error(
-        `Error received directly in processResponsesAPIOutput: ${openAIResponse.error}`,
+        `Error received directly in processResponsesAPIOutput: ${errorMessage}`,
       )
-      return { error: String(openAIResponse.error) }
+      return { error: errorMessage }
     }
 
     const response = openAIResponse as OpenAI.Responses.Response
@@ -2893,25 +2938,46 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
       | { error: string }
       | null = null
 
+    // Define helper types for output items
+    interface AIServiceFunctionCallOutput {
+      type: 'function_call'
+      name: string
+      arguments: string
+    }
+
+    interface AIServiceMessageOutput {
+      type: string // Could be 'message', 'text_completion', or other text-based types
+      role?: string
+      content?: string | null
+    }
+
+    type AIServiceOutputItem =
+      | AIServiceFunctionCallOutput
+      | AIServiceMessageOutput
+
     if (response.output && Array.isArray(response.output)) {
       this.logger.log(
         `📊 Response has output array with ${response.output.length} items`,
       )
 
-      for (const outputItem of response.output) {
-        // Check for function_call type in the output array
-        const typedOutputItem = outputItem
-        if (typedOutputItem.type === 'function_call') {
-          const functionCallItem = typedOutputItem as any
+      for (const rawOutputItem of response.output) {
+        const outputItem = rawOutputItem as AIServiceOutputItem // Assume it fits one of the types
 
-          const toolName = functionCallItem.name as string
-          const toolArgs = functionCallItem.arguments as string
+        if (outputItem.type === 'function_call') {
+          const functionCall = outputItem as AIServiceFunctionCallOutput
+          const toolNameFromAI = functionCall.name
+          const toolArgsFromAI = functionCall.arguments
 
-          if (typeof toolName === 'string' && typeof toolArgs === 'string') {
+          if (
+            typeof toolNameFromAI === 'string' &&
+            typeof toolArgsFromAI === 'string'
+          ) {
+            const toolName = toolNameFromAI
+            const toolArgs = toolArgsFromAI
             this.logger.log(
               `🛠️ AI called tool: ${toolName} via Responses API for user ${lineUserId}`,
             )
-            // 🚀 ปรับปรุง: ลดการบันทึก tool calls สำหรับ food analysis
+
             if (expectedToolName !== foodAnalysisTool.function.name) {
               await this.conversationHistoryService.addMessageToHistory(
                 lineUserId,
@@ -2927,21 +2993,22 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
             }
 
             try {
-              const parsedArgs = JSON.parse(toolArgs) as unknown
+              const parsedArgs = JSON.parse(toolArgs) as ArgsDto // Cast to ArgsDto
 
               if (toolName === foodHistoryTool.function.name) {
                 this.logger.log(
                   `🗂️ Processing food history retrieval for autonomous workflow`,
                 )
+                // Explicitly cast parsedArgs for handleGetFoodHistory if its ArgsDto is FoodHistoryArgs
                 const foodHistoryResult = await this.handleGetFoodHistory(
-                  parsedArgs as any,
+                  parsedArgs as unknown as FoodHistoryArgs, // Assuming ArgsDto might not always be FoodHistoryArgs here
                   userProfile,
                   language,
                 )
 
                 if ('error' in foodHistoryResult) {
                   this.logger.error(
-                    `Error retrieving food history: ${foodHistoryResult.error}`,
+                    `Error retrieving food history: ${String(foodHistoryResult.error)}`,
                   )
                   finalResult = { error: String(foodHistoryResult.error) }
                   break
@@ -2964,7 +3031,7 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
                   `✅ Expected tool ${expectedToolName} called by AI. Handling...`,
                 )
                 finalResult = await toolHandler(
-                  parsedArgs as ArgsDto,
+                  parsedArgs, // Already ArgsDto
                   userProfile,
                   language,
                   expectedToolName === eatingPatternTool.function.name ||
@@ -2975,7 +3042,6 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
                   nutritionGoalForHandler,
                 )
 
-                // 🚀 ปรับปรุง: ลดการบันทึก tool results สำหรับ food analysis
                 if (expectedToolName !== foodAnalysisTool.function.name) {
                   await this.conversationHistoryService.addMessageToHistory(
                     lineUserId,
@@ -2997,10 +3063,24 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
               }
             } catch (e) {
               const errorContent = e instanceof Error ? e.message : String(e)
-              this.logger.error(
-                `Error processing tool ${toolName}: ${errorContent}`,
-              )
-              // 🚀 ปรับปรุง: ลดการบันทึก error messages สำหรับ food analysis
+              // Corrected logging for JSON.parse error - parsedArgs is not in scope here if JSON.parse failed.
+              // The original error for parsedArgs in template literal (line 3002) was due to referencing it after potential failure.
+              // Now we log toolArgs if parsing fails, or general error for toolHandler failure.
+              if (
+                e instanceof SyntaxError &&
+                (e.message.includes('JSON.parse') ||
+                  e.message.includes('Unexpected token'))
+              ) {
+                this.logger.error(
+                  `Failed to parse arguments for tool ${toolName}. Raw args: ${toolArgs}. Error: ${errorContent}`,
+                )
+              } else {
+                this.logger.error(
+                  // Corrected TS2304: Cannot find name 'functionCallItem'. Use toolName.
+                  `Error processing tool call ${toolName}: ${errorContent}`,
+                )
+              }
+
               if (expectedToolName !== foodAnalysisTool.function.name) {
                 await this.conversationHistoryService.addMessageToHistory(
                   lineUserId,
@@ -3021,23 +3101,23 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
             }
           } else {
             this.logger.warn(
-              `AI event type 'function_call' but function name or arguments are missing/invalid. Item: ${JSON.stringify(functionCallItem)}`,
+              // Corrected TS2304: Cannot find 'functionCallItem'. Use functionCall (or outputItem if more general).
+              `AI event type 'function_call' but function name or arguments are missing/invalid. Item: ${JSON.stringify(functionCall)}`,
             )
             finalResult = { error: 'Malformed function_call data from AI.' }
             break
           }
-        } else if (typedOutputItem.type === 'message') {
-          // Added check for 'message' type for direct text
-          const messageItem = typedOutputItem
+        } else if (outputItem.type === 'message') {
+          // Corrected TS2552: Cannot find name 'typedOutputItem'. Use outputItem and cast.
+          const messageItem = outputItem
           if (
             messageItem.role === 'assistant' &&
             typeof messageItem.content === 'string'
           ) {
             this.logger.log(
-              `💬 Received direct message content in output array: ${(messageItem.content as string).substring(0, 100)}...`, // Explicit cast to string
+              `💬 Received direct message content in output array: ${messageItem.content.substring(0, 100)}...`,
             )
             if (!finalResult && !expectedToolName) {
-              // Only use if no tool was expected
               finalResult = {
                 message: messageItem.content,
               } as unknown as ResultDto
@@ -3052,8 +3132,44 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
               break
             }
           }
+        } else if (outputItem.type === 'text_completion') {
+          // Added handling for 'text_completion' explicitly
+          const textItem = outputItem
+          if (typeof textItem.content === 'string') {
+            this.logger.log(
+              `💬 Received text_completion content: ${textItem.content.substring(0, 100)}...`,
+            )
+            if (!finalResult && !expectedToolName) {
+              // If no tool was expected, and we got text, use it.
+              finalResult = {
+                message: textItem.content,
+              } as ResultDto
+              break
+            } else if (
+              !finalResult &&
+              expectedToolName === 'extract_food_analysis' &&
+              textItem.content
+            ) {
+              // Specific handling for non-food description in food analysis context
+              this.logger.log(
+                `🎭 Non-food description (from text_completion) detected when food analysis expected: ${textItem.content.substring(0, 100)}...`,
+              )
+              finalResult = {
+                type: 'non_food_description',
+                description: textItem.content,
+              } as NonFoodDescriptionResult
+              break
+            } else if (!finalResult && expectedToolName) {
+              this.logger.warn(
+                `Received text_completion content when tool '${expectedToolName}' was expected. AI might have answered directly.`,
+              )
+              finalResult = {
+                error: `AI answered directly (text_completion) when tool ${expectedToolName} was expected. Content: ${textItem.content}`,
+              }
+              break
+            }
+          }
         }
-        // Ensure no other 'else if (typedOutputItem.type === 'text')' exists in this loop
       }
 
       if (finalResult) {
@@ -3177,7 +3293,7 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
           await this.conversationHistoryService.addAnalysisResult(
             lineUserId,
             'food_analysis',
-            foodAnalysisResult,
+            foodAnalysisResult as unknown as Record<string, unknown>,
             title,
             summary,
             foodAnalysisResult.imageUrl,
@@ -3220,7 +3336,7 @@ Please call the '${mealRecommendationTool.function.name}' tool to provide detail
           await this.conversationHistoryService.addAnalysisResult(
             lineUserId,
             'eating_pattern',
-            eatingPatternResult,
+            eatingPatternResult as unknown as Record<string, unknown>,
             title,
             summary,
           )
@@ -4611,7 +4727,7 @@ ${JSON.stringify(mealRecommendationResult, null, 2)}
 
   private createMealPlanningPresentationSystemPrompt(
     userProfile: UserProfileDto,
-    language: string = 'th',
+    _language: string = 'th',
   ): string {
     const {
       goal,
@@ -4760,7 +4876,7 @@ ${JSON.stringify(nutritionGoalResult, null, 2)}
 
   private createNutritionGoalPresentationSystemPrompt(
     userProfile: UserProfileDto,
-    language: string = 'th',
+    _language: string = 'th',
   ): string {
     const { goal, dietType, activityLevel, age, gender, weightKg, heightCm } =
       userProfile
@@ -4906,7 +5022,7 @@ Requirements:
 
   private createEatingPatternPresentationSystemPrompt(
     userProfile: UserProfileDto,
-    language: string = 'th',
+    _language: string = 'th',
   ): string {
     const { goal, dietType, activityLevel, age, gender, weightKg, heightCm } =
       userProfile

@@ -23,7 +23,7 @@ export class AiAnalysisLog {
   analysisContext?: string
 
   @Prop({ type: MongooseSchema.Types.Mixed, required: true }) // To store the potentially complex JSON result
-  analysisResult: any // หรือจะสร้าง Interface/Class สำหรับโครงสร้างนี้โดยเฉพาะถ้ามีโครงสร้างที่แน่นอน
+  analysisResult: unknown
 
   @Prop() // Store the raw text response if available
   rawResponse?: string

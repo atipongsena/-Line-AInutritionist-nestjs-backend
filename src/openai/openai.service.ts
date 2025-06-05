@@ -12,7 +12,6 @@ import type {
 } from 'openai/resources/index.mjs'
 import { DefaultAzureCredential } from '@azure/identity'
 import OpenAI from 'openai'
-import { type Response as ResponsesResponse } from 'openai/resources/responses/responses'
 
 export interface OpenaiResponseInputMessage {
   role: 'user' | 'assistant' | 'system' | 'developer'

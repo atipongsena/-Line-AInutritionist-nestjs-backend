@@ -127,38 +127,33 @@ ${dynamicContent}
     }
 
     // Metabolic calculations (if available)
-    const profileWithCalculations = userProfile as any
-    if (profileWithCalculations.calculatedBmr) {
-      profile.push(`BMR: ${profileWithCalculations.calculatedBmr} kcal/day`)
+    if (userProfile.calculatedBmr) {
+      profile.push(`BMR: ${userProfile.calculatedBmr} kcal/day`)
     }
 
-    if (profileWithCalculations.calculatedTdee) {
-      profile.push(`TDEE: ${profileWithCalculations.calculatedTdee} kcal/day`)
+    if (userProfile.calculatedTdee) {
+      profile.push(`TDEE: ${userProfile.calculatedTdee} kcal/day`)
     }
 
     // Pre-calculated nutrition goals
     const nutritionGoals: string[] = []
-    if (profileWithCalculations.dailyCaloriesGoal) {
-      nutritionGoals.push(
-        `Calories: ${profileWithCalculations.dailyCaloriesGoal} kcal`,
-      )
+    if (userProfile.dailyCaloriesGoal) {
+      nutritionGoals.push(`Calories: ${userProfile.dailyCaloriesGoal} kcal`)
     }
-    if (profileWithCalculations.dailyProteinGoal) {
-      nutritionGoals.push(
-        `Protein: ${profileWithCalculations.dailyProteinGoal}g`,
-      )
+    if (userProfile.dailyProteinGoal) {
+      nutritionGoals.push(`Protein: ${userProfile.dailyProteinGoal}g`)
     }
-    if (profileWithCalculations.dailyCarbsGoal) {
-      nutritionGoals.push(`Carbs: ${profileWithCalculations.dailyCarbsGoal}g`)
+    if (userProfile.dailyCarbsGoal) {
+      nutritionGoals.push(`Carbs: ${userProfile.dailyCarbsGoal}g`)
     }
-    if (profileWithCalculations.dailyFatGoal) {
-      nutritionGoals.push(`Fat: ${profileWithCalculations.dailyFatGoal}g`)
+    if (userProfile.dailyFatGoal) {
+      nutritionGoals.push(`Fat: ${userProfile.dailyFatGoal}g`)
     }
-    if (profileWithCalculations.dailyFiberGoal) {
-      nutritionGoals.push(`Fiber: ${profileWithCalculations.dailyFiberGoal}g`)
+    if (userProfile.dailyFiberGoal) {
+      nutritionGoals.push(`Fiber: ${userProfile.dailyFiberGoal}g`)
     }
-    if (profileWithCalculations.dailyWaterGoal) {
-      nutritionGoals.push(`Water: ${profileWithCalculations.dailyWaterGoal}ml`)
+    if (userProfile.dailyWaterGoal) {
+      nutritionGoals.push(`Water: ${userProfile.dailyWaterGoal}ml`)
     }
 
     if (nutritionGoals.length > 0) {

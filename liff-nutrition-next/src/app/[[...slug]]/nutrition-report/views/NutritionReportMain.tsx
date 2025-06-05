@@ -1,6 +1,6 @@
 'use client' // Add this line to make it a client component
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation' // Import hooks from next/navigation
 import {
   Container,
@@ -16,6 +16,7 @@ import {
 import DailyReportView from '@/components/nutrition/DailyReportView' // Import DailyReportView
 import WeeklyReportView from '@/components/nutrition/WeeklyReportView' // Import WeeklyReportView
 import MonthlyReportView from '@/components/nutrition/MonthlyReportView' // Import MonthlyReportView
+import { useLiff } from '@/components/providers/LiffProvider' // Added import for useLiff
 
 // Navigation tab values
 const TAB_VALUES = {
@@ -38,8 +39,16 @@ const NutritionReportMain: React.FC = () => {
   const searchParams = useSearchParams() // For query parameters like ?type=daily
   const router = useRouter() // For navigation
 
-  const [isLoading, setIsLoading] = useState(true) // Keep for initial page load
-  const [activeTab, setActiveTab] = useState<TabValue>(TAB_VALUES.DAILY) // ✅ เพิ่ม tab state
+  const {
+    isReady: liffReady,
+    isLoggedIn: liffLoggedIn,
+    userId: liffUserId,
+    idToken: liffIdToken,
+    error: liffError,
+  } = useLiff() // Get LIFF states
+
+  const [activeTab, setActiveTab] = useState<TabValue>(TAB_VALUES.DAILY)
+  const [isPageReady, setIsPageReady] = useState(false) // New state for content readiness
 
   // ✅ เพิ่ม state สำหรับ identified variables
   const [identifiedLogId, setIdentifiedLogId] = useState<string | null>(null)
@@ -48,10 +57,26 @@ const NutritionReportMain: React.FC = () => {
     string | string[] | null
   >(null)
 
-  // ✅ ย้าย variables เข้าไปใน useEffect เพื่อแก้ไข ESLint warnings
+  // Memoize derived values from params and searchParams for the main useEffect dependencies
+  const slugValue = params?.slug
+  const slugDep = useMemo(() => {
+    if (Array.isArray(slugValue)) {
+      return slugValue.join(',')
+    }
+    return slugValue ?? null
+  }, [slugValue])
+  const dateQueryDep = useMemo(() => searchParams?.get('date'), [searchParams])
+  const reportTypeQueryDep = useMemo(
+    () => searchParams?.get('type'),
+    [searchParams],
+  )
+  const logIdQueryDep = useMemo(
+    () => searchParams?.get('logId'),
+    [searchParams],
+  )
+
   useEffect(() => {
-    // Extract slug parts and query parameters
-    const slug = params?.slug // slug will be an array of strings, e.g., ['daily'] or ['log', '12345']
+    const currentSlug = params?.slug
     const dateFromQuery = searchParams?.get('date')
     const reportTypeFromQuery = searchParams?.get('type')
     const logIdFromQuery = searchParams?.get('logId')
@@ -60,66 +85,65 @@ const NutritionReportMain: React.FC = () => {
     let newIdentifiedDate: string | null = dateFromQuery
     let newIdentifiedReportType: string | string[] | null = reportTypeFromQuery
 
-    // Logic to interpret slug
-    if (slug && slug.length > 0) {
+    if (currentSlug && currentSlug.length > 0) {
       if (
-        slug.length === 1 &&
-        Object.values(TAB_VALUES).includes(slug[0] as TabValue)
+        currentSlug.length === 1 &&
+        Object.values(TAB_VALUES).includes(currentSlug[0] as TabValue)
       ) {
-        // ✅ ปรับ logic ให้ทำงานกับ tabs
-        newIdentifiedReportType = slug[0]
-        setActiveTab(slug[0] as TabValue)
-
-        // ✅ เพิ่มการตั้งค่า default date ถ้าไม่มี
+        newIdentifiedReportType = currentSlug[0]
+        setActiveTab(currentSlug[0] as TabValue)
         if (!newIdentifiedDate) {
           const today = new Date()
-          if (slug[0] === 'daily') {
-            newIdentifiedDate = today.toISOString().split('T')[0] // YYYY-MM-DD
-          } else if (slug[0] === 'weekly') {
-            // หาวันเริ่มต้นของสัปดาห์ปัจจุบัน
+          if (currentSlug[0] === 'daily') {
+            newIdentifiedDate = today.toISOString().split('T')[0]
+          } else if (currentSlug[0] === 'weekly') {
             const startOfWeek = new Date(today)
             startOfWeek.setDate(today.getDate() - today.getDay())
             newIdentifiedDate = startOfWeek.toISOString().split('T')[0]
-          } else if (slug[0] === 'monthly') {
-            // หาเดือนปัจจุบัน YYYY-MM
-            newIdentifiedDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+          } else if (currentSlug[0] === 'monthly') {
+            newIdentifiedDate = `${today.getFullYear()}-${String(
+              today.getMonth() + 1,
+            ).padStart(2, '0')}`
           }
         }
-      } else if (slug.includes('daily')) {
+      } else if (Array.isArray(currentSlug) && currentSlug.includes('daily')) {
         newIdentifiedReportType = 'daily'
         setActiveTab(TAB_VALUES.DAILY)
-        // Date might be in slug like /nutrition-report/daily/2024-07-30
-        const dateIndex = slug.indexOf('daily') + 1
-        if (slug[dateIndex] && !newIdentifiedDate) {
-          newIdentifiedDate = slug[dateIndex]
+        const dateIndex = currentSlug.indexOf('daily') + 1
+        if (currentSlug[dateIndex] && !newIdentifiedDate) {
+          newIdentifiedDate = currentSlug[dateIndex]
         } else if (!newIdentifiedDate) {
           newIdentifiedDate = new Date().toISOString().split('T')[0]
         }
-      } else if (slug.includes('weekly')) {
+      } else if (Array.isArray(currentSlug) && currentSlug.includes('weekly')) {
         newIdentifiedReportType = 'weekly'
         setActiveTab(TAB_VALUES.WEEKLY)
-        const dateIndex = slug.indexOf('weekly') + 1
-        if (slug[dateIndex] && !newIdentifiedDate) {
-          newIdentifiedDate = slug[dateIndex] // e.g. start date of the week
+        const dateIndex = currentSlug.indexOf('weekly') + 1
+        if (currentSlug[dateIndex] && !newIdentifiedDate) {
+          newIdentifiedDate = currentSlug[dateIndex]
         } else if (!newIdentifiedDate) {
           const today = new Date()
           const startOfWeek = new Date(today)
           startOfWeek.setDate(today.getDate() - today.getDay())
           newIdentifiedDate = startOfWeek.toISOString().split('T')[0]
         }
-      } else if (slug.includes('monthly')) {
+      } else if (
+        Array.isArray(currentSlug) &&
+        currentSlug.includes('monthly')
+      ) {
         newIdentifiedReportType = 'monthly'
         setActiveTab(TAB_VALUES.MONTHLY)
-        const dateIndex = slug.indexOf('monthly') + 1
-        if (slug[dateIndex] && !newIdentifiedDate) {
-          newIdentifiedDate = slug[dateIndex]
+        const dateIndex = currentSlug.indexOf('monthly') + 1
+        if (currentSlug[dateIndex] && !newIdentifiedDate) {
+          newIdentifiedDate = currentSlug[dateIndex]
         } else if (!newIdentifiedDate) {
           const today = new Date()
-          newIdentifiedDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+          newIdentifiedDate = `${today.getFullYear()}-${String(
+            today.getMonth() + 1,
+          ).padStart(2, '0')}`
         }
       }
     } else {
-      // ✅ ถ้าไม่มี slug ให้ตั้งค่า default เป็น daily
       newIdentifiedReportType = 'daily'
       setActiveTab(TAB_VALUES.DAILY)
       if (!newIdentifiedDate) {
@@ -127,129 +151,152 @@ const NutritionReportMain: React.FC = () => {
       }
     }
 
-    // If logId was passed as a query param and not found in slug
     if (logIdFromQuery && !newIdentifiedLogId) {
       newIdentifiedLogId = logIdFromQuery
       if (!newIdentifiedReportType) newIdentifiedReportType = 'log_specific'
     }
 
-    // ✅ ตั้งค่า state variables
     setIdentifiedLogId(newIdentifiedLogId)
     setIdentifiedDate(newIdentifiedDate)
     setIdentifiedReportType(newIdentifiedReportType)
 
-    // ✅ เพิ่ม debug logging
-    console.log('[NutritionReportMain] URL Analysis:', {
-      slug,
+    console.log('[NutritionReportMain] URL Analysis Complete:', {
+      slug: currentSlug,
       newIdentifiedLogId,
       newIdentifiedDate,
       newIdentifiedReportType,
-      activeTab,
+      activeTabUsedInEffect: activeTab,
     })
-  }, [params?.slug, searchParams, activeTab]) // ✅ เพิ่ม activeTab ใน dependency array
+    setIsPageReady(true) // Mark page as ready after URL processing pass
+  }, [
+    slugDep,
+    dateQueryDep,
+    reportTypeQueryDep,
+    logIdQueryDep,
+    params,
+    searchParams,
+    activeTab,
+  ])
 
   // ✅ เพิ่ม tab change handler
   const handleTabChange = (event: React.SyntheticEvent, newValue: TabValue) => {
     setActiveTab(newValue)
-    // Navigate to new route
-    router.push(`/nutrition-report/${newValue}`)
+    // Navigate to new route, potentially preserving query params if needed
+    // For simplicity, just navigating to /reportType/date if date is available
+    if (identifiedDate && newValue !== TAB_VALUES.MONTHLY) {
+      router.push(`/nutrition-report/${newValue}/${identifiedDate}`)
+    } else if (identifiedDate && newValue === TAB_VALUES.MONTHLY) {
+      // Ensure identifiedDate is in YYYY-MM format for monthly
+      const monthYear = identifiedDate.substring(0, 7) // Assuming YYYY-MM-DD, take YYYY-MM
+      router.push(`/nutrition-report/${newValue}/${monthYear}`)
+    } else {
+      router.push(`/nutrition-report/${newValue}`)
+    }
   }
 
-  useEffect(() => {
-    // Simulate initial page setup or check for essential params
-    // This effect can be simplified or removed if not needed for initial loading logic
-    const timer = setTimeout(() => {
-      setIsLoading(false) // Stop general loading after a short delay
-    }, 500) // Adjust delay as needed, or tie to a real check
-    return () => clearTimeout(timer)
-  }, [])
-
-  // The actual View components (DailyReportView, WeeklyReportView, etc.)
-  // will be responsible for their own data fetching via the Zustand store.
-  // NutritionReportMain will now primarily handle routing logic based on slug/params
-  // and render the appropriate view component.
-
-  const renderReportView = () => {
+  // Memoize the report view content
+  const reportViewContent = useMemo(() => {
+    console.log(
+      '[NutritionReportMain] Recalculating reportViewContent. ActiveTab:',
+      activeTab,
+    )
     if (activeTab === TAB_VALUES.DAILY) {
-      // Props like identifiedDate might be passed if DailyReportView is adapted to take them,
-      // or DailyReportView can use useUrlParameters/useNutritionStore to get the date.
-      return <DailyReportView /> // Render DailyReportView
+      return <DailyReportView />
     } else if (activeTab === TAB_VALUES.WEEKLY) {
-      // return <WeeklyReportView weekStartDate={identifiedDate} />;
-      return <WeeklyReportView /> // Render WeeklyReportView
+      return <WeeklyReportView />
     } else if (activeTab === TAB_VALUES.MONTHLY) {
-      // Example, if monthly report is identified via slug or query
-      // return <MonthlyReportView month={identifiedDate} /> // Assuming identifiedDate is YYYY-MM for monthly
-      return <MonthlyReportView /> // Render MonthlyReportView
+      return <MonthlyReportView />
     } else if (identifiedReportType === 'log_specific' && identifiedLogId) {
-      // This might redirect to the /liff-food-log/[logId] page or render a specific log view here.
-      // For now, let's assume /liff-food-log/[logId] handles this.
-      // Or, if it's part of a daily report context:
-      // return <DailyReportView logId={identifiedLogId} />;
       return (
         <Typography>
-          Specific Log View for {identifiedLogId} (To be implemented)
+          Specific Log View for {identifiedLogId} (To be implemented or handled
+          by redirect)
         </Typography>
       )
     }
     // Fallback or error for unknown report type
     return (
       <Alert severity="warning">
-        Unknown or incomplete report type specified in URL.
+        Unknown or incomplete report type specified.
       </Alert>
     )
-  }
+  }, [activeTab, identifiedReportType, identifiedLogId])
 
-  if (isLoading) {
-    return (
+  // New rendering logic based on LIFF and page readiness
+  let contentToRender
+  if (liffError) {
+    contentToRender = (
+      <Alert severity="error">
+        LIFF Error: {liffError || 'An unknown LIFF error occurred.'}
+      </Alert>
+    )
+  } else if (!isPageReady || !liffReady) {
+    contentToRender = (
       <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          height: '80vh',
-        }}
+        display="flex"
+        flexDirection="column"
+        justifyContent="center"
+        alignItems="center"
+        height="50vh"
       >
         <CircularProgress />
-        <Typography sx={{ ml: 2 }}>Loading nutrition report...</Typography>
+        <Typography sx={{ mt: 2 }}>
+          {!isPageReady
+            ? 'Initializing report...'
+            : liffReady
+              ? 'LIFF Ready, checking login...'
+              : 'Initializing LIFF...'}
+        </Typography>
       </Box>
     )
+  } else if (!liffLoggedIn || !liffUserId || !liffIdToken) {
+    contentToRender = (
+      <Box
+        display="flex"
+        flexDirection="column"
+        justifyContent="center"
+        alignItems="center"
+        height="50vh"
+      >
+        <CircularProgress />
+        <Typography sx={{ mt: 2 }}>
+          {!liffLoggedIn
+            ? 'Waiting for user login...'
+            : 'Finalizing user session...'}
+        </Typography>
+      </Box>
+    )
+  } else {
+    // All checks passed: URL processed, LIFF ready, and user logged in.
+    console.log(
+      '[NutritionReportMain] Rendering memoized reportViewContent. ActiveTab:',
+      activeTab,
+    )
+    contentToRender = reportViewContent
   }
 
-  // Error state from this component is removed as views handle their own errors
-  // if (error) {
-  //   return (
-  //     <Container sx={{ mt: 4 }}>
-  //       <Alert severity="error">{error}</Alert>
-  //     </Container>
-  //   )
-  // }
-
-  // reportData state from this component is removed
-  // if (!reportData) {
-  //   return (
-  //     <Container sx={{ mt: 4 }}>
-  //       {renderReportView()} {/* Render the determined view */}
-  //     </Container>
-  //   )
-  // }
-
   return (
-    <Container sx={{ mt: 2, mb: 2 }}>
+    <Container sx={{ mt: { xs: 1, sm: 2 }, mb: 2 }}>
       {/* ✅ เพิ่ม Navigation Tabs */}
-      <Paper elevation={1} sx={{ mb: 2 }}>
+      <Paper elevation={1} sx={{ mb: 2, overflow: 'hidden' }}>
+        {' '}
+        {/* Added overflow: hidden for better AppBar appearance */}
         <AppBar position="static" color="default" elevation={0}>
           <Tabs
             value={activeTab}
             onChange={handleTabChange}
             indicatorColor="primary"
             textColor="primary"
-            variant="fullWidth"
+            variant="fullWidth" // Changed to fullWidth for better responsiveness on small screens
+            // scrollButtons="auto" // Enable scroll buttons if many tabs
+            // allowScrollButtonsMobile
             sx={{
               '& .MuiTab-root': {
                 textTransform: 'none',
-                fontSize: '1rem',
+                fontSize: { xs: '0.8rem', sm: '0.9rem', md: '1rem' }, // Responsive font size
                 fontWeight: 500,
+                minWidth: { xs: 'auto', sm: 90 }, // Allow tabs to shrink more on xs
+                flexGrow: 1, // Allow tabs to grow
               },
             }}
           >
@@ -272,40 +319,19 @@ const NutritionReportMain: React.FC = () => {
         </AppBar>
       </Paper>
 
-      {/* The Paper and debugging info might be removed or moved if views are full-page */}
-      <Paper elevation={3} sx={{ p: { xs: 2, sm: 3 } }}>
+      {/* Main content area */}
+      <Paper elevation={3} sx={{ p: { xs: 1.5, sm: 2, md: 3 } }}>
+        {' '}
+        {/* Responsive padding */}
         {/* Debugging information - can be removed for production */}
-        <Box
-          sx={{
-            mb: 2,
-            p: 2,
-            backgroundColor: 'grey.100',
-            borderRadius: 1,
-            display: 'none',
-          }}
-        >
-          <Typography variant="h6">Parameters Used (Main):</Typography>
-          <Typography
-            component="pre"
-            sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
-          >
-            {JSON.stringify(
-              {
-                slug: params?.slug,
-                identifiedLogId,
-                identifiedDate,
-                identifiedReportType,
-                activeTab, // ✅ เพิ่ม activeTab ใน debug info
-                queryParams: Object.fromEntries(searchParams.entries()),
-              },
-              null,
-              2,
-            )}
+        {/*
+        <Box sx={{ mb: 2, p: 1, backgroundColor: 'grey.50', borderRadius: 1, overflowX: 'auto' }}>
+          <Typography variant="caption" display="block">
+            Debug Info: activeTab: {activeTab}, isPageReady: {String(isPageReady)}, liffReady: {String(liffReady)}, liffLoggedIn: {String(liffLoggedIn)}, identifiedDate: {identifiedDate}, identifiedLogId: {identifiedLogId}, liffError: {liffError}
           </Typography>
         </Box>
-
-        {/* Render the determined view component */}
-        {renderReportView()}
+        */}
+        {contentToRender}
       </Paper>
     </Container>
   )

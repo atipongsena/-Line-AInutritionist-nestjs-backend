@@ -10,6 +10,7 @@ import { UpdateFoodLogDto } from './dto/update-food-log.dto'
 import { FoodLogResponseDto } from './dto/food-log-response.dto'
 import { UserService } from '../user/user.service' // To fetch user ObjectId
 import { TimezoneService } from '../common/timezone.service'
+import { FoodItemService } from '../food-item/food-item.service'
 // Import ImageService if needed for image URL validation or other image-related tasks
 
 @Injectable()
@@ -20,6 +21,7 @@ export class FoodLogService {
     @InjectModel(FoodLog.name) private foodLogModel: Model<FoodLogDocument>,
     private readonly userService: UserService,
     private readonly timezoneService: TimezoneService,
+    private readonly foodItemService: FoodItemService,
     // @Inject(ImageService) private readonly imageService: ImageService, // Example if needed
   ) {}
 
@@ -81,36 +83,32 @@ export class FoodLogService {
       )
     }
 
-    // จัดการ clientTimestamp หากมีการส่งมา
-    if (updateFoodLogDto.clientTimestamp) {
-      try {
-        const userTimezone = await this.userService.getUserTimezone(lineUserId)
-        const clientTime = new Date(updateFoodLogDto.clientTimestamp)
-        const utcTime = this.timezoneService.convertToUtc(
-          clientTime,
-          userTimezone,
-        )
-        existingFoodLog.logDate = utcTime
-        this.logger.log(
-          `Updated logDate from client timestamp: ${updateFoodLogDto.clientTimestamp} (${userTimezone}) -> ${utcTime.toISOString()} (UTC)`,
-        )
-      } catch (error) {
-        this.logger.warn(`Failed to process clientTimestamp: ${error.message}`)
-        // ไม่ throw error เพื่อให้การอัปเดตอื่นๆ ดำเนินต่อไปได้
-      }
+    const { clientTimestamp, food: foodDto, ...otherUpdates } = updateFoodLogDto
+
+    // Update logDate only if clientTimestamp is provided in the DTO
+    if (clientTimestamp) {
+      const newLogDate = new Date(clientTimestamp)
+      this.logger.log(
+        `Received clientTimestamp ${clientTimestamp}, updating logDate from ${existingFoodLog.logDate.toISOString()} to ${newLogDate.toISOString()}`,
+      )
+      existingFoodLog.logDate = newLogDate
+    } else {
+      this.logger.log(
+        `clientTimestamp not provided, preserving existing logDate: ${existingFoodLog.logDate.toISOString()}`,
+      )
     }
 
     // Apply updates from DTO to the Mongoose document
     // This is a basic merge; more complex logic might be needed for nested objects or specific fields
 
     // Update mealType if provided
-    if (updateFoodLogDto.mealType) {
-      existingFoodLog.mealType = updateFoodLogDto.mealType
+    if (otherUpdates.mealType) {
+      existingFoodLog.mealType = otherUpdates.mealType
     }
 
     // Update food details if provided
-    if (updateFoodLogDto.food) {
-      const foodUpdate = updateFoodLogDto.food
+    if (foodDto) {
+      const foodUpdate = foodDto
       if (foodUpdate.foodName) {
         if (foodUpdate.foodName.th)
           existingFoodLog.food.foodName.th = foodUpdate.foodName.th
@@ -185,7 +183,7 @@ export class FoodLogService {
 
     const updatedFoodLog = await existingFoodLog.save()
     this.logger.log(
-      `Food log ${logId} updated successfully for user ${lineUserId}.`,
+      `Food log ${logId} updated successfully for user ${lineUserId}. Effective logDate: ${updatedFoodLog.logDate.toISOString()}`,
     )
     return this.mapToResponseDto(updatedFoodLog)
   }

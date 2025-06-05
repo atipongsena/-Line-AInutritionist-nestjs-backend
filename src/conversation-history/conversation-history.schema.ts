@@ -14,7 +14,7 @@ export interface AnalysisResult {
   id: string // Unique ID for this analysis (e.g., messageId or timestamp-based)
   title: string // Display name for button (e.g., "ข้าวผัดกุ้ง - 520 kcal")
   summary: string // Short summary for preview
-  data: Record<string, any> // Full analysis result data
+  data: Record<string, unknown> // Changed from any to unknown
   createdAt: Date
   imageUrl?: string // For food analysis with image
 }

@@ -4,6 +4,7 @@ import {
   AiService,
   FoodAnalysisToolResult,
   NonFoodDescriptionResult,
+  VitaminMineralDetail,
 } from '../ai/ai.service'
 import { UserProfileDto } from '../user/user.interface'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
@@ -463,7 +464,10 @@ export class NutritionService {
   }
 
   // --- Analyzer Methods ---
-  async analyzeEatingPattern(userId: string, days: number = 7): Promise<any> {
+  async analyzeEatingPattern(
+    userId: string,
+    days: number = 7,
+  ): Promise<{ message: string }> {
     this.logger.log(
       `Analyzing eating pattern for user ID: ${userId}, days: ${days}`,
     )
@@ -472,7 +476,10 @@ export class NutritionService {
     return { message: 'Eating pattern analysis placeholder' }
   }
 
-  async analyzeWeightTrend(userId: string, days: number = 30): Promise<any> {
+  async analyzeWeightTrend(
+    userId: string,
+    days: number = 30,
+  ): Promise<{ message: string }> {
     this.logger.log(
       `Analyzing weight trend for user ID: ${userId}, days: ${days}`,
     )
@@ -482,7 +489,10 @@ export class NutritionService {
   }
 
   // --- Recommender Methods ---
-  async recommendMeal(userId: string, mealType: string): Promise<any> {
+  async recommendMeal(
+    userId: string,
+    mealType: string,
+  ): Promise<{ message: string }> {
     this.logger.log(
       `Recommending meal for user ID: ${userId}, meal type: ${mealType}`,
     )
@@ -491,7 +501,10 @@ export class NutritionService {
     return { message: 'Meal recommendation placeholder' }
   }
 
-  async recommendAlternatives(foodName: string, userId: string): Promise<any> {
+  async recommendAlternatives(
+    foodName: string,
+    userId: string,
+  ): Promise<{ message: string }> {
     this.logger.log(
       `Recommending alternatives for food: ${foodName}, user ID: ${userId}`,
     )
@@ -644,13 +657,15 @@ export class NutritionService {
     // ใช้ timezone ของ user เพื่อคำนวณ day bounds
     const userTimezone = await this.userService.getUserTimezone(lineUserId)
     const targetDate = new Date(dateString + 'T00:00:00')
-    const { startOfDay, endOfDay } = this.timezoneService.getDayBounds(
-      targetDate,
-      userTimezone,
-    )
+    const { startOfDay, endOfDay: originalEndOfDay } =
+      this.timezoneService.getDayBounds(targetDate, userTimezone)
+
+    // Adjust endOfDay to include the very end of the day (milliseconds)
+    const endOfDay = new Date(originalEndOfDay)
+    endOfDay.setMilliseconds(999)
 
     this.logger.log(
-      `[getDailyReportData] Using timezone: ${userTimezone}, startOfDay: ${startOfDay.toISOString()}, endOfDay: ${endOfDay.toISOString()}`,
+      `[getDailyReportData] Using timezone: ${userTimezone}, startOfDay: ${startOfDay.toISOString()}, adjusted endOfDay: ${endOfDay.toISOString()}`,
     )
 
     const user = await this.userModel.findOne({ lineUserId }).exec()
@@ -828,6 +843,10 @@ export class NutritionService {
       .sort({ logDate: 'asc' })
       .exec()
 
+    this.logger.log(
+      `[getDailyReportData] Found ${foodLogs.length} food logs for ${dateString} between ${startOfDay.toISOString()} and ${endOfDay.toISOString()}`,
+    )
+
     const foodIdsToFetch: Types.ObjectId[] = foodLogs
       .map((log) => log.food?.foodId)
       .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId) // Type guard for filtering
@@ -1003,8 +1022,8 @@ export class NutritionService {
         foodDetail?.micronutrients
 
       if (foodItemMicrosSource) {
-        const vitamins: Record<string, any> = {}
-        const minerals: Record<string, any> = {}
+        const vitamins: Record<string, VitaminMineralDetail> = {}
+        const minerals: Record<string, VitaminMineralDetail> = {}
         const mineralKeys = [
           'calcium',
           'iron',
@@ -1202,7 +1221,6 @@ export class NutritionService {
       .sort({ createdAt: -1 })
       .exec()
 
-    // ✅ Add dynamic calculation like in getDailyReportData
     let goals: {
       calories: number
       protein: number
@@ -1220,15 +1238,31 @@ export class NutritionService {
       fiber: 25,
       sugar: 50,
       sodium: 2300,
-      water: 2000,
+      water: 2000, // Default values
     }
 
-    // Priority 1: User profile stored nutrition goals (from database) - NEW PRIORITY
-    if (user.dailyCaloriesGoal && user.dailyProteinGoal) {
+    if (nutritionGoal) {
       this.logger.log(
-        `[getWeeklyReportData] Using stored nutrition goals from user profile`,
+        `[getWeeklyReportData] Using active nutrition goal document for the week.`,
       )
-
+      goals = {
+        calories: nutritionGoal.daily_goals?.calories ?? goals.calories,
+        protein: nutritionGoal.daily_goals?.protein ?? goals.protein,
+        carbs: nutritionGoal.daily_goals?.carbs ?? goals.carbs,
+        fat: nutritionGoal.daily_goals?.fat ?? goals.fat,
+        fiber: nutritionGoal.daily_goals?.fiber ?? goals.fiber,
+        sugar: nutritionGoal.daily_goals?.sugar ?? goals.sugar,
+        sodium: nutritionGoal.daily_goals?.sodium ?? goals.sodium,
+        water: nutritionGoal.daily_goals?.water ?? goals.water,
+      }
+      this.logger.log(
+        `[getWeeklyReportData] Using NutritionGoal doc - Calories: ${goals.calories}, ` +
+          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
+      )
+    } else if (user.dailyCaloriesGoal && user.dailyProteinGoal) {
+      this.logger.log(
+        `[getWeeklyReportData] Using stored nutrition goals from user profile (NutritionGoal doc not found).`,
+      )
       goals = {
         calories: user.dailyCaloriesGoal || 2000,
         protein: user.dailyProteinGoal || 75,
@@ -1242,51 +1276,6 @@ export class NutritionService {
 
       this.logger.log(
         `[getWeeklyReportData] Using stored goals - Calories: ${goals.calories}, ` +
-          `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
-      )
-    }
-    // Priority 2: Calculate from user profile if stored goals are not available
-    else if (user.weightKg && user.heightCm && user.age && user.gender) {
-      this.logger.log(
-        `[getWeeklyReportData] No nutrition goal found, calculating from user profile`,
-      )
-
-      // Calculate goals using service methods
-      const bmr = this.calculateBMR(
-        user.gender,
-        user.weightKg,
-        user.heightCm,
-        user.age,
-      )
-      const tdee = this.calculateTDEE(bmr, user.activityLevel || 'moderate')
-      const targetCalories = this.calculateTargetCalories(
-        tdee,
-        user.goal || 'maintain_weight',
-      )
-      const macroDistribution = this.calculateMacroDistribution(
-        targetCalories,
-        user.goal || 'maintain_weight',
-        user.dietType || 'normal',
-      )
-      const waterNeeds = this.calculateWaterNeeds(
-        user.weightKg,
-        user.activityLevel,
-      )
-
-      // Create dynamic goals object
-      goals = {
-        calories: targetCalories || 2000,
-        protein: macroDistribution?.grams.protein || 75,
-        carbs: macroDistribution?.grams.carbs || 250,
-        fat: macroDistribution?.grams.fat || 65,
-        fiber: Math.round(((targetCalories || 2000) / 1000) * 14), // 14g per 1000 kcal
-        sugar: Math.round(((targetCalories || 2000) * 0.1) / 4), // <10% of calories from sugar
-        sodium: 2300, // mg, standard recommendation
-        water: waterNeeds || 2000, // ml
-      }
-
-      this.logger.log(
-        `[getWeeklyReportData] Calculated dynamic goals - Calories: ${goals.calories}, ` +
           `Protein: ${goals.protein}g, Carbs: ${goals.carbs}g, Fat: ${goals.fat}g`,
       )
     }
@@ -1394,22 +1383,23 @@ export class NutritionService {
     monthString: string, // Expecting YYYY-MM
   ): Promise<MonthlyReportResponseDto> {
     this.logger.log(
-      `[getMonthlyReportData] Fetching for lineUserId: ${lineUserId}, month: ${monthString}`,
+      `[getMonthlyReportData] Generating monthly report for user: ${lineUserId}, month: ${monthString}`,
     )
-
-    const [year, monthNum] = monthString.split('-').map(Number)
-    const monthStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0)
-    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999) // Day 0 of next month gets last day of current month
-
     const user = await this.userModel.findOne({ lineUserId }).exec()
     if (!user) {
       this.logger.warn(`[getMonthlyReportData] User not found: ${lineUserId}`)
       throw new Error('User not found')
     }
 
-    // Use the 15th of the month as a representative date for fetching the nutrition goal
+    // Restore original date logic
+    const [year, monthNum] = monthString.split('-').map(Number)
+    const monthStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0)
+    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999)
+
+    // Fetch active nutrition goal for the month
+    // To find a representative goal, we check for a goal active on the 15th of the month.
     const representativeGoalDateForMonth = new Date(year, monthNum - 1, 15)
-    const nutritionGoal = await this.nutritionGoalModel
+    const _nutritionGoal = await this.nutritionGoalModel
       .findOne({
         userId: user._id,
         isActive: true,
@@ -1432,7 +1422,7 @@ export class NutritionService {
       .sort({ createdAt: -1 })
       .exec()
 
-    const defaultGoalValues = {
+    const _defaultGoalValues = {
       calories: 2000,
       protein: 75,
       carbs: 250,

@@ -18,6 +18,7 @@ import { NutritionModule } from './nutrition/nutrition.module'
 import { ConversationHistoryModule } from './conversation-history/conversation-history.module'
 import { AnalysisCacheModule } from './analysis-cache/analysis-cache.module'
 import { CommonModule } from './common/common.module'
+import { FoodItemModule } from './food-item/food-item.module'
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { CommonModule } from './common/common.module'
     UserModule,
     NutritionGoalModule,
     FoodLogModule,
+    FoodItemModule,
     OpenaiModule,
     AiModule,
     ImageModule,

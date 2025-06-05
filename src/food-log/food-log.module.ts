@@ -5,6 +5,7 @@ import { MongooseModule } from '@nestjs/mongoose'
 import { FoodLog, FoodLogSchema } from '../schemas/food-log.schema'
 import { UserModule } from '../user/user.module' // For UserService dependency
 import { CommonModule } from '../common/common.module'
+import { FoodItemModule } from '../food-item/food-item.module' // Import FoodItemModule
 // Import other necessary modules like ImageService if it's a separate module and used directly
 
 @Module({
@@ -12,6 +13,7 @@ import { CommonModule } from '../common/common.module'
     MongooseModule.forFeature([{ name: FoodLog.name, schema: FoodLogSchema }]),
     UserModule, // To make UserService available for injection in FoodLogService
     CommonModule, // To make TimezoneService available
+    FoodItemModule, // Add FoodItemModule here to make FoodItemService available
     // Add other modules if FoodLogService depends on them
   ],
   controllers: [FoodLogController],

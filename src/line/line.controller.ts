@@ -18,7 +18,10 @@ import {
   HTTPError as LineHTTPError,
 } from '@line/bot-sdk' // Comment out WebhookRequestBody
 import { IntentDetectionMetricsService } from './intent-detection-metrics.service'
-import { IntentDetectionService } from './intent-detection.service'
+import {
+  IntentDetectionService,
+  IntentDetectionResult,
+} from './intent-detection.service'
 import { UserProfileDto } from '../user/user.interface'
 
 interface RequestWithRawBody extends Request {
@@ -130,14 +133,12 @@ export class LineController {
   }
 
   @Post('test-intent')
-  async testIntentDetection(
-    @Body() body: { message: string; language?: string },
-  ): Promise<{
+  testIntentDetection(@Body() body: { message: string; language?: string }): {
     message: string
-    result?: any
+    result?: IntentDetectionResult
     error?: string
     timestamp: string
-  }> {
+  } {
     try {
       // Mock user profile for testing
       const mockUserProfile = {
@@ -147,7 +148,7 @@ export class LineController {
         goal: 'general',
       } as const
 
-      const result = await this.intentDetectionService.detectIntent(
+      const result = this.intentDetectionService.detectIntent(
         body.message,
         mockUserProfile,
         body.language || 'th',

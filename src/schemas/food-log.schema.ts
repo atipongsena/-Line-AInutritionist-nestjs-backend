@@ -145,7 +145,7 @@ class EditHistoryEntry {
   timestamp: Date
 
   @Prop({ type: Object })
-  previousData?: any
+  previousData?: unknown
 }
 
 @Schema({ timestamps: true, collection: 'foodlogs' })

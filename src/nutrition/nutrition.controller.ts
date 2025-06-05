@@ -26,7 +26,7 @@ export class NutritionController {
   constructor(private readonly nutritionService: NutritionService) {}
 
   private handleControllerError(
-    error: any,
+    error: unknown,
     defaultMessage: string,
     context: string,
   ) {

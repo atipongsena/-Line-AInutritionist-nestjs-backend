@@ -7,6 +7,7 @@ import React, {
   useState,
   useCallback,
   ReactNode,
+  useMemo,
 } from 'react'
 import Script from 'next/script'
 import type { Liff } from '@liff/liff-types'
@@ -226,20 +227,35 @@ export const LiffProvider: React.FC<LiffProviderProps> = ({ children }) => {
     }
   }, [isReady, initializeLiff])
 
-  const contextValue: LiffContextType = {
-    isReady,
-    isLoggedIn,
-    userId,
-    idToken,
-    profile,
-    error,
-    language,
-    logout,
-    reload,
-    liff: typeof window === 'undefined' ? null : (window as any).liff,
-    isInLineApp,
-    isFallbackMode,
-  }
+  const contextValue = useMemo(
+    () => ({
+      isReady,
+      isLoggedIn,
+      userId,
+      idToken,
+      profile,
+      error,
+      language,
+      logout,
+      reload,
+      liff: typeof window === 'undefined' ? null : (window as any).liff,
+      isInLineApp,
+      isFallbackMode,
+    }),
+    [
+      isReady,
+      isLoggedIn,
+      userId,
+      idToken,
+      profile,
+      error,
+      language,
+      logout,
+      reload,
+      isInLineApp,
+      isFallbackMode,
+    ],
+  )
 
   return (
     <>

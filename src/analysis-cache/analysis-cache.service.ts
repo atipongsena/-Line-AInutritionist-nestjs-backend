@@ -2,8 +2,8 @@ import { Injectable, Logger } from '@nestjs/common'
 // Remove direct import of FoodAnalysisData if aiming for a generic cache
 // import { FoodAnalysisData } from '../line/flex.messages'
 
-interface CacheEntry<T = any> {
-  // Use Generic T, default to any for broad compatibility
+interface CacheEntry<T = unknown> {
+  // Use Generic T, default to unknown for broad compatibility
   data: T
   expiryTime: number
 }
@@ -12,10 +12,10 @@ const DEFAULT_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
 @Injectable()
 export class AnalysisCacheService {
-  private readonly cache = new Map<string, CacheEntry<any>>() // Store CacheEntry with 'any' type for data
+  private readonly cache = new Map<string, CacheEntry<unknown>>() // Store CacheEntry with 'unknown' type for data
   private readonly logger = new Logger(AnalysisCacheService.name)
 
-  set<T = any>( // Method is generic
+  set<T = unknown>( // Method is generic
     key: string,
     value: T, // Value is of generic type T
     ttlMs: number = DEFAULT_TTL_MS,
@@ -30,7 +30,7 @@ export class AnalysisCacheService {
     this.cleanupExpiredEntries() // Optional: cleanup on set
   }
 
-  get<T = any>(key: string): T | undefined {
+  get<T = unknown>(key: string): T | undefined {
     // Method is generic, returns T or undefined
     if (!key) {
       this.logger.warn('Attempted to get cache with an empty key.')

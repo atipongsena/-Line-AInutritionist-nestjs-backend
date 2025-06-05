@@ -18,6 +18,37 @@ const MAX_TOKEN_COUNT = 3000 // Approximate max tokens for context window (sum o
 // Let's use a general estimate, can be language-specific later
 const AVG_TOKENS_PER_CHAR = 0.4
 
+// Define interfaces for structured data within AnalysisResult.data for display purposes
+interface FoodAnalysisDisplayData {
+  calories?: number | string
+  protein?: number | string
+  carbs?: number | string
+  fat?: number | string
+  recommendation?: string
+}
+
+interface NutritionGoalDisplayDailyGoals {
+  calories?: number | string
+  protein?: number | string
+  carbs?: number | string
+  fat?: number | string
+}
+
+interface NutritionGoalDisplayData {
+  bmr?: number | string
+  tdee?: number | string
+  daily_goals?: NutritionGoalDisplayDailyGoals
+}
+
+interface MealRecommendationDisplayFood {
+  name?: string
+  calories?: number | string
+}
+
+interface MealRecommendationDisplayData {
+  foods?: MealRecommendationDisplayFood[]
+}
+
 /**
  * ⚡ Optimized ConversationHistoryService with batch processing and deduplication
  */
@@ -52,6 +83,7 @@ export class ConversationHistoryService {
   /**
    * ⚡ Enhanced message addition with intelligent batching
    */
+  // eslint-disable-next-line @typescript-eslint/require-await
   async addMessageToHistory(
     lineUserId: string,
     role: 'user' | 'assistant',
@@ -113,10 +145,10 @@ export class ConversationHistoryService {
 
     // Force write if batch is full, otherwise schedule delayed write
     if (batch.length >= this.MAX_BATCH_SIZE) {
-      this.processBatch(lineUserId)
+      void this.processBatch(lineUserId)
     } else {
       const timer = setTimeout(() => {
-        this.processBatch(lineUserId)
+        void this.processBatch(lineUserId)
       }, this.BATCH_DELAY)
 
       this.batchTimers.set(lineUserId, timer)
@@ -215,7 +247,7 @@ export class ConversationHistoryService {
   async addAnalysisResult(
     lineUserId: string,
     analysisType: AnalysisResult['type'],
-    result: Record<string, any>,
+    result: Record<string, unknown>,
     title: string,
     summary: string,
     imageUrl?: string,
@@ -299,16 +331,14 @@ export class ConversationHistoryService {
   private formatAnalysisForDisplay(analysis: AnalysisResult): string {
     switch (analysis.type) {
       case 'food_analysis': {
-        const foodData = analysis.data
-        return `🍽️ **${analysis.title}**\n\n📊 **คุณค่าทางโภชนาการ:**\n• แคลอรี่: ${foodData.calories ?? 'N/A'} kcal\n• โปรตีน: ${foodData.protein ?? 'N/A'} g\n• คาร์โบไhydrates: ${foodData.carbs ?? 'N/A'} g\n• ไขมัน: ${foodData.fat ?? 'N/A'} g\n\n💡 **คำแนะนำ:**\n${foodData.recommendation ?? analysis.summary}\n\n✅ *บันทึกเรียบร้อยแล้ว - สามารถดูย้อนหลังได้*`
+        const foodData = analysis.data as FoodAnalysisDisplayData
+        return `🍽️ **${analysis.title}**\n\n📊 **คุณค่าทางโภชนาการ:**\n• แคลอรี่: ${String(foodData.calories ?? 'N/A')} kcal\n• โปรตีน: ${String(foodData.protein ?? 'N/A')} g\n• คาร์โบไhydrates: ${String(foodData.carbs ?? 'N/A')} g\n• ไขมัน: ${String(foodData.fat ?? 'N/A')} g\n\n💡 **คำแนะนำ:**\n${foodData.recommendation ?? analysis.summary}\n\n✅ *บันทึกเรียบร้อยแล้ว - สามารถดูย้อนหลังได้*`
       }
 
       case 'nutrition_goal': {
-        const goalData = analysis.data
-        const dailyGoals = goalData.daily_goals as
-          | Record<string, any>
-          | undefined
-        return `🎯 **เป้าหมายโภชนาการ**\n\n📈 **BMR:** ${goalData.bmr ?? 'N/A'} kcal/วัน\n📈 **TDEE:** ${goalData.tdee ?? 'N/A'} kcal/วัน\n\n🥗 **เป้าหมายรายวัน:**\n• แคลอรี่: ${dailyGoals?.calories ?? 'N/A'} kcal\n• โปรตีน: ${dailyGoals?.protein ?? 'N/A'} g\n• คาร์โบไhydrates: ${dailyGoals?.carbs ?? 'N/A'} g\n• ไขมัน: ${dailyGoals?.fat ?? 'N/A'} g\n\n✅ *บันทึกเรียบร้อยแล้ว - สามารถดูย้อนหลังได้*`
+        const goalData = analysis.data as NutritionGoalDisplayData
+        const dailyGoals = goalData.daily_goals
+        return `🎯 **เป้าหมายโภชนาการ**\n\n📈 **BMR:** ${String(goalData.bmr ?? 'N/A')} kcal/วัน\n📈 **TDEE:** ${String(goalData.tdee ?? 'N/A')} kcal/วัน\n\n🥗 **เป้าหมายรายวัน:**\n• แคลอรี่: ${String(dailyGoals?.calories ?? 'N/A')} kcal\n• โปรตีน: ${String(dailyGoals?.protein ?? 'N/A')} g\n• คาร์โบไhydrates: ${String(dailyGoals?.carbs ?? 'N/A')} g\n• ไขมัน: ${String(dailyGoals?.fat ?? 'N/A')} g\n\n✅ *บันทึกเรียบร้อยแล้ว - สามารถดูย้อนหลังได้*`
       }
 
       case 'eating_pattern': {
@@ -316,14 +346,12 @@ export class ConversationHistoryService {
       }
 
       case 'meal_recommendation': {
-        const mealData = analysis.data
-        const foods = Array.isArray(mealData.foods)
-          ? (mealData.foods as Array<Record<string, any>>)
-          : []
+        const mealData = analysis.data as MealRecommendationDisplayData
+        const foods = Array.isArray(mealData.foods) ? mealData.foods : []
         const foodsList = foods
           .map(
-            (food: Record<string, any>) =>
-              `• ${food.name ?? 'Unknown'} (${food.calories ?? 'N/A'} kcal)`,
+            (food: MealRecommendationDisplayFood) =>
+              `• ${food.name ?? 'Unknown'} (${String(food.calories ?? 'N/A')} kcal)`,
           )
           .join('\n')
         return `🍴 **แนะนำอาหาร: ${analysis.title}**\n\n📋 **เมนูแนะนำ:**\n${foodsList || analysis.summary}\n\n✅ *บันทึกเรียบร้อยแล้ว - สามารถดูย้อนหลังได้*`

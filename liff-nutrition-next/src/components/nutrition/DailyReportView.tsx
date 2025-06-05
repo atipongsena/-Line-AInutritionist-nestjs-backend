@@ -1075,38 +1075,84 @@ const DailyReportView: React.FC = memo(() => {
   const handleOpenEditModalHandler = useCallback(
     (mealId: string, foodItem: SharedFoodItem) => {
       setCurrentEditingMealId(mealId)
-      setEditingFoodItem(foodItem)
+      setEditingFoodItem(foodItem) // This is the original foodItem passed from the list
 
-      // Pre-populate edited fields with current values using correct FoodItem structure
-      // Initialize with all fields from foodItem, then specifically populate micronutrients
+      // Initialize initialEditedFields with a deep clone of the foodItem
+      // This ensures all existing properties are carried over.
       const initialEditedFields: Partial<SharedFoodItem> & {
-        micronutrients?: MicronutrientsMap
-      } = {
-        ...JSON.parse(JSON.stringify(foodItem)), // Deep clone to avoid mutating original
-        micronutrients: {}, // Initialize micronutrients as an empty object
-      }
+        micronutrients?: MicronutrientsMap // Ensure this type is correct
+      } = JSON.parse(JSON.stringify(foodItem))
 
-      // Populate micronutrients from schema and existing data
-      if (initialEditedFields.micronutrients) {
-        for (const key in ALL_MICRONUTRIENTS_SCHEMA) {
-          const schemaInfo = ALL_MICRONUTRIENTS_SCHEMA[key]
-          const existingMicroData =
-            foodItem.micronutrients?.[key as keyof MicronutrientsMap]
-          initialEditedFields.micronutrients[key as keyof MicronutrientsMap] = {
-            value: existingMicroData?.value ?? 0, // Default to 0 if not present
-            unit: existingMicroData?.unit || schemaInfo.unit,
-            // dv and goal are optional and will be preserved if they exist on existingMicroData
-            ...(existingMicroData?.dv !== undefined && {
-              dv: existingMicroData.dv,
-            }),
-            ...(existingMicroData?.goal !== undefined && {
-              goal: existingMicroData.goal,
-            }),
+      // Prepare a consolidated micronutrients object for the form
+      const formMicronutrients: MicronutrientsMap = {}
+
+      // Source data from the foodItem (which comes from API/DB)
+      // Cast to any here to bypass linter error if NutritionData type doesn't directly include vitamins/minerals
+      const vitaminsSource = (foodItem.nutrition as any)?.vitamins
+      const mineralsSource = (foodItem.nutrition as any)?.minerals
+
+      // Iterate over the schema to ensure all form fields are considered
+      for (const key in ALL_MICRONUTRIENTS_SCHEMA) {
+        const schemaInfo = ALL_MICRONUTRIENTS_SCHEMA[key]
+        let existingMicroData:
+          | { value: number; unit: string; dv?: number; goal?: number }
+          | number
+          | undefined
+
+        // Check if the current key (e.g., 'vitamin_a', 'calcium') exists in vitaminsSource or mineralsSource
+        if (vitaminsSource && key in vitaminsSource) {
+          existingMicroData = (vitaminsSource as any)[key]
+        } else if (mineralsSource && key in mineralsSource) {
+          existingMicroData = (mineralsSource as any)[key]
+        } else {
+          // Special handling for keys that might be directly under foodItem.nutrition (e.g. if schema changes)
+          // or if some micros are neither in vitamins nor minerals objects (less likely with current log)
+          existingMicroData = (foodItem.nutrition as any)?.[key]
+        }
+
+        let valueToDisplay = 0
+        let unitToDisplay = schemaInfo.unit // Default unit from schema
+        let dvValue: number | undefined = undefined
+        let goalValue: number | undefined = undefined
+
+        if (existingMicroData !== undefined && existingMicroData !== null) {
+          if (
+            typeof existingMicroData === 'object' &&
+            'value' in existingMicroData
+          ) {
+            valueToDisplay = (existingMicroData as any).value ?? 0
+            unitToDisplay = (existingMicroData as any).unit || schemaInfo.unit
+            dvValue = (existingMicroData as any).dv
+            goalValue = (existingMicroData as any).goal
+          } else if (typeof existingMicroData === 'number') {
+            valueToDisplay = existingMicroData
+          } else {
+            console.warn(
+              `[EditModal] Unexpected data type for micronutrient ${key}:`,
+              existingMicroData,
+            )
           }
+        }
+
+        formMicronutrients[key as keyof MicronutrientsMap] = {
+          value: valueToDisplay,
+          unit: unitToDisplay,
+        }
+        if (dvValue !== undefined) {
+          ;(formMicronutrients[key as keyof MicronutrientsMap] as any).dv =
+            dvValue
+        }
+        if (goalValue !== undefined) {
+          ;(formMicronutrients[key as keyof MicronutrientsMap] as any).goal =
+            goalValue
         }
       }
 
-      // Ensure nutrition object and its primary fields exist if not on foodItem for some reason
+      // Assign the populated micronutrients to initialEditedFields for the form state
+      initialEditedFields.micronutrients = formMicronutrients
+
+      // Ensure nutrition object and its primary fields exist (calories, protein, etc.)
+      // These are usually directly under foodItem.nutrition, not part of the micronutrient consolidation above.
       if (!initialEditedFields.nutrition) {
         initialEditedFields.nutrition = {
           calories: 0,
@@ -1115,14 +1161,18 @@ const DailyReportView: React.FC = memo(() => {
           fat: 0,
         }
       } else {
-        initialEditedFields.nutrition.calories =
-          initialEditedFields.nutrition.calories ?? 0
-        initialEditedFields.nutrition.protein =
-          initialEditedFields.nutrition.protein ?? 0
-        initialEditedFields.nutrition.carbs =
-          initialEditedFields.nutrition.carbs ?? 0
-        initialEditedFields.nutrition.fat =
-          initialEditedFields.nutrition.fat ?? 0
+        // Ensure main nutrition fields are numbers, default to 0 if undefined/null
+        const nu = initialEditedFields.nutrition
+        nu.calories = nu.calories ?? 0
+        nu.protein = nu.protein ?? 0
+        nu.carbs = nu.carbs ?? 0
+        nu.fat = nu.fat ?? 0
+        // Add other direct nutrition fields as necessary (e.g., fiber, sugar, sodium from the log)
+        // These might need to be mapped from foodItem.nutrition to initialEditedFields.nutrition too
+        // For example:
+        nu.fiber = (foodItem.nutrition as any)?.fiber ?? nu.fiber ?? 0
+        nu.sugar = (foodItem.nutrition as any)?.sugar ?? nu.sugar ?? 0
+        nu.sodium = (foodItem.nutrition as any)?.sodium ?? nu.sodium ?? 0
       }
 
       // Ensure serving object exists
@@ -1134,7 +1184,7 @@ const DailyReportView: React.FC = memo(() => {
       setActiveTab(0) // Reset to the first tab
       setEditModalOpen(true)
     },
-    [ALL_MICRONUTRIENTS_SCHEMA],
+    [ALL_MICRONUTRIENTS_SCHEMA], // Removed editingFoodItem from dependencies
   )
 
   const handleCloseEditModalHandler = useCallback(() => {
@@ -1347,61 +1397,45 @@ const DailyReportView: React.FC = memo(() => {
     setDailyLoading(true)
 
     updateFoodItem(currentEditingMealId, updatedFoodItemData, userId, idToken)
-      .then(async (success) => {
-        console.log('[Edit] Food item updated successfully')
-        handleCloseEditModalHandler()
-
+      .then((success) => {
+        // The promise from updateFoodItem (which calls fetchDailyReport) should resolve
         if (success) {
-          // ✅ เพิ่มการ refresh ข้อมูลใหม่เหมือน delete function
-          console.log('[Edit] Refreshing daily data after successful update...')
-          try {
-            // ✅ Force refresh by invalidating current data first
-            setDailyData(null) // Clear current data to force re-render
-            setDailyLoading(true)
-
-            await handleFetchDailyReportHandler(selectedDate, userId, idToken)
-            console.log('[Edit] ✅ Daily data refreshed successfully')
-
-            // ✅ Force component re-render by updating a counter
-            setRefreshCounter((prev) => prev + 1)
-
-            // ✅ เพิ่ม success feedback
-            console.log('✅ อาหารถูกอัพเดทเรียบร้อยแล้ว!')
-          } catch (refreshError) {
-            console.error(
-              '[Edit] Error refreshing data after update:',
-              refreshError,
-            )
-            console.log(
-              '✅ อาหารถูกอัพเดทแล้ว (กรุณารีเฟรชหน้าเพื่อดูผลล่าสุด)',
-            )
-          }
+          console.log(
+            '[Edit] Food item updated and daily report refreshed via store action.',
+          )
+          handleCloseEditModalHandler() // Close modal on success
         } else {
-          console.error('[Edit] Update failed')
+          // Handle case where updateFoodItem in store returns false (e.g., API error during update or during re-fetch)
+          console.error('[Edit] Store action updateFoodItem reported failure.')
+          // Optionally, set an error message to be displayed to the user
+          // alert('Error saving food item. Please try again.'); // Example
+          setDailyLoading(false) // Ensure loading is stopped if store handles it partially
         }
       })
-      .catch((error) => {
-        console.error('[Edit] Error updating food item:', error)
+      .catch((err: unknown) => {
+        console.error(
+          '[Edit] Error during updateFoodItem store action or subsequent UI updates:',
+          err,
+        )
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        alert(`Error saving: ${errorMessage}`) // Simple alert for now
+        setDailyLoading(false) // Ensure loading state is reset on error
       })
-      .finally(() => {
-        setDailyLoading(false)
-      })
+    // .finally() is removed as loading state should be managed more granularly by the store or within then/catch
   }, [
     editingFoodItem,
     currentEditingMealId,
-    editedFields,
-    updateFoodItem,
     userId,
     idToken,
+    editedFields,
+    updateFoodItem, // from useNutritionStore
     handleCloseEditModalHandler,
-    selectedDate, // ✅ Added missing dependency
-    handleFetchDailyReportHandler, // ✅ Added missing dependency
-    setDailyLoading, // ✅ เพิ่ม dependency
-    setDailyData, // ✅ Added missing dependency
-    setRefreshCounter, // ✅ Added missing dependency
+    // selectedDate, // No longer needed for direct re-fetch here
+    // handleFetchDailyReportHandler, // Removed
+    setDailyLoading,
   ])
 
-  const handleOpenConfirmDeleteModalHandler = useCallback(
+  const handleOpenDeleteModalHandler = useCallback(
     (mealId: string, foodItem: SharedFoodItem) => {
       setDeletingFoodItemInfo({ mealId, foodItem })
       setConfirmDeleteModalOpen(true)
@@ -1409,135 +1443,90 @@ const DailyReportView: React.FC = memo(() => {
     [],
   )
 
-  const handleCloseConfirmDeleteModalHandler = useCallback(() => {
+  const handleCloseDeleteModalHandler = useCallback(() => {
     setConfirmDeleteModalOpen(false)
     setDeletingFoodItemInfo(null)
   }, [])
 
-  const handleDeleteFoodItemHandler = useCallback(() => {
+  const handleDeleteConfirmHandler = useCallback(() => {
     if (!deletingFoodItemInfo || !userId || !idToken) {
-      console.error('[Delete] Missing required data for deleting food item:', {
-        deletingFoodItemInfo: !!deletingFoodItemInfo,
-        userId: !!userId,
-        idToken: !!idToken,
-      })
+      console.error('[Delete] Missing required data for deleting food item.')
       setDeleteError(
         currentLang === 'th'
-          ? 'ข้อมูลไม่ครบถ้วนสำหรับการลบอาหาร'
-          : 'Incomplete data for deleting food item',
+          ? 'ข้อมูลไม่ครบถ้วน ไม่สามารถลบได้'
+          : 'Incomplete data, cannot delete.',
       )
       return
     }
 
-    // ✅ เคลียร์ feedback เก่าและเริ่ม loading
-    setDeleteSuccess(null)
-    setDeleteError(null)
-    setDailyLoading(true)
+    const { mealId, foodItem } = deletingFoodItemInfo
 
-    const foodName =
-      deletingFoodItemInfo.foodItem.name?.th ||
-      deletingFoodItemInfo.foodItem.name?.en ||
-      'รายการอาหาร'
-
-    const itemId = deletingFoodItemInfo.foodItem._id
-    if (!itemId) {
+    if (!foodItem._id) {
+      console.error('[Delete] Food item ID is undefined.')
       setDeleteError(
         currentLang === 'th'
-          ? 'ไม่พบ ID ของรายการอาหาร'
-          : 'Food item ID not found',
+          ? 'ไม่พบ ID ของรายการอาหาร ไม่สามารถลบได้'
+          : 'Food item ID is missing, cannot delete.',
       )
       setDailyLoading(false)
       return
     }
 
-    deleteFoodItem(deletingFoodItemInfo.mealId, itemId, userId, idToken)
-      .then(async (success) => {
-        console.log('[Delete] Food item deleted successfully')
-        handleCloseConfirmDeleteModalHandler()
+    setDailyLoading(true)
+    setDeleteSuccess(null)
+    setDeleteError(null)
 
+    deleteFoodItem(mealId, foodItem._id, userId, idToken) // This action in store now handles re-fetch
+      .then((success) => {
         if (success) {
-          // ✅ เพิ่มการ refresh ข้อมูลใหม่อีกครั้งเพื่อให้แน่ใจว่า UI จะอัพเดท
-          console.log(
-            '[Delete] Refreshing daily data after successful deletion...',
+          setDeleteSuccess(
+            currentLang === 'th'
+              ? 'ลบรายการอาหารสำเร็จ'
+              : 'Food item deleted successfully.',
           )
-          try {
-            // ✅ Force refresh by invalidating current data first
-            setDailyData(null) // Clear current data to force re-render
-            setDailyLoading(true)
-
-            await handleFetchDailyReportHandler(selectedDate, userId, idToken)
-            console.log('[Delete] ✅ Daily data refreshed successfully')
-
-            // ✅ Force component re-render by updating a counter
-            setRefreshCounter((prev) => prev + 1)
-
-            // ✅ แสดง success message
-            setDeleteSuccess(
-              currentLang === 'th'
-                ? `ลบ "${foodName}" เรียบร้อยแล้ว`
-                : `"${foodName}" deleted successfully`,
-            )
-
-            // ✅ ซ่อน success message หลัง 3 วินาที
-            setTimeout(() => setDeleteSuccess(null), 3000)
-          } catch (refreshError) {
-            console.error(
-              '[Delete] Error refreshing data after deletion:',
-              refreshError,
-            )
-            // แม้ refresh ไม่สำเร็จ แต่การลบสำเร็จแล้ว ดังนั้นยังแสดง success
-            setDeleteSuccess(
-              currentLang === 'th'
-                ? `ลบ "${foodName}" เรียบร้อยแล้ว (กรุณารีเฟรชหน้าเพื่อดูผลล่าสุด)`
-                : `"${foodName}" deleted successfully (please refresh to see updates)`,
-            )
-            setTimeout(() => setDeleteSuccess(null), 5000)
-          }
-
-          // ✅ เพิ่ม success feedback
-          console.log(`✅ อาหาร "${foodName}" ถูกลบเรียบร้อยแล้ว!`)
+          console.log(
+            '[Delete] Food item deleted and daily report refreshed via store action.',
+          )
+          handleCloseDeleteModalHandler() // Close modal on success
         } else {
-          // ✅ แสดง error หากการลบไม่สำเร็จ
+          // Handle case where deleteFoodItem in store returns false
+          console.error(
+            '[Delete] Store action deleteFoodItem reported failure.',
+          )
           setDeleteError(
             currentLang === 'th'
-              ? `ไม่สามารถลบ "${foodName}" ได้ กรุณาลองใหม่อีกครั้ง`
-              : `Failed to delete "${foodName}". Please try again.`,
+              ? 'การลบรายการอาหารล้มเหลว โปรดลองอีกครั้ง'
+              : 'Failed to delete food item. Please try again.',
           )
-          setTimeout(() => setDeleteError(null), 5000)
+          setDailyLoading(false) // Ensure loading is stopped
         }
       })
-      .catch((error) => {
-        console.error('[Delete] Error deleting food item:', error)
-        // ✅ แสดง error message ให้ user เห็น
-        const errorMessage = error?.message || error || 'Unknown error'
+      .catch((err: unknown) => {
+        console.error(
+          '[Delete] Error during deleteFoodItem store action or subsequent UI updates:',
+          err,
+        )
+        const errorMessage = err instanceof Error ? err.message : String(err)
         setDeleteError(
           currentLang === 'th'
-            ? `เกิดข้อผิดพลาดในการลบ "${foodName}": ${errorMessage}`
-            : `Error deleting "${foodName}": ${errorMessage}`,
+            ? `เกิดข้อผิดพลาดในการลบ: ${errorMessage}`
+            : `Error deleting: ${errorMessage}`,
         )
-        setTimeout(() => setDeleteError(null), 5000)
-        console.error(
-          `❌ เกิดข้อผิดพลาดในการลบอาหาร "${foodName}":`,
-          errorMessage,
-        )
-      })
-      .finally(() => {
         setDailyLoading(false)
       })
+    // .finally() removed
   }, [
     deletingFoodItemInfo,
     userId,
     idToken,
+    deleteFoodItem, // from useNutritionStore
+    handleCloseDeleteModalHandler,
+    // selectedDate, // No longer needed for direct re-fetch here
+    // handleFetchDailyReportHandler, // Removed
     currentLang,
-    deleteFoodItem,
-    handleCloseConfirmDeleteModalHandler,
-    selectedDate, // ✅ Added missing dependency
-    handleFetchDailyReportHandler, // ✅ Added missing dependency
+    setDailyLoading,
     setDeleteSuccess,
     setDeleteError,
-    setDailyLoading,
-    setDailyData, // ✅ Added missing dependency
-    setRefreshCounter, // ✅ Added missing dependency
   ])
 
   // Handler for input changes in the LIFF form - fix the path issue
@@ -2024,6 +2013,14 @@ const DailyReportView: React.FC = memo(() => {
   useEffect(() => {
     let timeoutId: NodeJS.Timeout
 
+    // DEBUG: Log current state of dependencies before the problematic useEffect
+    console.log('[DEBUG] useEffect (fetch data) run. Deps:', {
+      selectedDate,
+      userId,
+      idTokenExists: !!idToken, // Log only existence of token for brevity
+      handleFetchDailyReportHandlerExists: !!handleFetchDailyReportHandler,
+    })
+
     const fetchData = async () => {
       if (!selectedDate || !userId || !idToken) {
         console.log('[DailyReportView] Missing required data:', {
@@ -2053,6 +2050,61 @@ const DailyReportView: React.FC = memo(() => {
         clearTimeout(timeoutId)
       }
     }
+  }, [selectedDate, userId, idToken, handleFetchDailyReportHandler])
+
+  // DEBUG: Log component mount and unmount
+  useEffect(() => {
+    console.log('[DEBUG] DailyReportView MOUNTED')
+    return () => {
+      console.log('[DEBUG] DailyReportView UNMOUNTED')
+    }
+  }, [])
+
+  const prevDeps = useRef({
+    selectedDate,
+    userId,
+    idToken,
+    handleFetchDailyReportHandler,
+  })
+
+  useEffect(() => {
+    const currentDeps = {
+      selectedDate,
+      userId,
+      idToken,
+      handleFetchDailyReportHandler,
+    }
+    if (currentDeps.selectedDate !== prevDeps.current.selectedDate) {
+      console.log(
+        '[DEBUG] selectedDate changed:',
+        prevDeps.current.selectedDate,
+        '->',
+        currentDeps.selectedDate,
+      )
+    }
+    if (currentDeps.userId !== prevDeps.current.userId) {
+      console.log(
+        '[DEBUG] userId changed:',
+        prevDeps.current.userId,
+        '->',
+        currentDeps.userId,
+      )
+    }
+    if (currentDeps.idToken !== prevDeps.current.idToken) {
+      console.log(
+        '[DEBUG] idToken changed:',
+        prevDeps.current.idToken ? ' vorhanden' : 'null',
+        '->',
+        currentDeps.idToken ? ' vorhanden' : 'null',
+      )
+    }
+    if (
+      currentDeps.handleFetchDailyReportHandler !==
+      prevDeps.current.handleFetchDailyReportHandler
+    ) {
+      console.log('[DEBUG] handleFetchDailyReportHandler reference changed')
+    }
+    prevDeps.current = currentDeps
   }, [selectedDate, userId, idToken, handleFetchDailyReportHandler])
 
   return (
@@ -2791,29 +2843,35 @@ const DailyReportView: React.FC = memo(() => {
                                 : `Protein: ${item.nutrition?.protein || 0}g, Carbs: ${item.nutrition?.carbs || 0}g, Fat: ${item.nutrition?.fat || 0}g`}
                             </Typography>
                           </Box>
-                          <Box sx={{ flexShrink: 0 }}>
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexShrink: 0,
+                            }}
+                          >
                             <IconButton
+                              aria-label="edit"
                               size="small"
-                              onClick={() =>
+                              onClick={() => {
+                                console.log(
+                                  '[DEBUG] FoodItem to Edit:',
+                                  JSON.stringify(item, null, 2),
+                                )
+                                // Provide a fallback for mealData.id if it can be undefined
                                 handleOpenEditModalHandler(
                                   mealData.id || '',
                                   item,
                                 )
-                              }
-                              sx={{
-                                mr: 0.5,
-                                '&:hover': {
-                                  backgroundColor: 'primary.light',
-                                  color: 'white',
-                                },
                               }}
+                              sx={{ mr: 0.5, color: 'primary.main' }}
                             >
                               <EditIcon fontSize="small" />
                             </IconButton>
                             <IconButton
                               size="small"
                               onClick={() =>
-                                handleOpenConfirmDeleteModalHandler(
+                                handleOpenDeleteModalHandler(
                                   mealData.id || '',
                                   item,
                                 )
@@ -3222,7 +3280,7 @@ const DailyReportView: React.FC = memo(() => {
       {/* Confirm Delete Modal */}
       <Dialog
         open={confirmDeleteModalOpen}
-        onClose={handleCloseConfirmDeleteModalHandler}
+        onClose={handleCloseDeleteModalHandler}
         aria-labelledby="confirm-delete-dialog-title"
         aria-describedby="confirm-delete-dialog-description"
         PaperProps={{
@@ -3255,7 +3313,7 @@ const DailyReportView: React.FC = memo(() => {
         </DialogContent>
         <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: { xs: 1.5, sm: 2 } }}>
           <Button
-            onClick={handleCloseConfirmDeleteModalHandler}
+            onClick={handleCloseDeleteModalHandler}
             sx={{
               fontSize: { xs: '0.8rem', sm: '0.875rem' },
               minWidth: { xs: 60, sm: 80 },
@@ -3264,7 +3322,7 @@ const DailyReportView: React.FC = memo(() => {
             {currentLang === 'th' ? 'ยกเลิก' : 'Cancel'}
           </Button>
           <Button
-            onClick={handleDeleteFoodItemHandler}
+            onClick={handleDeleteConfirmHandler}
             color="error"
             autoFocus
             sx={{
@@ -3282,4 +3340,4 @@ const DailyReportView: React.FC = memo(() => {
 
 DailyReportView.displayName = 'DailyReportView'
 
-export default DailyReportView
+export default React.memo(DailyReportView)

@@ -309,8 +309,13 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
 
       console.log(`[NutritionStore] Raw weekly response:`, response)
 
-      if (response && typeof response === 'object') {
-        const apiData = response as any // Cast to any to access API fields
+      if (
+        response &&
+        typeof response === 'object' &&
+        response.success &&
+        response.data
+      ) {
+        const apiData = response.data as any // Access the nested .data object
 
         // Manual mapping from API response to WeeklyData structure
         const mappedData: WeeklyData = {
@@ -326,21 +331,25 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
             typeof apiData.avgCaloriesGoal === 'number'
               ? apiData.avgCaloriesGoal
               : 0,
-          dailyCalories: Array.isArray(apiData.dailyCalories)
-            ? apiData.dailyCalories
-            : [],
+          dailyCalories:
+            Array.isArray(apiData.dailyCalories) &&
+            apiData.dailyCalories.length > 0
+              ? apiData.dailyCalories
+              : [],
           avgMacronutrients: apiData.avgMacronutrients || {
-            protein: { consumed: 0, goal: 0 },
-            carbs: { consumed: 0, goal: 0 },
-            fat: { consumed: 0, goal: 0 },
+            protein: { consumed: 0, goal: 0, unit: 'g' }, // Added unit for consistency
+            carbs: { consumed: 0, goal: 0, unit: 'g' }, // Added unit
+            fat: { consumed: 0, goal: 0, unit: 'g' }, // Added unit
           },
-          totalCaloriesWeek: Array.isArray(apiData.dailyCalories)
-            ? apiData.dailyCalories.reduce(
-                (sum: number, day: { calories?: number }) =>
-                  sum + (day.calories || 0),
-                0,
-              )
-            : 0,
+          totalCaloriesWeek:
+            Array.isArray(apiData.dailyCalories) &&
+            apiData.dailyCalories.length > 0
+              ? apiData.dailyCalories.reduce(
+                  (sum: number, day: { calories?: number }) =>
+                    sum + (day.calories || 0),
+                  0,
+                )
+              : 0,
           summary: apiData.summary || '',
           tip: apiData.tip || '',
           insights: Array.isArray(apiData.insights) ? apiData.insights : [],

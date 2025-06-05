@@ -11,8 +11,7 @@ import {
 import { UpdateFoodLogPayload, LiffFoodLogData } from '../stores/nutritionStore'
 
 // Base API configuration - ปรับปรุงสำหรับ Azure Static Web Apps
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
 
 // Types for API responses specific to this service
 export interface FoodLogResponseDto {
@@ -38,7 +37,8 @@ class ApiService {
     options: RequestInit = {},
     token?: string,
   ): Promise<T> {
-    const url = `${this.baseURL}${endpoint}`
+    // Use URL constructor for robust path joining
+    const url = new URL(endpoint, this.baseURL).toString()
 
     // ✅ Headers สำหรับ Production Environment
     const headers: Record<string, string> = {
@@ -327,33 +327,47 @@ class ApiService {
    */
   async updateFoodLog(
     logId: string,
-    updateData: Partial<LiffFoodLogData>,
-    userId: string,
+    payload: UpdateFoodLogPayload,
+    lineUserId: string,
     token: string,
   ): Promise<FoodLogResponseDto> {
-    try {
-      console.log(
-        `[ApiService] Updating food log ${logId} for lineUserId: ${userId}`,
-      )
-
-      // ✅ แก้ไข path ให้ตรงกับ backend: /food-log/:id/:lineUserId
-      const response = await this.put<any>(
-        `/food-log/${logId}/${userId}`,
-        updateData,
-        token,
-      )
-
-      return {
-        success: true,
-        data: response,
-      }
-    } catch (error: any) {
-      console.error(`[ApiService] Food log update failed:`, error)
-      return {
-        success: false,
-        error: error.message || 'Failed to update food log',
-      }
+    if (!logId || typeof logId !== 'string' || logId.length !== 24) {
+      console.error('[ApiService] Invalid logId provided for update:', logId)
+      return { success: false, error: 'Invalid logId provided' }
     }
+    if (!lineUserId) {
+      console.error('[ApiService] lineUserId is required for updating food log')
+      return { success: false, error: 'lineUserId is required' }
+    }
+    if (!token) {
+      console.error('[ApiService] ID token is required for updating food log')
+      return { success: false, error: 'ID token is required' }
+    }
+
+    // Prepare the body. clientTimestamp should come from payload if intended.
+    const body = {
+      ...payload,
+    }
+    // Remove undefined keys from body to prevent issues with NestJS DTO validation (class-transformer)
+    Object.keys(body).forEach((key) => {
+      if ((body as any)[key] === undefined) {
+        delete (body as any)[key]
+      }
+    })
+
+    console.log(
+      `[ApiService] Updating food log ${logId} for lineUserId: ${lineUserId} with payload:`,
+      JSON.stringify(body, null, 2),
+    )
+
+    return this.request<FoodLogResponseDto>(
+      `food-log/${logId}/${lineUserId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      },
+      token,
+    )
   }
 
   /**

@@ -412,7 +412,7 @@ const createNutrientRow = (
 }
 
 // Helper function to create a row for vitamin/mineral with %DV display
-const createVitaminMineralRow = (
+const _createVitaminMineralRow = (
   label: string,
   detail: VitaminMineralDetail | undefined,
   t: TranslationSet,

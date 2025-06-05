@@ -1,5 +1,5 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common'
-import { ConfigService, ConfigType } from '@nestjs/config'
+import { ConfigService } from '@nestjs/config'
 import { HttpService } from '@nestjs/axios'
 import { firstValueFrom } from 'rxjs'
 import { AxiosError } from 'axios'
@@ -49,13 +49,7 @@ import {
 import { ConversationHistoryService } from '../conversation-history/conversation-history.service'
 import { AI_CONFIG } from '../ai/ai.config' // Added import
 import { IntentDetectionMetricsService } from './intent-detection-metrics.service'
-import { SharedUserProfileDto } from '@ai-nutritionist/shared-types' // Corrected import
-import { NonFoodDescriptionResult } from '../ai/ai.service' // Added import for NonFoodDescriptionResult
-import {
-  EatingPatternToolResult,
-  NutritionGoalToolResult,
-  MealRecommendationToolResult,
-} from '../ai/ai.service' // Added import for EatingPatternToolResult and NutritionGoalToolResult
+import { EatingPatternToolResult } from '../ai/ai.service' // Now only imports EatingPatternToolResult from this file.
 import { TimezoneService } from '../common/timezone.service'
 import { NutritionGoalDtoForAI } from '../ai/ai.service' // Added import for NutritionGoalDtoForAI
 
@@ -131,8 +125,12 @@ export class LineService {
         )
       }
     } catch (error) {
+      let errorMessage = 'Unknown error'
+      if (error instanceof Error) {
+        errorMessage = error.message
+      }
       this.logger.warn(
-        `Failed to get timezone for user ${lineUserId}, using server time: ${error.message}`,
+        `Failed to get timezone for user ${lineUserId}, using server time: ${errorMessage}`,
       )
       return new Date(postbackDate || Date.now())
     }
@@ -141,7 +139,7 @@ export class LineService {
   // Method to send typing indicator
   private async sendTypingIndicator(
     userId: string,
-    durationSeconds = 30,
+    durationSeconds = 50,
   ): Promise<void> {
     const channelAccessToken = this.configService.get<string>(
       'LINE_CHANNEL_ACCESS_TOKEN',
@@ -559,11 +557,11 @@ export class LineService {
     // Check for reanalyze last food if "reanalyze" or "วิเคราะห์ใหม่" is sent
     const reanalyzeKeywords = ['reanalyze', 'วิเคราะห์ใหม่']
     if (reanalyzeKeywords.includes(text.toLowerCase())) {
-      const cachedContext = await this.analysisCacheService.get<{
+      const cachedContext = this.analysisCacheService.get<{
         type: 'image' | 'text'
         value: string // messageId for image, original text for text
         messageId?: string // original messageId of the request that was analyzed
-      }>(`reanalyze_context:${userId}`) // Changed: getReanalyzeContext to generic get
+      }>(`reanalyze_context:${userId}`)
 
       if (cachedContext) {
         this.logger.log(
@@ -609,7 +607,7 @@ export class LineService {
     }
 
     // Intent Detection
-    const intentResult = await this.intentDetectionService.detectIntent(
+    const intentResult = this.intentDetectionService.detectIntent(
       text,
       userProfile,
       currentLanguage,
@@ -693,12 +691,11 @@ export class LineService {
               currentLanguage,
             )
 
-            await this.analysisCacheService.set<{
+            this.analysisCacheService.set<{
               type: 'image' | 'text'
               value: string
               messageId?: string
             }>(`reanalyze_context:${userId}`, {
-              // Changed: setReanalyzeContext to generic set
               type: 'text',
               value: text,
               messageId: messageId,
@@ -718,9 +715,15 @@ export class LineService {
             )
           } else {
             // This case handles null, { error: string }, or NON_FOOD_IMAGE_DETECTED if it somehow slips through 'food_name' check
-            const fallbackReason =
-              (analysisAiResult as any)?.error ||
-              'Analysis did not return valid food data.'
+            let fallbackReason = 'Analysis did not return valid food data.'
+            if (
+              analysisAiResult &&
+              'error' in analysisAiResult &&
+              typeof analysisAiResult.error === 'string'
+            ) {
+              fallbackReason = analysisAiResult.error
+            }
+            // No need to handle NON_FOOD_IMAGE_DETECTED here again as it's a value of food_name, previously checked.
             this.logger.warn(
               `Food analysis from text failed or non-food for user ${userId}. Fallback to general nutrition. Reason: ${fallbackReason}`,
             )
@@ -1879,9 +1882,12 @@ export class LineService {
               )
             }
           } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error)
+            const errorStack = error instanceof Error ? error.stack : undefined
             this.logger.error(
-              `Error in trigger_calculate_nutrition_goals: ${error.message}`,
-              error.stack,
+              `Error in trigger_calculate_nutrition_goals: ${errorMessage}`,
+              errorStack,
             )
             await this.replyText(
               replyToken,
@@ -1944,9 +1950,12 @@ export class LineService {
               )
             }
           } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error)
+            const errorStack = error instanceof Error ? error.stack : undefined
             this.logger.error(
-              `Error in trigger_meal_planning: ${error.message}`,
-              error.stack,
+              `Error in trigger_meal_planning: ${errorMessage}`,
+              errorStack,
             )
             await this.replyText(
               replyToken,
@@ -2071,9 +2080,12 @@ export class LineService {
               )
             }
           } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error)
+            const errorStack = error instanceof Error ? error.stack : undefined
             this.logger.error(
-              `Error in trigger_food_history_summary: ${error.message}`,
-              error.stack,
+              `Error processing eating pattern analysis for ${userId}: ${errorMessage}`,
+              errorStack,
             )
             await this.replyText(
               replyToken,
@@ -2199,15 +2211,10 @@ export class LineService {
     }
 
     if (addMainMenuQuickReply && languageForQuickReply) {
-      if (message.type === 'text') {
-        // Ensure it's a TextMessage before adding quickReply
-        message.quickReply = {
-          items: this.createMainMenuQuickReplyItems(languageForQuickReply),
-        }
-      } else {
-        this.logger.warn(
-          `Cannot add MainMenuQuickReply to a non-text message type: ${message.type}`,
-        )
+      // message is already known to be TextMessage, so we can assign quickReply directly.
+      // Removed redundant 'if (message.type === "text")' and the problematic 'else' branch.
+      message.quickReply = {
+        items: this.createMainMenuQuickReplyItems(languageForQuickReply),
       }
     }
 
@@ -2970,13 +2977,13 @@ export class LineService {
   }
 
   // ========== NEW: Helper to send Main Menu Quick Reply if appropriate ==========
-  private async sendMainMenuQuickReplyIfNeeded(
+  private sendMainMenuQuickReplyIfNeeded(
     userId: string,
     language: string,
     // TODO: Add a parameter or mechanism to check if a sub-flow QR is active
     // to prevent sending this QR when another specific QR is expected.
     // For now, it will send unless explicitly skipped by the calling logic.
-  ): Promise<void> {
+  ): void {
     // แทนที่จะส่งข้อความแยก เราจะแค่ log ไว้
     // Quick reply จะถูกเพิ่มโดย caller ที่เรียกใช้
     this.logger.log(

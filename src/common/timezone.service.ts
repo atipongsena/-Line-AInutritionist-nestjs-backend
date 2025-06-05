@@ -6,12 +6,19 @@ interface TimezoneConversionCache {
   timestamp: number
 }
 
+interface DayBoundsCacheEntry {
+  startOfDay: number
+  endOfDay: number
+  timestamp: number
+}
+
 @Injectable()
 export class TimezoneService {
   private readonly logger = new Logger(TimezoneService.name)
 
   // Cache สำหรับ timezone conversions
   private conversionCache = new Map<string, TimezoneConversionCache>()
+  private dayBoundsCache = new Map<string, DayBoundsCacheEntry>()
   private readonly CONVERSION_CACHE_TTL = 60 * 1000 // 1 minute
 
   // Performance metrics
@@ -71,10 +78,11 @@ export class TimezoneService {
         `convertToUtc cache MISS (${duration.toFixed(2)}ms) for ${timezone}`,
       )
       return result
-    } catch (error) {
+    } catch (e) {
       const duration = performance.now() - startTime
+      const errorMessage = e instanceof Error ? e.message : String(e)
       this.logger.warn(
-        `convertToUtc ERROR (${duration.toFixed(2)}ms) for ${timezone}: ${error.message}`,
+        `convertToUtc ERROR (${duration.toFixed(2)}ms) for ${timezone}: ${errorMessage}`,
       )
       // Fallback: return original date if conversion fails
       return date
@@ -119,10 +127,11 @@ export class TimezoneService {
         `convertFromUtc cache MISS (${duration.toFixed(2)}ms) for ${timezone}`,
       )
       return result
-    } catch (error) {
+    } catch (e) {
       const duration = performance.now() - startTime
+      const errorMessage = e instanceof Error ? e.message : String(e)
       this.logger.warn(
-        `convertFromUtc ERROR (${duration.toFixed(2)}ms) for ${timezone}: ${error.message}`,
+        `convertFromUtc ERROR (${duration.toFixed(2)}ms) for ${timezone}: ${errorMessage}`,
       )
       // Fallback: return original date if conversion fails
       return date
@@ -183,18 +192,16 @@ export class TimezoneService {
     // Create cache key for day bounds
     const dateKey = targetDate.toDateString()
     const cacheKey = `dayBounds_${dateKey}_${timezone}`
-    const cached = this.conversionCache.get(cacheKey)
+    const cached = this.dayBoundsCache.get(cacheKey)
 
     if (cached && Date.now() - cached.timestamp < this.CONVERSION_CACHE_TTL) {
-      // Return cached bounds (stored as a special object)
-      const cachedData = cached as any
       const duration = performance.now() - startTime
       this.logger.debug(
         `getDayBounds cache HIT (${duration.toFixed(2)}ms) for ${timezone}`,
       )
       return {
-        startOfDay: new Date(cachedData.startOfDay),
-        endOfDay: new Date(cachedData.endOfDay),
+        startOfDay: new Date(cached.startOfDay),
+        endOfDay: new Date(cached.endOfDay),
       }
     }
 
@@ -214,11 +221,11 @@ export class TimezoneService {
     const endOfDay = this.convertToUtc(endOfDayLocal, timezone)
 
     // Cache the result (store as special object)
-    this.conversionCache.set(cacheKey, {
+    this.dayBoundsCache.set(cacheKey, {
       startOfDay: startOfDay.getTime(),
       endOfDay: endOfDay.getTime(),
       timestamp: Date.now(),
-    } as any)
+    })
 
     const duration = performance.now() - startTime
     this.logger.debug(
@@ -253,10 +260,11 @@ export class TimezoneService {
    */
   clearCache(): void {
     this.conversionCache.clear()
+    this.dayBoundsCache.clear()
     this.validTimezoneCache.clear()
+    this.logger.log('All timezone related caches cleared.')
     this.cacheHits = 0
     this.cacheMisses = 0
-    this.logger.log('Timezone cache cleared')
   }
 
   /**
@@ -264,17 +272,21 @@ export class TimezoneService {
    */
   getCacheStats(): {
     conversions: number
+    dayBounds: number
     validTimezones: number
     cacheHits: number
     cacheMisses: number
     hitRate: string
   } {
-    const total = this.cacheHits + this.cacheMisses
+    const totalRequests = this.cacheHits + this.cacheMisses
     const hitRate =
-      total > 0 ? ((this.cacheHits / total) * 100).toFixed(2) : '0.00'
+      totalRequests > 0
+        ? ((this.cacheHits / totalRequests) * 100).toFixed(2)
+        : '0.00'
 
     return {
       conversions: this.conversionCache.size,
+      dayBounds: this.dayBoundsCache.size,
       validTimezones: this.validTimezoneCache.size,
       cacheHits: this.cacheHits,
       cacheMisses: this.cacheMisses,

@@ -18,11 +18,11 @@ export class IntentDetectionService {
     this.logger.log('IntentDetectionService initialized with simplified logic.')
   }
 
-  async detectIntent(
+  detectIntent(
     userMessage: string,
     userProfile: UserProfileDto,
     language: string,
-  ): Promise<IntentDetectionResult> {
+  ): IntentDetectionResult {
     const startTime = Date.now()
     const lowerCaseMessage = userMessage.toLowerCase().trim()
 

@@ -2,6 +2,56 @@ import { Injectable, Logger } from '@nestjs/common'
 import { UserProfileDto } from '../user/user.interface'
 import { AiTaskType } from './ai.config'
 
+interface FoodAnalysisContext {
+  hasImage?: boolean
+  description?: string
+}
+
+interface NutritionGoalContext {
+  age?: number
+  heightCm?: number
+  weightKg?: number
+  gender?: UserProfileDto['gender']
+  activityLevel?: UserProfileDto['activityLevel']
+  goal?: UserProfileDto['goal']
+  dietType?: UserProfileDto['dietType']
+  healthConditions?: string[]
+  foodAllergies?: string[]
+  targetWeightKg?: number | null
+}
+
+interface MealRecommendationContext {
+  mealType?: string // e.g., 'breakfast', 'lunch', 'dinner', 'snack'
+  dietaryRestrictions?: string[]
+  cuisinePreferences?: string[]
+  specificRequests?: string
+  previousSuggestions?: string[] // To avoid repetition
+  mealContext?: string // Added based on usage in ai.service.ts
+  language?: string // Added for TS2353 error in ai.service.ts
+  userPreferences?: string // Added for TS2353 error in ai.service.ts
+}
+
+interface GeneralQueryContext {
+  queryText?: string
+}
+
+interface EatingPatternContext {
+  daysCount?: number
+  autonomous?: boolean
+  hasNutritionGoal?: boolean
+  foodLogsCount?: number // Added based on usage in ai.service.ts
+  summary?: string // Added for TS2353 error in ai.service.ts
+}
+
+// Union type for all possible contextData structures
+export type TaskSpecificContextData =
+  | FoodAnalysisContext
+  | NutritionGoalContext
+  | MealRecommendationContext
+  | GeneralQueryContext
+  | EatingPatternContext
+  | undefined
+
 /**
  * Meta-prompts Service for dynamic prompt generation and optimization
  * Implements advanced prompting techniques for improved AI performance
@@ -16,7 +66,7 @@ export class MetaPromptsService {
   generateTaskMetaPrompt(
     taskType: AiTaskType,
     userProfile: UserProfileDto,
-    contextData?: any,
+    contextData?: TaskSpecificContextData,
   ): string {
     const baseMetaPrompt = this.createBaseMetaPrompt(userProfile)
     const taskSpecificPrompt = this.getTaskSpecificMetaPrompt(
@@ -74,38 +124,37 @@ export class MetaPromptsService {
 
     // Format calculated nutrition goals from user profile
     const formatCalculatedNutritionGoals = (): string => {
-      const profile = userProfile as any // Type cast to access nutrition goal fields
       const goals: string[] = []
 
-      if (profile.dailyCaloriesGoal) {
-        goals.push(`Daily Calories: ${profile.dailyCaloriesGoal} kcal`)
+      if (userProfile.dailyCaloriesGoal) {
+        goals.push(`Daily Calories: ${userProfile.dailyCaloriesGoal} kcal`)
       }
 
-      if (profile.dailyProteinGoal) {
-        goals.push(`Protein: ${profile.dailyProteinGoal}g`)
+      if (userProfile.dailyProteinGoal) {
+        goals.push(`Protein: ${userProfile.dailyProteinGoal}g`)
       }
 
-      if (profile.dailyCarbsGoal) {
-        goals.push(`Carbohydrates: ${profile.dailyCarbsGoal}g`)
+      if (userProfile.dailyCarbsGoal) {
+        goals.push(`Carbohydrates: ${userProfile.dailyCarbsGoal}g`)
       }
 
-      if (profile.dailyFatGoal) {
-        goals.push(`Fat: ${profile.dailyFatGoal}g`)
+      if (userProfile.dailyFatGoal) {
+        goals.push(`Fat: ${userProfile.dailyFatGoal}g`)
       }
 
       // Secondary nutrition goals
       const secondaryGoals: string[] = []
-      if (profile.dailyFiberGoal) {
-        secondaryGoals.push(`Fiber: ${profile.dailyFiberGoal}g`)
+      if (userProfile.dailyFiberGoal) {
+        secondaryGoals.push(`Fiber: ${userProfile.dailyFiberGoal}g`)
       }
-      if (profile.dailySugarGoal) {
-        secondaryGoals.push(`Sugar (max): ${profile.dailySugarGoal}g`)
+      if (userProfile.dailySugarGoal) {
+        secondaryGoals.push(`Sugar (max): ${userProfile.dailySugarGoal}g`)
       }
-      if (profile.dailySodiumGoal) {
-        secondaryGoals.push(`Sodium (max): ${profile.dailySodiumGoal}mg`)
+      if (userProfile.dailySodiumGoal) {
+        secondaryGoals.push(`Sodium (max): ${userProfile.dailySodiumGoal}mg`)
       }
-      if (profile.dailyWaterGoal) {
-        secondaryGoals.push(`Water: ${profile.dailyWaterGoal}ml`)
+      if (userProfile.dailyWaterGoal) {
+        secondaryGoals.push(`Water: ${userProfile.dailyWaterGoal}ml`)
       }
 
       return goals.length > 0
@@ -202,23 +251,33 @@ ${formatCalculatedNutritionGoals()}`
    */
   private getTaskSpecificMetaPrompt(
     taskType: AiTaskType,
-    contextData?: any,
+    contextData?: TaskSpecificContextData,
   ): string {
     switch (taskType) {
       case AiTaskType.FoodAnalysis:
-        return this.createFoodAnalysisMetaPrompt(contextData)
+        return this.createFoodAnalysisMetaPrompt(
+          contextData as FoodAnalysisContext,
+        )
 
       case AiTaskType.NutritionGoalCalculation:
-        return this.createNutritionGoalMetaPrompt(contextData)
+        return this.createNutritionGoalMetaPrompt(
+          contextData as NutritionGoalContext,
+        )
 
       case AiTaskType.EatingPatternAnalysis:
-        return this.createEatingPatternMetaPrompt(contextData)
+        return this.createEatingPatternMetaPrompt(
+          contextData as EatingPatternContext,
+        )
 
       case AiTaskType.MealRecommendation:
-        return this.createMealRecommendationMetaPrompt(contextData)
+        return this.createMealRecommendationMetaPrompt(
+          contextData as MealRecommendationContext,
+        )
 
       case AiTaskType.GeneralNutritionQuery:
-        return this.createGeneralQueryMetaPrompt(contextData)
+        return this.createGeneralQueryMetaPrompt(
+          contextData as GeneralQueryContext,
+        )
 
       default:
         return this.createDefaultMetaPrompt()
@@ -228,10 +287,11 @@ ${formatCalculatedNutritionGoals()}`
   /**
    * Food Analysis Meta-prompt
    */
-  private createFoodAnalysisMetaPrompt(contextData?: any): string {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+  private createFoodAnalysisMetaPrompt(
+    contextData?: FoodAnalysisContext,
+  ): string {
     const hasImage = Boolean(contextData?.hasImage) || false
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
     const foodDescription = String(contextData?.description || '')
 
     return `## FOOD ANALYSIS SPECIALIZATION
@@ -311,9 +371,21 @@ Remember: You are an agent - keep going until resolved. Use tools, do NOT guess.
   /**
    * Nutrition Goal Calculation Meta-prompt
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private createNutritionGoalMetaPrompt(contextData?: any): string {
-    return `## NUTRITION GOAL OPTIMIZATION
+  private createNutritionGoalMetaPrompt(
+    contextData?: NutritionGoalContext,
+  ): string {
+    const _age = contextData?.age || 'Not specified'
+    const _height = contextData?.heightCm || 'Not specified'
+    const _weight = contextData?.weightKg || 'Not specified'
+    const _gender = contextData?.gender || 'Not specified'
+    const _activityLevel = contextData?.activityLevel || 'Not specified'
+    const _goal = contextData?.goal || 'General wellness'
+    const _dietType = contextData?.dietType || 'Flexible'
+    const _targetWeight = contextData?.targetWeightKg
+      ? `${contextData.targetWeightKg} kg`
+      : 'Not specified'
+
+    return `## NUTRITION GOAL CALCULATION SPECIALIZATION
 
 **Primary Objective:** Use pre-calculated nutrition targets and provide personalized recommendations
 
@@ -343,28 +415,22 @@ Remember: You are an agent - keep going until resolved. Use tools, do NOT guess.
   /**
    * Eating Pattern Analysis Meta-prompt
    */
-  private createEatingPatternMetaPrompt(contextData?: unknown): string {
+  private createEatingPatternMetaPrompt(
+    contextData?: EatingPatternContext,
+  ): string {
     let analyzedDays: number | string = 'recent'
     let hasAutonomousAccess = false
     let hasNutritionGoal = false
 
-    if (
-      contextData &&
-      typeof contextData === 'object' &&
-      contextData !== null
-    ) {
-      const data = contextData as Record<string, unknown>
-      if ('daysCount' in data && typeof data.daysCount === 'number') {
-        analyzedDays = data.daysCount
+    if (contextData) {
+      if (typeof contextData.daysCount === 'number') {
+        analyzedDays = contextData.daysCount
       }
-      if ('autonomous' in data && typeof data.autonomous === 'boolean') {
-        hasAutonomousAccess = data.autonomous
+      if (typeof contextData.autonomous === 'boolean') {
+        hasAutonomousAccess = contextData.autonomous
       }
-      if (
-        'hasNutritionGoal' in data &&
-        typeof data.hasNutritionGoal === 'boolean'
-      ) {
-        hasNutritionGoal = data.hasNutritionGoal
+      if (typeof contextData.hasNutritionGoal === 'boolean') {
+        hasNutritionGoal = contextData.hasNutritionGoal
       }
     }
 
@@ -453,13 +519,20 @@ Remember: You are an autonomous agent with tool access. Systematically retrieve 
   /**
    * Meal Recommendation Meta-prompt
    */
-  private createMealRecommendationMetaPrompt(contextData?: any): string {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+  private createMealRecommendationMetaPrompt(
+    contextData?: MealRecommendationContext,
+  ): string {
     const mealType = contextData?.mealType || 'any meal'
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const preferences = contextData?.preferences || []
+    const _restrictions =
+      contextData?.dietaryRestrictions?.join(', ') || 'None specified'
+    const cuisines =
+      contextData?.cuisinePreferences?.join(', ') || 'Any cuisine'
+    const requests = contextData?.specificRequests || 'None'
+    const _previous = contextData?.previousSuggestions?.length
+      ? `\n- Avoid suggesting: ${contextData.previousSuggestions.join(', ')}`
+      : ''
 
-    return `## INTELLIGENT MEAL DESIGN
+    return `## MEAL RECOMMENDATION SPECIALIZATION
 
 **Meal Context:** ${mealType}
 **Design Objective:** Create nutritionally optimized, culturally appropriate meal recommendations
@@ -473,8 +546,8 @@ Remember: You are an autonomous agent with tool access. Systematically retrieve 
 - Preparation method optimization
 
 ${
-  Array.isArray(preferences) && preferences.length > 0
-    ? `**User Preferences:** ${preferences.join(', ')}`
+  Array.isArray(cuisines) && cuisines.length > 0
+    ? `**User Preferences:** ${cuisines.join(', ')}`
     : ''
 }
 
@@ -485,19 +558,22 @@ ${
 - Practical preparation guidance
 - Alternative options for variety
 
+${requests}
+
 Remember: You are an agent - keep going until resolved. Use tools, do NOT guess. Plan before each function call.`
   }
 
   /**
    * General Nutrition Query Meta-prompt
    */
-  private createGeneralQueryMetaPrompt(contextData?: any): string {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const queryType = contextData?.queryType || 'nutrition question'
+  private createGeneralQueryMetaPrompt(
+    contextData?: GeneralQueryContext,
+  ): string {
+    const query = contextData?.queryText || 'General nutrition information'
 
-    return `## COMPREHENSIVE NUTRITION & FOOD CONSULTATION FRAMEWORK
+    return `## GENERAL NUTRITION QUERY
 
-**Query Classification:** ${queryType}
+**Query Classification:** ${query}
 **Response Objective:** Provide helpful, engaging, and personalized food and health guidance
 
 **EXPANDED KNOWLEDGE DOMAINS:**
