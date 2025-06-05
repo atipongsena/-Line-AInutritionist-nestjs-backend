@@ -1,11 +1,9 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  // 🚀 CSR Configuration - Client-Side Rendering for both dev and production
-  // ✅ ปิด static export เพื่อให้ใช้ CSR เหมือน development
-  // output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
-
-  // ✅ ใช้ default Next.js behavior สำหรับทั้ง development และ production
-  // distDir: 'out', // ใช้เฉพาะกับ static export
+const nextConfigSSG = {
+  // 🚀 SSG Configuration - Static Site Generation for Azure Static Web Apps
+  output: 'export',
+  distDir: 'out',
+  trailingSlash: true,
 
   // ✅ เปิดใช้ SSR features สำหรับทุก environment
   transpilePackages: ['@ai-nutritionist/shared-types'],
@@ -23,44 +21,9 @@ const nextConfig = {
     '*.ngrok-free.app',
   ],
 
-  // 📦 Bundle Optimization
-  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
-    // Bundle analyzer in development
-    if (!dev && !isServer) {
-      config.optimization.splitChunks = {
-        chunks: 'all',
-        cacheGroups: {
-          vendor: {
-            test: /[\\/]node_modules[\\/]/,
-            name: 'vendors',
-            chunks: 'all',
-            priority: 10,
-          },
-          mui: {
-            test: /[\\/]node_modules[\\/]@mui[\\/]/,
-            name: 'mui',
-            chunks: 'all',
-            priority: 20,
-          },
-          recharts: {
-            test: /[\\/]node_modules[\\/]recharts[\\/]/,
-            name: 'recharts',
-            chunks: 'all',
-            priority: 15,
-          },
-        },
-      }
-    }
-
-    return config
-  },
-
   // 🗜️ Compression
   compress: true,
   poweredByHeader: false,
-
-  // ✅ ปรับการใช้ trailing slash สำหรับ CSR
-  trailingSlash: false, // ใช้ false สำหรับ standard Next.js CSR
 
   // 📱 PWA และ caching
   headers: async () => {
@@ -80,7 +43,6 @@ const nextConfig = {
             key: 'X-XSS-Protection',
             value: '1; mode=block',
           },
-          // ✅ CORS headers สำหรับ Azure Static Web Apps
           {
             key: 'Access-Control-Allow-Origin',
             value: '*',
@@ -108,10 +70,9 @@ const nextConfig = {
     ]
   },
 
-  // 🖼️ Image optimization (เปิดใช้งาน optimization สำหรับทั้ง dev และ production)
+  // 🖼️ Image optimization - ปิดสำหรับ static export
   images: {
-    // ✅ เปิด image optimization สำหรับทั้ง development และ production
-    // unoptimized: process.env.NODE_ENV === 'production',
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',
@@ -138,7 +99,6 @@ const nextConfig = {
         hostname: '*.blob.core.windows.net',
         pathname: '/**',
       },
-      // ✅ เพิ่ม Azure Static Web Apps domains
       {
         protocol: 'https',
         hostname: '*.azurestaticapps.net',
@@ -155,16 +115,12 @@ const nextConfig = {
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
 
-  // ✅ Azure Static Web Apps base path (ถ้าจำเป็น)
-  // basePath: process.env.NEXT_PUBLIC_BASE_PATH,
-
-  // เพิ่มการตั้งค่าสำหรับ Material UI (ถ้าใช้ App Router และต้องการ theme integration)
+  // เพิ่มการตั้งค่าสำหรับ Material UI
   compiler: {
     emotion: true,
-    removeConsole: process.env.NODE_ENV === 'production',
+    removeConsole: true,
   },
 
-  // หากต้องการให้ strict mode ของ React ทำงานใน production ด้วย
   reactStrictMode: true,
 
   // ✅ Environment variables validation
@@ -175,4 +131,4 @@ const nextConfig = {
   },
 }
 
-export default nextConfig
+export default nextConfigSSG
