@@ -7,12 +7,12 @@ export const metadata: Metadata = {
   description: 'ดูและแก้ไขข้อมูลอาหารใน food log ของคุณ',
 }
 
-// ✅ ใช้ generateStaticParams สำหรับ static export แต่ client จะ handle dynamic data
-export async function generateStaticParams() {
-  return [
-    { logId: 'demo' }, // Demo food log
-  ]
-}
+// ✅ ปิด generateStaticParams เพื่อให้ใช้ CSR (Client-Side Rendering)
+// export async function generateStaticParams() {
+//   return [
+//     { logId: 'demo' }, // Demo food log
+//   ]
+// }
 
 // ✅ Static generation + Client-side dynamic data fetching
 export default function Page() {

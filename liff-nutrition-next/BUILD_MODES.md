@@ -4,6 +4,13 @@
 
 เพื่อให้ production build ใช้ **CSR (Client-Side Rendering)** เหมือนกับ development แทนที่จะเป็น **SSG (Static Site Generation)**
 
+### 🔧 การแก้ไขที่ทำไปแล้ว:
+
+1. ✅ Comment ออก `output: 'export'` ใน `next.config.mjs`
+2. ✅ Comment ออก `generateStaticParams()` ในทุก pages
+3. ✅ เพิ่ม `vercel.json` เพื่อ override Vercel settings
+4. ✅ ลบ `next.config.ts` ที่ duplicate
+
 ## 📦 Build Modes
 
 ### 1. CSR Mode (Default) - ใช้สำหรับ Production ปกติ
