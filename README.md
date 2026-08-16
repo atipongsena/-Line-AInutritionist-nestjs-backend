@@ -385,15 +385,6 @@ docker push <acr-name>.azurecr.io/ai-nutritionist-backend:latest
 
 This project was conceived and developed as a Senior Capstone Project at **Bangkok University**, School of Information Technology and Innovation, Department of Computer Science (Academic Year 2024–2025).
 
-### 👨‍💻 Project Development Team
-- **Atipong Sena** (อาทิพงศ์ เสนา) — Lead Developer / AI & Architecture ([GitHub](https://github.com/atipongsena) • [Email](mailto:Atipong.sena@bumail.net))
-- **Kanokphon Fangprasroethsuk** (กนกพล ฟังประเสริฐสุข) — Co-Developer / Database & Cloud Integration ([Email](mailto:kptoki24@gmail.com))
-- **Woraphon Sinlapateeratorn** (วรพล ศิลปะธีรธร) — Co-Developer / Testing & UI Integration ([Email](mailto:worapon4266@gmail.com))
-
-### 🎓 Project Advisor
-- **Asst. Prof. Sirinthorn Cheyasak** (ผศ.สิรินธร จียาศักดิ์) — Bangkok University
-
----
 
 ## 📄 License & Disclaimer
 
@@ -401,5 +392,5 @@ This project was conceived and developed as a Senior Capstone Project at **Bangk
 - **Medical Disclaimer**: *KinGeng AI provides nutritional estimates and dietary suggestions for general wellness and educational purposes only. It is not intended as a substitute for professional clinical medical advice, diagnosis, or treatment.*
 
 <p align="center">
-  Built with ❤️ by the KinGeng AI Team • Bangkok University
+  Built with ❤️ by the KinGeng AI Team
 </p>
