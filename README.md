@@ -358,14 +358,3 @@ ngrok http 3001 # หาก PORT ของคุณคือ 3001
 ```
 
 จากนั้นนำ URL ที่ ngrok ให้ (ที่เป็น `https`) ไปใส่ใน LINE Developers Console.
-
-## 📄 License
-
-This project is UNLICENSED (as per `package.json`). You can choose to add an open-source license if you wish.
-(The original NestJS starter is MIT licensed.)
-
----
-
-<p align="center">
-  Generated with ❤️ by AI and customized for the AI Nutritionist project.
-</p>
