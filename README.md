@@ -58,30 +58,47 @@ git push origin main
 - การคำนวณคุณค่าทางโภชนาการแบบละเอียด
 - คำแนะนำเฉพาะบุคคลตามเป้าหมายสุขภาพ
 
+<img width="399" height="770" alt="image" src="https://github.com/user-attachments/assets/1e39baf9-eba0-4830-be02-8ce0bd7b33ca" />
+<img width="288" height="501" alt="image" src="https://github.com/user-attachments/assets/1cb1c700-0ab1-4f5e-bf0b-f42758ddb4fc" />
+<img width="298" height="960" alt="image" src="https://github.com/user-attachments/assets/04ef240a-aa90-457f-b3af-02d99be03396" />
+
+
 ### 💬 Smart Conversation Management
 
 - ระบบแชทบอทอัจฉริยะผ่าน LINE
 - **การกรองคำสั่งเฉพาะ**: ระบบจะไม่ประมวลผลข้อความที่ขึ้นต้นด้วย "/" เนื่องจากเป็นคำสั่งเฉพาะ
 - การจัดเก็บประวัติการสนทนาแบบอัจฉริยะ
 - การตรวจจับความตั้งใจ (Intent Detection) ด้วย AI
+  <img width="322" height="711" alt="image" src="https://github.com/user-attachments/assets/736a0ceb-b23c-43f2-b913-daebdb2488d0" />
+
 
 ### 🍽️ Conversational Food History
 
 - ถามคำถามเกี่ยวกับประวัติการกินในภาษาธรรมชาติ
 - วิเคราะห์รูปแบบการกินแบบอัตโนมัติ
 - สร้างข้อเสนอแนะเฉพาะบุคคล
+  <img width="774" height="738" alt="image" src="https://github.com/user-attachments/assets/4a132f02-c323-4cc4-b954-bcdbb9a6e122" />
+
 
 ### 🎯 Nutrition Goal Calculation
 
 - คำนวณ BMR และ TDEE อัตโนมัติ
 - ตั้งเป้าหมายโภชนาการตามความต้องการ
 - ติดตามความก้าวหน้าแบบเรียลไทม์
+ <img width="408" height="555" alt="image" src="https://github.com/user-attachments/assets/0d7835ab-3aa4-446d-bafe-d84db3429d73" />
+<img width="388" height="616" alt="image" src="https://github.com/user-attachments/assets/d5537dc0-543b-46a7-b70b-1e86ffc61cfa" />
+<img width="869" height="1097" alt="image" src="https://github.com/user-attachments/assets/e9214b64-46b4-4010-978e-d242b0410cc6" />
+
+
+
 
 ### 📊 Eating Pattern Analysis
 
 - วิเคราะห์รูปแบบการกินแบบลึก
 - ตรวจหาพฤติกรรมที่ควรปรับปรุง
 - คำแนะนำการปรับเปลี่ยนพฤติกรรม
+- <img width="398" height="531" alt="image" src="https://github.com/user-attachments/assets/b24ec56f-d888-4e33-a816-667668537c3a" />
+
 
 ### 🍴 AI Meal Recommendations
 
@@ -161,6 +178,13 @@ exclusionRules: {
 - **Configuration Management:** `@nestjs/config`
 - **Authentication (Azure):** `@azure/identity` (for Azure OpenAI Service)
 - **Package Manager:** [pnpm](https://pnpm.io/)
+<img width="869" height="786" alt="image" src="https://github.com/user-attachments/assets/f9439345-fb1c-4933-999d-60c58dc47da3" />
+<img width="869" height="543" alt="image" src="https://github.com/user-attachments/assets/6331cc42-d28e-4eaa-8e47-3be722c750bc" />
+<img width="772" height="672" alt="image" src="https://github.com/user-attachments/assets/8c9046e0-ace3-41f1-b843-d13f742995c9" />
+<img width="869" height="563" alt="image" src="https://github.com/user-attachments/assets/0398956a-91b5-484a-a5b1-1d786540b6db" />
+
+
+
 
 ## 📋 Prerequisites
 
