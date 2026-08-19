@@ -6,7 +6,7 @@
 <h3 align="center">AI Nutritionist via LINE Official Account & LIFF Web Platform</h3>
 
 <p align="center">
-  <strong>An Enterprise-Grade, Microservices-Ready Backend & Multimodal Health Assistant</strong><br />
+  <strong>An Production-Grade, Microservices-Ready Backend & Multimodal Health Assistant</strong><br />
   Engineered with NestJS, Azure OpenAI (GPT-4.1 / GPT-4o), Azure AI Vision, MongoDB & LINE Messaging API.
 </p>
 
@@ -379,11 +379,7 @@ docker push <acr-name>.azurecr.io/ai-nutritionist-backend:latest
 - [Deployment Troubleshooting](./DEPLOYMENT_TROUBLESHOOTING.md)
 - [Production Quick Reference](./PRODUCTION_DEPLOY_QUICK_REF.md)
 
----
 
-## 👥 Academic Credentials & Contributors
-
-This project was conceived and developed as a Senior Capstone Project at **Bangkok University**, School of Information Technology and Innovation, Department of Computer Science (Academic Year 2024–2025).
 
 
 ## 📄 License & Disclaimer
